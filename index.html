@@ -1073,6 +1073,13 @@ function renderProducts(){
 }
 
 /* ============================ BRAND TABLE (master data) ============================ */
+function rowPortfolioSelect(i, pid, ports){
+  const inList = ports.some(p=>String(p.id)===String(pid));
+  let opts = `<option value="">— none —</option>`;
+  opts += ports.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
+  if(pid && !inList) opts += `<option value="${esc(pid)}" selected>${esc(pid)} (unlisted)</option>`;
+  return `<select data-i="${i}" data-pfsel="1" style="width:160px;">${opts}</select>`;
+}
 function renderBrandTable(){
   const accNames=Object.keys(BT.accounts);
   if(BT.current && !BT.accounts[BT.current]) BT.current='';
@@ -1082,6 +1089,7 @@ function renderBrandTable(){
   const accSel = `<select id="bt-acc">${accNames.length?accNames.map(n=>`<option ${acc===n?'selected':''}>${esc(n)}</option>`).join(''):'<option value="">(no accounts)</option>'}</select>`;
   const rowsHtml = prods.map((p,i)=>`<tr>
     <td class="l">${i+1}</td>
+    <td>${rowPortfolioSelect(i, p.portfolioId, ports)}</td>
     <td><input data-i="${i}" data-f="brand" value="${esc(p.brand||'')}" style="width:120px;"></td>
     <td><input data-i="${i}" data-f="niche" value="${esc(p.niche||'')}" placeholder="BNP" style="width:80px;"></td>
     <td><input data-i="${i}" data-f="name" value="${esc(p.name||'')}" style="width:150px;"></td>
@@ -1115,7 +1123,7 @@ function renderBrandTable(){
         <div class="spacer"></div>
         <button class="btn grad" id="bt-add" ${acc?'':'disabled'}>＋ Add product</button>
       </div>
-      ${acc? `<div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASIN</th><th class="l">Portfolio ID</th><th class="l">SKUs (comma-separated)</th><th class="l"></th></tr></thead><tbody>${rowsHtml||'<tr><td colspan="8" class="l" style="padding:20px;color:#9aa3af;">No products yet — click “Add product” or import your Brand Table.</td></tr>'}</tbody></table></div>`
+      ${acc? `<div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Portfolio</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASIN</th><th class="l">Portfolio ID</th><th class="l">SKUs (comma-separated)</th><th class="l"></th></tr></thead><tbody>${rowsHtml||'<tr><td colspan="9" class="l" style="padding:20px;color:#9aa3af;">No products yet — click “Add product” or import your Brand Table.</td></tr>'}</tbody></table></div>`
         : `<div class="empty"><div class="ic">🗂️</div><p>Create an account to start (e.g. Lionstrong, MR.DEKO) or import your Brand Table file.</p></div>`}
     </div>
     ${acc? `<div class="card pad">
@@ -1139,6 +1147,7 @@ function renderBrandTable(){
     else p[f]=inp.value.trim();
     btSave();
   });
+  document.querySelectorAll('#app select[data-pfsel]').forEach(sel=>sel.onchange=()=>{ const p=A.products[+sel.dataset.i]; if(p){ p.portfolioId=sel.value; btSave(); renderBrandTable(); } });
   const imp=$('#bt-import'); if(imp) imp.onchange=e=>importBrandTable(e.target.files[0]);
   $('#bt-backup').onclick=()=>{ const blob=new Blob([JSON.stringify(BT,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='brand_table_backup.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
   $('#bt-restore').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=ev=>{ try{ const d=JSON.parse(ev.target.result); if(d&&d.accounts){ if(confirm('Restore will REPLACE the current Brand Table with this backup. Continue?')){ BT=d; if(!BT.current) BT.current=''; Object.keys(BT.accounts).forEach(n=>acctObj(n)); btSave(); renderBrandTable(); alert('Restored '+Object.keys(BT.accounts).length+' account(s).'); } } else alert('Not a valid Brand Table backup file.'); }catch(err){ alert('Invalid JSON: '+err.message); } }; rd.readAsText(f); };
