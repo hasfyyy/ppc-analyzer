@@ -367,11 +367,13 @@ const S = { tab:'overview', product:'SP', sort:{}, sel:{}, filt:{}, sidebarPortf
 
 /* ---- Brand Table: persistent master data (accounts -> products) ---- */
 const BT_KEY='ppc_brandtable_v1';
-let BT={current:'',accounts:{}};   // accounts[name] = [{brand,niche,name,asin,portfolioId,skus:[]}]
-function btLoad(){ try{ const d=JSON.parse(localStorage.getItem(BT_KEY)); if(d&&d.accounts) BT=d; }catch(e){} }
+let BT={current:'',accounts:{}};   // accounts[name] = {products:[{brand,niche,name,asin,portfolioId,skus:[]}], portfolios:[{name,id}]}
+function acctObj(name){ let a=BT.accounts[name]; if(a==null){ a=BT.accounts[name]={products:[],portfolios:[]}; } if(Array.isArray(a)){ a=BT.accounts[name]={products:a,portfolios:[]}; } if(!a.products)a.products=[]; if(!a.portfolios)a.portfolios=[]; return a; }
+function btLoad(){ try{ const d=JSON.parse(localStorage.getItem(BT_KEY)); if(d&&d.accounts) BT=d; }catch(e){} Object.keys(BT.accounts||{}).forEach(n=>acctObj(n)); }
 function btSave(){ try{ localStorage.setItem(BT_KEY, JSON.stringify(BT)); }catch(e){ alert('Could not save Brand Table (browser storage full?).'); } }
 function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
-function btProductOptions(acc,selIdx){ const list=(BT.accounts[acc]||[]); return `<option value="">— select product —</option>`+list.map((p,i)=>`<option value="${i}" ${String(selIdx)===String(i)?'selected':''}>${esc((p.brand||'?')+' — '+(p.name||'?')+' — '+(p.asin||''))}</option>`).join(''); }
+function btProductOptions(acc,selIdx){ const list=(acc&&BT.accounts[acc]?acctObj(acc).products:[]); return `<option value="">— select product —</option>`+list.map((p,i)=>`<option value="${i}" ${String(selIdx)===String(i)?'selected':''}>${esc((p.brand||'?')+' — '+(p.name||'?')+' — '+(p.asin||''))}</option>`).join(''); }
+function btPortfolioOptions(acc,selId){ const list=(acc&&BT.accounts[acc]?acctObj(acc).portfolios:[]); return `<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join(''); }
 function stFor(tab){ return S.filt[tab] = S.filt[tab] || {}; }
 function selFor(tab){ return S.sel[tab] = S.sel[tab] || new Set(); }
 function sortFor(tab,def){ if(!S.sort[tab]) S.sort[tab]=def||{key:'spend',dir:-1}; return S.sort[tab]; }
@@ -1050,7 +1052,8 @@ function renderBrandTable(){
   const accNames=Object.keys(BT.accounts);
   if(BT.current && !BT.accounts[BT.current]) BT.current='';
   if(!BT.current && accNames.length) BT.current=accNames[0];
-  const acc=BT.current; const prods= acc? BT.accounts[acc]:[];
+  const acc=BT.current; const A= acc? acctObj(acc): null;
+  const prods= A? A.products:[]; const ports= A? A.portfolios:[];
   const accSel = `<select id="bt-acc">${accNames.length?accNames.map(n=>`<option ${acc===n?'selected':''}>${esc(n)}</option>`).join(''):'<option value="">(no accounts)</option>'}</select>`;
   const rowsHtml = prods.map((p,i)=>`<tr>
     <td class="l">${i+1}</td>
@@ -1062,6 +1065,12 @@ function renderBrandTable(){
     <td><input data-i="${i}" data-f="skus" value="${esc((p.skus||[]).join(', '))}" style="width:280px;"></td>
     <td class="l"><button class="btn ghost bt-del" data-i="${i}" style="padding:4px 9px;">✕</button></td>
   </tr>`).join('');
+  const pfHtml = ports.map((p,i)=>`<tr>
+    <td class="l">${i+1}</td>
+    <td><input data-pi="${i}" data-pf="name" value="${esc(p.name||'')}" placeholder="e.g. Bookends" style="width:200px;"></td>
+    <td><input data-pi="${i}" data-pf="id" value="${esc(p.id||'')}" placeholder="numeric ID" style="width:180px;"></td>
+    <td class="l"><button class="btn ghost bt-pdel" data-pi="${i}" style="padding:4px 9px;">✕</button></td>
+  </tr>`).join('');
   $('#app').innerHTML=`
     <div class="card pad">
       <div class="rowbar">
@@ -1072,29 +1081,49 @@ function renderBrandTable(){
         <button class="btn ghost" id="bt-ren" ${acc?'':'disabled'}>✎ Rename</button>
         <button class="btn ghost" id="bt-delacc" ${acc?'':'disabled'}>🗑 Delete</button>
       </div>
-      <div class="banner">Saved in this browser and kept across sessions. Fill <b>Brand · Niche/Code · Product · ASIN · Portfolio ID · SKUs</b>. In <b>Campaign Builder</b> pick the account + product to auto-fill everything. (Niche/Code is what goes in the campaign name — e.g. BNP.)</div>
+      <div class="banner">Saved in this browser and kept across sessions. Maintain your <b>Products</b> and <b>Portfolios</b> per account here once — then in <b>Campaign Builder</b> just pick the account, portfolio & product and everything auto-fills. (Niche/Code is the short code used in the campaign name — e.g. BNP.)</div>
       <div class="rowbar">
-        <label class="btn ghost" style="cursor:pointer;">⬆ Import from Excel/CSV<input type="file" id="bt-import" accept=".xlsx,.xls,.csv" style="display:none;"></label>
-        <span class="hint">Reads columns: Brand Name · Product Name · Product Code (ASIN) · Portfolio ID · SKU1..SKUn</span>
+        <label class="btn ghost" style="cursor:pointer;">⬆ Import products from Excel/CSV<input type="file" id="bt-import" accept=".xlsx,.xls,.csv" style="display:none;"></label>
+        <span class="hint">Reads: Brand Name · Product Name · Product Code (ASIN) · Portfolio ID · SKU1..SKUn</span>
         <div class="spacer"></div>
         <button class="btn grad" id="bt-add" ${acc?'':'disabled'}>＋ Add product</button>
       </div>
       ${acc? `<div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASIN</th><th class="l">Portfolio ID</th><th class="l">SKUs (comma-separated)</th><th class="l"></th></tr></thead><tbody>${rowsHtml||'<tr><td colspan="8" class="l" style="padding:20px;color:#9aa3af;">No products yet — click “Add product” or import your Brand Table.</td></tr>'}</tbody></table></div>`
         : `<div class="empty"><div class="ic">🗂️</div><p>Create an account to start (e.g. Lionstrong, MR.DEKO) or import your Brand Table file.</p></div>`}
-    </div>`;
+    </div>
+    ${acc? `<div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">📁 Portfolios — ${esc(acc)}</h3>
+        <span class="hint">Give each portfolio a friendly name + its numeric ID. You'll pick these by name in Campaign Builder.</span>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="bt-pfromprod">＋ From products' IDs</button>
+        <button class="btn grad" id="bt-padd">＋ Add portfolio</button>
+      </div>
+      <div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Portfolio Name</th><th class="l">Portfolio ID (numeric)</th><th class="l"></th></tr></thead><tbody>${pfHtml||'<tr><td colspan="4" class="l" style="padding:18px;color:#9aa3af;">No portfolios yet — add one, or pull the IDs already present in your products.</td></tr>'}</tbody></table></div>
+    </div>`:''}`;
   if(accNames.length) $('#bt-acc').onchange=e=>{ BT.current=e.target.value; btSave(); renderBrandTable(); };
-  $('#bt-new').onclick=()=>{ const n=(prompt('New account name (e.g. Lionstrong):')||'').trim(); if(!n) return; if(!BT.accounts[n]) BT.accounts[n]=[]; BT.current=n; btSave(); renderBrandTable(); };
+  $('#bt-new').onclick=()=>{ const n=(prompt('New account name (e.g. Lionstrong):')||'').trim(); if(!n) return; acctObj(n); BT.current=n; btSave(); renderBrandTable(); };
   $('#bt-ren').onclick=()=>{ if(!acc)return; const n=(prompt('Rename account:',acc)||'').trim(); if(!n||n===acc)return; BT.accounts[n]=BT.accounts[acc]; delete BT.accounts[acc]; BT.current=n; btSave(); renderBrandTable(); };
   $('#bt-delacc').onclick=()=>{ if(!acc)return; if(!confirm(`Delete account "${acc}" and its ${prods.length} product(s)?`))return; delete BT.accounts[acc]; BT.current=Object.keys(BT.accounts)[0]||''; btSave(); renderBrandTable(); };
-  $('#bt-add').onclick=()=>{ if(!acc)return; BT.accounts[acc].push({brand:'',niche:'',name:'',asin:'',portfolioId:'',skus:[]}); btSave(); renderBrandTable(); };
-  document.querySelectorAll('#app .bt-del').forEach(b=>b.onclick=()=>{ BT.accounts[acc].splice(+b.dataset.i,1); btSave(); renderBrandTable(); });
-  document.querySelectorAll('#app tbody input[data-f]').forEach(inp=>inp.onchange=()=>{
-    const i=+inp.dataset.i, f=inp.dataset.f, p=BT.accounts[acc][i]; if(!p) return;
+  $('#bt-add').onclick=()=>{ if(!A)return; A.products.push({brand:'',niche:'',name:'',asin:'',portfolioId:'',skus:[]}); btSave(); renderBrandTable(); };
+  document.querySelectorAll('#app .bt-del').forEach(b=>b.onclick=()=>{ A.products.splice(+b.dataset.i,1); btSave(); renderBrandTable(); });
+  document.querySelectorAll('#app input[data-f]').forEach(inp=>inp.onchange=()=>{
+    const i=+inp.dataset.i, f=inp.dataset.f, p=A.products[i]; if(!p) return;
     if(f==='skus') p.skus=inp.value.split(/[,\n;]+/).map(s=>s.trim()).filter(Boolean);
     else p[f]=inp.value.trim();
     btSave();
   });
   const imp=$('#bt-import'); if(imp) imp.onchange=e=>importBrandTable(e.target.files[0]);
+  // portfolios
+  if($('#bt-padd')) $('#bt-padd').onclick=()=>{ A.portfolios.push({name:'',id:''}); btSave(); renderBrandTable(); };
+  if($('#bt-pfromprod')) $('#bt-pfromprod').onclick=()=>{
+    const have=new Set(A.portfolios.map(p=>String(p.id))); let added=0;
+    A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); added++; } });
+    btSave(); renderBrandTable(); if(!added) alert('No new portfolio IDs found in products.');
+  };
+  document.querySelectorAll('#app .bt-pdel').forEach(b=>b.onclick=()=>{ A.portfolios.splice(+b.dataset.pi,1); btSave(); renderBrandTable(); });
+  document.querySelectorAll('#app input[data-pf]').forEach(inp=>inp.onchange=()=>{
+    const i=+inp.dataset.pi, f=inp.dataset.pf, p=A.portfolios[i]; if(!p) return; p[f]=inp.value.trim(); btSave();
+  });
 }
 function importBrandTable(file){
   if(!file) return;
@@ -1125,13 +1154,17 @@ function importBrandTable(file){
       }
       if(!prods.length){ alert('No product rows found. Expected a "Brand Table"-style sheet with Brand Name / Product Code columns.'); return; }
       let acc=BT.current;
-      if(!acc){ acc=(prompt('Import into which account? (name):','Imported')||'').trim()||'Imported'; if(!BT.accounts[acc])BT.accounts[acc]=[]; BT.current=acc; }
-      if(BT.accounts[acc].length){
-        const rep=confirm(`"${acc}" already has ${BT.accounts[acc].length} product(s).\n\nOK = REPLACE with ${prods.length} imported\nCancel = APPEND the ${prods.length} imported`);
-        BT.accounts[acc]= rep? prods : BT.accounts[acc].concat(prods);
-      } else BT.accounts[acc]=prods;
+      if(!acc){ acc=(prompt('Import into which account? (name):','Imported')||'').trim()||'Imported'; BT.current=acc; }
+      const A=acctObj(acc);
+      if(A.products.length){
+        const rep=confirm(`"${acc}" already has ${A.products.length} product(s).\n\nOK = REPLACE with ${prods.length} imported\nCancel = APPEND the ${prods.length} imported`);
+        A.products = rep? prods : A.products.concat(prods);
+      } else A.products=prods;
+      // auto-add any new portfolio IDs found in the imported products
+      const have=new Set(A.portfolios.map(p=>String(p.id)));
+      A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); } });
       btSave(); renderBrandTable();
-      alert(`Imported ${prods.length} product(s) into "${acc}".`);
+      alert(`Imported ${prods.length} product(s) into "${acc}". ${A.portfolios.length} portfolio ID(s) available — add friendly names in the Portfolios section.`);
     }catch(err){ console.error(err); alert('Import error: '+err.message); }
   };
   r.readAsArrayBuffer(file);
@@ -1194,6 +1227,7 @@ function renderCampaignCreate(){
       </div>
       <div class="ctrls" id="cc-source" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
         <div class="field"><label>Account (Brand Table)</label><select id="cc-acc">${btAccountOptions(cfg.btAccount)}</select></div>
+        <div class="field"><label>Portfolio</label><select id="cc-pf">${btPortfolioOptions(cfg.btAccount,cfg.portfolioId)}</select></div>
         <div class="field grow"><label>Product — auto-fills Brand, ASIN, SKUs & Portfolio ID</label><select id="cc-prod">${btProductOptions(cfg.btAccount,cfg.btProduct)}</select></div>
         ${Object.keys(BT.accounts).length? '' : '<div class="hint">No saved data yet — add products in the <b>Brand Table</b> tab, or fill the fields below manually.</div>'}
       </div>
@@ -1251,7 +1285,8 @@ function renderCampaignCreate(){
   bindText('cc-per','perCampaign'); bindText('cc-start','startNum');
   $('#cc-strat').onchange=e=>{ cfg.strategy=e.target.value; };
   $('#cc-acc').onchange=e=>{ cfg.btAccount=e.target.value; cfg.btProduct=''; renderCampaignCreate(); };
-  $('#cc-prod').onchange=e=>{ cfg.btProduct=e.target.value; const p=(BT.accounts[cfg.btAccount]||[])[+e.target.value]; if(p){ cfg.brand=p.niche||p.brand||cfg.brand; cfg.asin=p.asin||''; cfg.skus=(p.skus||[]).join('\n'); cfg.portfolioId=p.portfolioId||''; } renderCampaignCreate(); };
+  $('#cc-pf').onchange=e=>{ cfg.portfolioId=e.target.value; renderCampaignCreate(); };
+  $('#cc-prod').onchange=e=>{ cfg.btProduct=e.target.value; const p=cfg.btAccount&&BT.accounts[cfg.btAccount]?acctObj(cfg.btAccount).products[+e.target.value]:null; if(p){ cfg.brand=p.niche||p.brand||cfg.brand; cfg.asin=p.asin||''; cfg.skus=(p.skus||[]).join('\n'); if(p.portfolioId) cfg.portfolioId=p.portfolioId; } renderCampaignCreate(); };
   $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
