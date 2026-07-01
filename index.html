@@ -164,7 +164,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-01 18:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-01 22:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1327,7 +1327,19 @@ function renderCampaignCreate(){
   bindText('cc-per','perCampaign'); bindText('cc-start','startNum');
   $('#cc-strat').onchange=e=>{ cfg.strategy=e.target.value; };
   $('#cc-acc').onchange=e=>{ cfg.btAccount=e.target.value; cfg.btProduct=''; renderCampaignCreate(); };
-  $('#cc-pf').onchange=e=>{ cfg.portfolioId=e.target.value; renderCampaignCreate(); };
+  $('#cc-pf').onchange=e=>{
+    cfg.portfolioId=e.target.value;
+    // pull the parent ASIN out of the portfolio name (e.g. "01. GFK Repair Set | B085TNZDYQ |")
+    const A = cfg.btAccount && BT.accounts[cfg.btAccount] ? acctObj(cfg.btAccount) : null;
+    const pf = A ? A.portfolios.find(p=>String(p.id)===String(e.target.value)) : null;
+    if(pf){
+      const nm = pf.name||'';
+      const isMixed = /\bmixed\b|alle\s*produkte|all\s*products/i.test(nm);
+      const m = nm.match(/B0[A-Z0-9]{8}/i);
+      if(!isMixed && m) cfg.asin = m[0].toUpperCase();
+    }
+    renderCampaignCreate();
+  };
   $('#cc-prod').onchange=e=>{ cfg.btProduct=e.target.value; const p=cfg.btAccount&&BT.accounts[cfg.btAccount]?acctObj(cfg.btAccount).products[+e.target.value]:null; if(p){ cfg.brand=p.niche||p.brand||cfg.brand; cfg.asin=p.asin||''; cfg.skus=(p.skus||[]).join('\n'); if(p.portfolioId) cfg.portfolioId=p.portfolioId; } renderCampaignCreate(); };
   $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
