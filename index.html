@@ -151,6 +151,7 @@
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
   </div>
   <div class="prevfile"><a id="prevBtn" class="hidden">📂 Open Previous File</a> <span id="loadNote"></span></div>
+  <div id="btSaveBar" class="hidden" style="margin:0 0 12px;"></div>
 
   <div class="navrow">
     <div class="nav" id="nav"></div>
@@ -298,8 +299,8 @@ function parseWorkbook(wb){
       }
       if(ent==='campaign'){
         const cn=String(g('campaignName')||'');
-        DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), targetingType:String(g('targetingType')||''), state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
-        DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), product, targetingType:String(g('targetingType')||''), budget:toNum(g('dailyBudget'))};
+        DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
+        DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), budget:toNum(g('dailyBudget'))};
       } else if(ent==='ad group'){
         DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
       } else if(ent==='product ad'){
@@ -374,6 +375,29 @@ function btSave(){ try{ localStorage.setItem(BT_KEY, JSON.stringify(BT)); }catch
 function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
 function btProductOptions(acc,selIdx){ const list=(acc&&BT.accounts[acc]?acctObj(acc).products:[]); return `<option value="">— select product —</option>`+list.map((p,i)=>`<option value="${i}" ${String(selIdx)===String(i)?'selected':''}>${esc((p.brand||'?')+' — '+(p.name||'?')+' — '+(p.asin||''))}</option>`).join(''); }
 function btPortfolioOptions(acc,selId){ const list=(acc&&BT.accounts[acc]?acctObj(acc).portfolios:[]); return `<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join(''); }
+/* pull products (ASIN+SKUs+portfolio) and named portfolios out of a loaded bulk file */
+function extractBrandDataFromBulk(){
+  const pfMap=new Map();
+  DATA.campaigns.forEach(c=>{ const id=String(c.portfolioId||'').trim(); if(!id) return; const nm=(c.portfolioName||'').trim(); if(!pfMap.has(id) || (!pfMap.get(id) && nm)) pfMap.set(id, nm); });
+  const portfolios=[...pfMap.entries()].map(([id,name])=>({id,name}));
+  const camp2pf={}; DATA.campaigns.forEach(c=>{ if(c.portfolioId) camp2pf[c.campaignId]=String(c.portfolioId).trim(); });
+  const byKey=new Map();
+  DATA.productAds.forEach(a=>{ const asin=(a.asin||'').trim(), sku=(a.sku||'').trim(); const key=(asin||sku).toLowerCase(); if(!key) return; if(!byKey.has(key)) byKey.set(key,{asin, skus:new Set(), portfolioId: camp2pf[a.campaignId]||''}); const e=byKey.get(key); if(sku) e.skus.add(sku); if(!e.asin && asin) e.asin=asin; if(!e.portfolioId && camp2pf[a.campaignId]) e.portfolioId=camp2pf[a.campaignId]; });
+  const products=[...byKey.values()].map(e=>({brand:'',niche:'',name:'',asin:e.asin, portfolioId:e.portfolioId, skus:[...e.skus]}));
+  return {products, portfolios};
+}
+function mergeIntoAccount(accName, data){
+  const A=acctObj(accName);
+  data.products.forEach(np=>{
+    let ex = np.asin ? A.products.find(p=>p.asin && p.asin.toLowerCase()===np.asin.toLowerCase()) : null;
+    if(!ex && !np.asin && np.skus.length) ex=A.products.find(p=>(p.skus||[]).some(s=>np.skus.includes(s)));
+    if(ex){ const set=new Set(ex.skus||[]); np.skus.forEach(s=>set.add(s)); ex.skus=[...set]; if(!ex.portfolioId && np.portfolioId) ex.portfolioId=np.portfolioId; }
+    else A.products.push(np);
+  });
+  const have=new Map(A.portfolios.map(p=>[String(p.id),p]));
+  data.portfolios.forEach(pf=>{ if(!pf.id) return; const ex=have.get(String(pf.id)); if(ex){ if(!ex.name && pf.name) ex.name=pf.name; } else { const np={name:pf.name||'',id:String(pf.id)}; A.portfolios.push(np); have.set(String(pf.id),np); } });
+  btSave(); return A;
+}
 function stFor(tab){ return S.filt[tab] = S.filt[tab] || {}; }
 function selFor(tab){ return S.sel[tab] = S.sel[tab] || new Set(); }
 function sortFor(tab,def){ if(!S.sort[tab]) S.sort[tab]=def||{key:'spend',dir:-1}; return S.sort[tab]; }
@@ -1080,6 +1104,8 @@ function renderBrandTable(){
         <button class="btn ghost" id="bt-new">＋ New account</button>
         <button class="btn ghost" id="bt-ren" ${acc?'':'disabled'}>✎ Rename</button>
         <button class="btn ghost" id="bt-delacc" ${acc?'':'disabled'}>🗑 Delete</button>
+        <button class="btn ghost" id="bt-backup" title="Download a JSON backup of all accounts">⬇ Backup</button>
+        <label class="btn ghost" style="cursor:pointer;" title="Restore from a JSON backup">⬆ Restore<input type="file" id="bt-restore" accept=".json,application/json" style="display:none;"></label>
       </div>
       <div class="banner">Saved in this browser and kept across sessions. Maintain your <b>Products</b> and <b>Portfolios</b> per account here once — then in <b>Campaign Builder</b> just pick the account, portfolio & product and everything auto-fills. (Niche/Code is the short code used in the campaign name — e.g. BNP.)</div>
       <div class="rowbar">
@@ -1113,6 +1139,8 @@ function renderBrandTable(){
     btSave();
   });
   const imp=$('#bt-import'); if(imp) imp.onchange=e=>importBrandTable(e.target.files[0]);
+  $('#bt-backup').onclick=()=>{ const blob=new Blob([JSON.stringify(BT,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='brand_table_backup.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
+  $('#bt-restore').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=ev=>{ try{ const d=JSON.parse(ev.target.result); if(d&&d.accounts){ if(confirm('Restore will REPLACE the current Brand Table with this backup. Continue?')){ BT=d; if(!BT.current) BT.current=''; Object.keys(BT.accounts).forEach(n=>acctObj(n)); btSave(); renderBrandTable(); alert('Restored '+Object.keys(BT.accounts).length+' account(s).'); } } else alert('Not a valid Brand Table backup file.'); }catch(err){ alert('Invalid JSON: '+err.message); } }; rd.readAsText(f); };
   // portfolios
   if($('#bt-padd')) $('#bt-padd').onclick=()=>{ A.portfolios.push({name:'',id:''}); btSave(); renderBrandTable(); };
   if($('#bt-pfromprod')) $('#bt-pfromprod').onclick=()=>{
@@ -1401,6 +1429,15 @@ function loadArrayBuffer(buf,name){
     renderToggle(); renderNav(); renderTab();
     idbSave(buf,name);
     $('#prevBtn').classList.remove('hidden');
+    // offer to auto-save master data (ASINs, SKUs, named portfolios) into Brand Table
+    const bd=extractBrandDataFromBulk(); const bar=$('#btSaveBar');
+    if(bar && (bd.products.length||bd.portfolios.length)){
+      window.__pendingBrand=bd;
+      const opts=Object.keys(BT.accounts).map(n=>`<option ${n===BT.current?'selected':''}>${esc(n)}</option>`).join('');
+      bar.classList.remove('hidden');
+      bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's master data to <b>Brand Table</b>: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). &nbsp;Account: <select id="btbar-acc" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;">${opts}<option value="__new">➕ New account…</option></select> <button class="btn grad" id="btbar-save">Save to Brand Table</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
+      $('#btbar-save').onclick=()=>{ let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (name||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; } mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc); $('#btbar-done').textContent=`✓ Saved to "${acc}" (${A.products.length} products, ${A.portfolios.length} portfolios)`; if(S.tab==='brandtable'||S.tab==='create') renderTab(); };
+    } else if(bar){ bar.classList.add('hidden'); bar.innerHTML=''; }
   }catch(err){ console.error(err); $('#loadNote').textContent='Error reading file: '+err.message; }
 }
 function handleFile(file){ if(!file) return; $('#loadNote').textContent='Loading…'; const r=new FileReader(); r.onload=e=>loadArrayBuffer(e.target.result,file.name); r.readAsArrayBuffer(file); }
