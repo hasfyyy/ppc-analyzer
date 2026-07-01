@@ -499,6 +499,7 @@ const TABS=[
   {id:'overview',label:'Overview',ic:'📊'},
   {id:'placement',label:'Placement',ic:'📍'},
   {id:'negatives',label:'Negatives',ic:'⊘'},
+  {id:'negatives-sb',label:'Negatives – SB',ic:'⊘'},
   {id:'ngram',label:'N-Gram',ic:'🔤'},
   {id:'targets',label:'Targets SP',ic:'🎯'},
   {id:'harvesting',label:'Harvesting',ic:'🌱'},
@@ -512,9 +513,12 @@ function renderNav(){
   $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{ S.tab=b.dataset.tab; renderNav(); renderTab(); });
 }
 function renderToggle(){
-  // Sponsored Products only — SB removed. Keep the bar hidden.
-  S.product='SP';
-  const el=$('#ptToggle'); if(el){ el.style.display='none'; el.innerHTML=''; }
+  const el=$('#ptToggle'); if(el) el.style.display='';
+  const nSP=stSP().length, nSB=stSB().length;
+  $('#ptToggle').innerHTML =
+    `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
+    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`;
+  $('#ptToggle').querySelectorAll('.pt-btn').forEach(b=>b.onclick=()=>{ S.product=b.dataset.p; renderToggle(); renderTab(); });
 }
 
 function renderTab(){
