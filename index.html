@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:26</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -666,7 +666,7 @@ function renderNegatives(product){
   const sel=selFor(tab);
   const tot=derive(totals);
   const cols=[
-    {key:'action',label:'Action',l:true,noSort:true,cell:r=>`<span class="badge neg">Negative Exact</span>`},
+    {key:'action',label:'Action',l:true,noSort:true,cell:r=>ASIN_RE.test(String(r.searchTerm||'').trim())?`<span class="badge neg" style="border-color:#f59e0b;color:#b45309;">Negative Product</span>`:`<span class="badge neg">Negative Exact</span>`},
     {key:'searchTerm',label:'Search Term',l:true,type:'text'},
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
     {key:'negated',label:'Already Negated',l:true,noSort:true,cell:r=>r.negated?'<span class="badge negd">Yes</span>':'—'},
@@ -1102,10 +1102,21 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} ${matchType} row(s) across ${new Set(out.map(r=>r[3])).size} campaign(s) in ${portsAll.size} portfolio(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s).`);
 }
+const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 function exportNegatives(product,rows){
   if(!rows.length){ alert('No candidates to export.'); return; }
-  const out=rows.map(r=>bulkRow({'Product':product==='SB'?'Sponsored Brands':'Sponsored Products','Entity':'Negative keyword','Operation':'Create','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'enabled','Keyword Text':r.searchTerm,'Match Type':'Negative Exact'}));
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=rows.map(r=>{
+    const term=String(r.searchTerm||'').trim();
+    if(ASIN_RE.test(term)){
+      // this "search term" is actually an ASIN (auto/PAT match) — negate it as a product target, not a keyword
+      return bulkRow({'Product':prod,'Entity':'Negative product targeting','Operation':'Create','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'enabled','Product Targeting Expression':`asin="${term.toUpperCase()}"`});
+    }
+    return bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Exact'});
+  });
+  const asinCount=rows.filter(r=>ASIN_RE.test(String(r.searchTerm||'').trim())).length;
   writeBulk(out, (product==='SB'?'sb_':'')+'negatives_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  if(asinCount) alert(`Exported ${out.length} row(s). Note: ${asinCount} were ASINs (from auto/product targeting) — exported as Negative product targeting instead of Negative keyword, since Amazon shoppers don't type ASINs as search terms.`);
 }
 function exportTargetsPause(rows){
   if(!rows.length){ alert('No targets selected.'); return; }
