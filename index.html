@@ -164,7 +164,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-01 22:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -378,7 +378,15 @@ function btLoad(){ try{ const d=JSON.parse(localStorage.getItem(BT_KEY)); if(d&&
 function btSave(){ try{ localStorage.setItem(BT_KEY, JSON.stringify(BT)); }catch(e){ alert('Could not save Brand Table (browser storage full?).'); } }
 function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
 function btProductOptions(acc,selIdx){ const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const list=A?A.products:[]; const pfName=id=>{ const p=(A?A.portfolios:[]).find(x=>String(x.id)===String(id)); return p?(p.name||p.id):(id||''); }; return `<option value="">— select product —</option>`+list.map((p,i)=>{ const label=[pfName(p.portfolioId), (p.asin||p.sku||'')].filter(Boolean).join('  —  ')||('Product '+(i+1)); return `<option value="${i}" ${String(selIdx)===String(i)?'selected':''}>${esc(label)}</option>`; }).join(''); }
-function btPortfolioOptions(acc,selId){ const list=(acc&&BT.accounts[acc]?acctObj(acc).portfolios:[]); return `<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join(''); }
+// A "dedicated" portfolio (one product/parent) is numbered: "01. …", "24. …". Mixed/branded ones aren't.
+function isDedicatedPortfolio(name){ return /^\s*\d/.test(String(name||'')); }
+function btPortfolioOptions(acc,selId){
+  const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const all=A?A.portfolios:[];
+  const list=all.filter(p=>isDedicatedPortfolio(p.name));
+  let html=`<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
+  if(selId && !list.some(p=>String(p.id)===String(selId))){ const k=all.find(p=>String(p.id)===String(selId)); html+=`<option value="${esc(selId)}" selected>${esc(k?((k.name||k.id)+' (mixed)'):(selId+' (unlisted)'))}</option>`; }
+  return html;
+}
 /* pull products (ASIN+SKUs+portfolio) and named portfolios out of a loaded bulk file */
 function extractBrandDataFromBulk(){
   const pfMap=new Map();
@@ -1078,10 +1086,10 @@ function renderProducts(){
 
 /* ============================ BRAND TABLE (master data) ============================ */
 function rowPortfolioSelect(i, pid, ports){
-  const inList = ports.some(p=>String(p.id)===String(pid));
+  const list = ports.filter(p=>isDedicatedPortfolio(p.name));
   let opts = `<option value="">— none —</option>`;
-  opts += ports.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-  if(pid && !inList) opts += `<option value="${esc(pid)}" selected>${esc(pid)} (unlisted)</option>`;
+  opts += list.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
+  if(pid && !list.some(p=>String(p.id)===String(pid))){ const k=ports.find(p=>String(p.id)===String(pid)); opts+=`<option value="${esc(pid)}" selected>${esc(k?((k.name||k.id)+' (mixed)'):(pid+' (unlisted)'))}</option>`; }
   return `<select data-i="${i}" data-pfsel="1" style="width:160px;">${opts}</select>`;
 }
 function renderBrandTable(){
