@@ -146,6 +146,8 @@
 <body>
 <div class="wrap">
 
+  <div style="text-align:right;margin-bottom:6px;"><a href="Campaign_Builder.html" style="font-size:12.5px;font-weight:600;color:#6b7280;border:1px solid #e7e9ee;background:#fff;padding:7px 12px;border-radius:9px;">🏗️ Campaign Builder →</a></div>
+
   <div id="dropzone" class="dropzone">
     <div class="up-ic">⬆️</div>
     <h3>Drop your Amazon Bulk Operations file here</h3>
@@ -164,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:26</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -376,17 +378,6 @@ let BT={current:'',accounts:{}};   // accounts[name] = {products:[{brand,niche,n
 function acctObj(name){ let a=BT.accounts[name]; if(a==null){ a=BT.accounts[name]={products:[],portfolios:[]}; } if(Array.isArray(a)){ a=BT.accounts[name]={products:a,portfolios:[]}; } if(!a.products)a.products=[]; if(!a.portfolios)a.portfolios=[]; return a; }
 function btLoad(){ try{ const d=JSON.parse(localStorage.getItem(BT_KEY)); if(d&&d.accounts) BT=d; }catch(e){} Object.keys(BT.accounts||{}).forEach(n=>acctObj(n)); }
 function btSave(){ try{ localStorage.setItem(BT_KEY, JSON.stringify(BT)); }catch(e){ alert('Could not save Brand Table (browser storage full?).'); } }
-function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
-function btProductOptions(acc,selIdx){ const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const list=A?A.products:[]; const pfName=id=>{ const p=(A?A.portfolios:[]).find(x=>String(x.id)===String(id)); return p?(p.name||p.id):(id||''); }; return `<option value="">— select product —</option>`+list.map((p,i)=>{ const label=[pfName(p.portfolioId), (p.asin||p.sku||'')].filter(Boolean).join('  —  ')||('Product '+(i+1)); return `<option value="${i}" ${String(selIdx)===String(i)?'selected':''}>${esc(label)}</option>`; }).join(''); }
-// A "dedicated" portfolio (one product/parent) is numbered: "01. …", "24. …". Mixed/branded ones aren't.
-function isDedicatedPortfolio(name){ return /^\s*\d/.test(String(name||'')); }
-function btPortfolioOptions(acc,selId){
-  const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const all=A?A.portfolios:[];
-  const list=all.filter(p=>isDedicatedPortfolio(p.name));
-  let html=`<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-  if(selId && !list.some(p=>String(p.id)===String(selId))){ const k=all.find(p=>String(p.id)===String(selId)); html+=`<option value="${esc(selId)}" selected>${esc(k?((k.name||k.id)+' (mixed)'):(selId+' (unlisted)'))}</option>`; }
-  return html;
-}
 /* pull products (ASIN+SKUs+portfolio) and named portfolios out of a loaded bulk file */
 function extractBrandDataFromBulk(){
   const pfMap=new Map();
@@ -517,8 +508,6 @@ const TABS=[
   {id:'harvesting',label:'Harvesting',ic:'🌱'},
   {id:'kwcheck',label:'Keyword Checker',ic:'🔍'},
   {id:'products',label:'Products',ic:'📦'},
-  {id:'brandtable',label:'Brand Table',ic:'🗂️'},
-  {id:'create',label:'Campaign Builder',ic:'🏗️'},
 ];
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
@@ -535,9 +524,9 @@ function renderToggle(){
 
 function renderTab(){
   const app=$('#app');
-  if(!DATA.loaded && S.tab!=='create' && S.tab!=='brandtable'){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic">📁</div><p>Upload an Amazon Bulk Operations file to begin — or use the <b>Brand Table</b> / <b>Campaign Builder</b> tabs, which work without a file.</p></div></div>`; return; }
+  if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic">📁</div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:renderTargets, harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, brandtable:renderBrandTable, create:renderCampaignCreate}[S.tab])();
+    ngram:renderNgram, targets:renderTargets, harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -976,7 +965,6 @@ function renderHarvesting(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Harvesting Opportunities (${opps.length})</h3><div class="spacer"></div>
-        <button class="btn ghost" id="hv-tobuilder" ${sel.size?'':'disabled'}>↗ Send to Builder (${sel.size})</button>
         <button class="btn grad" id="hv-create" ${sel.size?'':'disabled'}>➕ Create New Campaign (${sel.size})</button>
         <button class="btn ghost" id="hv-dl">⬇ Download</button>
       </div>
@@ -993,7 +981,6 @@ function renderHarvesting(){
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
   $('#hv-create').onclick=()=>exportNewCampaigns(opps.filter(o=>sel.has(o._uid)));
-  $('#hv-tobuilder').onclick=()=>{ const chosen=opps.filter(o=>sel.has(o._uid)); if(!chosen.length){alert('Select at least one opportunity.');return;} const cfg=ensureBuilderInit(); cfg.type='manual'; cfg.m_exact=true; const existing=linesOf(cfg.keywords); cfg.keywords=[...new Set([...existing,...chosen.map(o=>o.searchTerm)])].join('\n'); S.tab='create'; renderNav(); renderTab(); };
 }
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
 
@@ -1084,345 +1071,10 @@ function renderProducts(){
   $('#pr-dl').onclick=()=>exportCSV(cols,rows,'products');
 }
 
-/* ============================ BRAND TABLE (master data) ============================ */
-function rowPortfolioSelect(i, pid, ports){
-  const list = ports.filter(p=>isDedicatedPortfolio(p.name));
-  let opts = `<option value="">— none —</option>`;
-  opts += list.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-  if(pid && !list.some(p=>String(p.id)===String(pid))){ const k=ports.find(p=>String(p.id)===String(pid)); opts+=`<option value="${esc(pid)}" selected>${esc(k?((k.name||k.id)+' (mixed)'):(pid+' (unlisted)'))}</option>`; }
-  return `<select data-i="${i}" data-pfsel="1" style="width:160px;">${opts}</select>`;
-}
-function applyBrandFilter(){
-  const acc=BT.current, A=acc?acctObj(acc):null; if(!A) return;
-  const pf=$('#bt-fportfolio')?$('#bt-fportfolio').value:'';
-  const q=($('#bt-fsearch')?$('#bt-fsearch').value:'').toLowerCase().trim();
-  let shown=0, total=0;
-  document.querySelectorAll('#app tbody tr[data-row]').forEach(tr=>{
-    total++;
-    const p=A.products[+tr.dataset.row]; let ok=!!p;
-    if(ok && pf && String(p.portfolioId)!==pf) ok=false;
-    if(ok && q){ const hay=((p.brand||'')+' '+(p.niche||'')+' '+(p.name||'')+' '+(p.asin||'')+' '+((p.skus||[]).join(' '))).toLowerCase(); if(!hay.includes(q)) ok=false; }
-    tr.style.display = ok?'':'none'; if(ok) shown++;
-  });
-  const c=$('#bt-count'); if(c) c.textContent = (pf||q)? `${shown} / ${total} shown` : `${total} products`;
-}
-function renderBrandTable(){
-  const accNames=Object.keys(BT.accounts);
-  if(BT.current && !BT.accounts[BT.current]) BT.current='';
-  if(!BT.current && accNames.length) BT.current=accNames[0];
-  const acc=BT.current; const A= acc? acctObj(acc): null;
-  const prods= A? A.products:[]; const ports= A? A.portfolios:[];
-  S.btFilter = S.btFilter || {portfolio:'', search:''};
-  // auto-fill empty Brand with the account name
-  if(A){ let ch=false; prods.forEach(p=>{ if(!(p.brand||'').trim()){ p.brand=acc; ch=true; } }); if(ch) btSave(); }
-  const accSel = `<select id="bt-acc">${accNames.length?accNames.map(n=>`<option ${acc===n?'selected':''}>${esc(n)}</option>`).join(''):'<option value="">(no accounts)</option>'}</select>`;
-  const pfFilterOpts = ports.map(p=>`<option value="${esc(p.id)}" ${S.btFilter.portfolio===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-  const rowsHtml = prods.map((p,i)=>`<tr data-row="${i}">
-    <td class="l">${i+1}</td>
-    <td>${rowPortfolioSelect(i, p.portfolioId, ports)}</td>
-    <td><input data-i="${i}" data-f="brand" value="${esc(p.brand||'')}" style="width:120px;"></td>
-    <td><input data-i="${i}" data-f="niche" value="${esc(p.niche||'')}" placeholder="BNP" style="width:80px;"></td>
-    <td><input data-i="${i}" data-f="name" value="${esc(p.name||'')}" style="width:150px;"></td>
-    <td><input data-i="${i}" data-f="asin" value="${esc(p.asin||'')}" style="width:120px;"></td>
-    <td><input data-i="${i}" data-f="portfolioId" value="${esc(p.portfolioId||'')}" style="width:130px;"></td>
-    <td><input data-i="${i}" data-f="skus" value="${esc((p.skus||[]).join(', '))}" style="width:280px;"></td>
-    <td class="l"><button class="btn ghost bt-del" data-i="${i}" style="padding:4px 9px;">✕</button></td>
-  </tr>`).join('');
-  const pfHtml = ports.map((p,i)=>`<tr>
-    <td class="l">${i+1}</td>
-    <td><input data-pi="${i}" data-pf="name" value="${esc(p.name||'')}" placeholder="e.g. Bookends" style="width:200px;"></td>
-    <td><input data-pi="${i}" data-pf="id" value="${esc(p.id||'')}" placeholder="numeric ID" style="width:180px;"></td>
-    <td class="l"><button class="btn ghost bt-pdel" data-pi="${i}" style="padding:4px 9px;">✕</button></td>
-  </tr>`).join('');
-  $('#app').innerHTML=`
-    <div class="card pad">
-      <div class="rowbar">
-        <h3 class="sectitle" style="margin:0;">🗂️ Brand Table — saved master data</h3>
-        <div class="spacer"></div>
-        <div class="field"><label>Account</label>${accSel}</div>
-        <button class="btn ghost" id="bt-new">＋ New account</button>
-        <button class="btn ghost" id="bt-ren" ${acc?'':'disabled'}>✎ Rename</button>
-        <button class="btn ghost" id="bt-delacc" ${acc?'':'disabled'}>🗑 Delete</button>
-        <button class="btn ghost" id="bt-backup" title="Download a JSON backup of all accounts">⬇ Backup</button>
-        <label class="btn ghost" style="cursor:pointer;" title="Restore from a JSON backup">⬆ Restore<input type="file" id="bt-restore" accept=".json,application/json" style="display:none;"></label>
-      </div>
-      <div class="banner">Saved in this browser and kept across sessions. Maintain your <b>Products</b> and <b>Portfolios</b> per account here once — then in <b>Campaign Builder</b> just pick the account, portfolio & product and everything auto-fills. (Niche/Code is the short code used in the campaign name — e.g. BNP.)</div>
-      <div class="rowbar">
-        <label class="btn ghost" style="cursor:pointer;">⬆ Import products from Excel/CSV<input type="file" id="bt-import" accept=".xlsx,.xls,.csv" style="display:none;"></label>
-        <span class="hint">Reads: Brand Name · Product Name · Product Code (ASIN) · Portfolio ID · SKU1..SKUn</span>
-        <div class="spacer"></div>
-        <button class="btn grad" id="bt-add" ${acc?'':'disabled'}>＋ Add product</button>
-      </div>
-      ${acc? `<div class="rowbar">
-        <div class="field"><label>Filter by Portfolio</label><select id="bt-fportfolio"><option value="">All portfolios</option>${pfFilterOpts}</select></div>
-        <div class="field grow"><label>Search (brand · ASIN · SKU · product name)</label><input type="text" id="bt-fsearch" placeholder="type to filter…" value="${esc(S.btFilter.search||'')}"></div>
-        <div class="spacer"></div><span class="hint" id="bt-count"></span>
-      </div>
-      <div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Portfolio</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASIN</th><th class="l">Portfolio ID</th><th class="l">SKUs (comma-separated)</th><th class="l"></th></tr></thead><tbody>${rowsHtml||'<tr><td colspan="9" class="l" style="padding:20px;color:#9aa3af;">No products yet — click “Add product” or import your Brand Table.</td></tr>'}</tbody></table></div>`
-        : `<div class="empty"><div class="ic">🗂️</div><p>Create an account to start (e.g. Lionstrong, MR.DEKO) or import your Brand Table file.</p></div>`}
-    </div>
-    ${acc? `<div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">📁 Portfolios — ${esc(acc)}</h3>
-        <span class="hint">Give each portfolio a friendly name + its numeric ID. You'll pick these by name in Campaign Builder.</span>
-        <div class="spacer"></div>
-        <button class="btn ghost" id="bt-pfromprod">＋ From products' IDs</button>
-        <button class="btn grad" id="bt-padd">＋ Add portfolio</button>
-      </div>
-      <div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Portfolio Name</th><th class="l">Portfolio ID (numeric)</th><th class="l"></th></tr></thead><tbody>${pfHtml||'<tr><td colspan="4" class="l" style="padding:18px;color:#9aa3af;">No portfolios yet — add one, or pull the IDs already present in your products.</td></tr>'}</tbody></table></div>
-    </div>`:''}`;
-  if(accNames.length) $('#bt-acc').onchange=e=>{ BT.current=e.target.value; btSave(); renderBrandTable(); };
-  $('#bt-new').onclick=()=>{ const n=(prompt('New account name (e.g. Lionstrong):')||'').trim(); if(!n) return; acctObj(n); BT.current=n; btSave(); renderBrandTable(); };
-  $('#bt-ren').onclick=()=>{ if(!acc)return; const n=(prompt('Rename account:',acc)||'').trim(); if(!n||n===acc)return; BT.accounts[n]=BT.accounts[acc]; delete BT.accounts[acc]; BT.current=n; btSave(); renderBrandTable(); };
-  $('#bt-delacc').onclick=()=>{ if(!acc)return; if(!confirm(`Delete account "${acc}" and its ${prods.length} product(s)?`))return; delete BT.accounts[acc]; BT.current=Object.keys(BT.accounts)[0]||''; btSave(); renderBrandTable(); };
-  $('#bt-add').onclick=()=>{ if(!A)return; A.products.push({brand:'',niche:'',name:'',asin:'',portfolioId:'',skus:[]}); btSave(); renderBrandTable(); };
-  document.querySelectorAll('#app .bt-del').forEach(b=>b.onclick=()=>{ A.products.splice(+b.dataset.i,1); btSave(); renderBrandTable(); });
-  document.querySelectorAll('#app input[data-f]').forEach(inp=>inp.onchange=()=>{
-    const i=+inp.dataset.i, f=inp.dataset.f, p=A.products[i]; if(!p) return;
-    if(f==='skus') p.skus=inp.value.split(/[,\n;]+/).map(s=>s.trim()).filter(Boolean);
-    else p[f]=inp.value.trim();
-    btSave();
-  });
-  document.querySelectorAll('#app select[data-pfsel]').forEach(sel=>sel.onchange=()=>{ const p=A.products[+sel.dataset.i]; if(p){ p.portfolioId=sel.value; btSave(); renderBrandTable(); } });
-  if($('#bt-fportfolio')) $('#bt-fportfolio').onchange=()=>{ S.btFilter.portfolio=$('#bt-fportfolio').value; applyBrandFilter(); };
-  if($('#bt-fsearch')) $('#bt-fsearch').oninput=()=>{ S.btFilter.search=$('#bt-fsearch').value; applyBrandFilter(); };
-  applyBrandFilter();
-  const imp=$('#bt-import'); if(imp) imp.onchange=e=>importBrandTable(e.target.files[0]);
-  $('#bt-backup').onclick=()=>{ const blob=new Blob([JSON.stringify(BT,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='brand_table_backup.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
-  $('#bt-restore').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=ev=>{ try{ const d=JSON.parse(ev.target.result); if(d&&d.accounts){ if(confirm('Restore will REPLACE the current Brand Table with this backup. Continue?')){ BT=d; if(!BT.current) BT.current=''; Object.keys(BT.accounts).forEach(n=>acctObj(n)); btSave(); renderBrandTable(); alert('Restored '+Object.keys(BT.accounts).length+' account(s).'); } } else alert('Not a valid Brand Table backup file.'); }catch(err){ alert('Invalid JSON: '+err.message); } }; rd.readAsText(f); };
-  // portfolios
-  if($('#bt-padd')) $('#bt-padd').onclick=()=>{ A.portfolios.push({name:'',id:''}); btSave(); renderBrandTable(); };
-  if($('#bt-pfromprod')) $('#bt-pfromprod').onclick=()=>{
-    const have=new Set(A.portfolios.map(p=>String(p.id))); let added=0;
-    A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); added++; } });
-    btSave(); renderBrandTable(); if(!added) alert('No new portfolio IDs found in products.');
-  };
-  document.querySelectorAll('#app .bt-pdel').forEach(b=>b.onclick=()=>{ A.portfolios.splice(+b.dataset.pi,1); btSave(); renderBrandTable(); });
-  document.querySelectorAll('#app input[data-pf]').forEach(inp=>inp.onchange=()=>{
-    const i=+inp.dataset.pi, f=inp.dataset.pf, p=A.portfolios[i]; if(!p) return; p[f]=inp.value.trim(); btSave();
-  });
-}
-function importBrandTable(file){
-  if(!file) return;
-  const r=new FileReader();
-  r.onload=ev=>{
-    try{
-      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
-      let best=null;
-      wb.SheetNames.forEach(sn=>{
-        const js=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
-        if(!js.length) return;
-        const hdr=js[0].map(h=>String(h).toLowerCase());
-        if(hdr.some(h=>h.includes('brand'))&&hdr.some(h=>h.includes('product code')||h.includes('asin'))){ if(!best) best={js,hdr}; }
-      });
-      if(!best){ const sn=wb.SheetNames[0]; const js=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}); best={js,hdr:(js[0]||[]).map(h=>String(h).toLowerCase())}; }
-      const {js,hdr}=best;
-      const find=preds=>hdr.findIndex(h=>preds.some(p=>h.includes(p)));
-      const ci={ brand:find(['brand']), niche:find(['niche']), name:find(['product name']), asin:find(['product code','asin']), port:find(['portfolio']) };
-      const skuCols=[]; hdr.forEach((h,idx)=>{ const c=h.replace(/\s/g,''); if(/^sku\d+$/.test(c)||c==='sku') skuCols.push(idx); });
-      const asStr=v=> (typeof v==='number')? (Number.isInteger(v)? v.toFixed(0): String(v)) : String(v||'').trim();
-      const prods=[];
-      for(let i=1;i<js.length;i++){
-        const row=js[i]; const g=idx=>idx>=0?row[idx]:'';
-        const asin=asStr(g(ci.asin)), brand=asStr(g(ci.brand));
-        if(!asin && !brand) continue;
-        const skus=skuCols.map(idx=>row[idx]).filter(v=>v!=='' && v!=null).map(asStr);
-        prods.push({brand, niche:asStr(g(ci.niche)), name:asStr(g(ci.name)), asin, portfolioId:asStr(g(ci.port)), skus});
-      }
-      if(!prods.length){ alert('No product rows found. Expected a "Brand Table"-style sheet with Brand Name / Product Code columns.'); return; }
-      let acc=BT.current;
-      if(!acc){ acc=(prompt('Import into which account? (name):','Imported')||'').trim()||'Imported'; BT.current=acc; }
-      const A=acctObj(acc);
-      if(A.products.length){
-        const rep=confirm(`"${acc}" already has ${A.products.length} product(s).\n\nOK = REPLACE with ${prods.length} imported\nCancel = APPEND the ${prods.length} imported`);
-        A.products = rep? prods : A.products.concat(prods);
-      } else A.products=prods;
-      // auto-add any new portfolio IDs found in the imported products
-      const have=new Set(A.portfolios.map(p=>String(p.id)));
-      A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); } });
-      btSave(); renderBrandTable();
-      alert(`Imported ${prods.length} product(s) into "${acc}". ${A.portfolios.length} portfolio ID(s) available — add friendly names in the Portfolios section.`);
-    }catch(err){ console.error(err); alert('Import error: '+err.message); }
-  };
-  r.readAsArrayBuffer(file);
-}
-
-/* ============================ CAMPAIGN BUILDER ============================ */
-function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
-function ensureBuilderInit(){ const cfg=stFor('create'); if(cfg._init===undefined){ Object.assign(cfg,{_init:true,type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',skus:'',keywords:'',perCampaign:'',startNum:'1',btAccount:'',btProduct:''}); } return cfg; }
-function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
-function buildName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_'); }
-function linesOf(s){ return String(s||'').split('\n').map(x=>x.trim()).filter(Boolean); }
-function kwGroups(cfg){
-  // returns array of keyword-arrays, one per campaign. Empty per => all in one.
-  const kws=linesOf(cfg.keywords); const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
-  if(cfg.type==='auto') return [[]];
-  if(per<=0) return [kws];
-  const g=[]; for(let i=0;i<kws.length;i+=per) g.push(kws.slice(i,i+per));
-  return g.length?g:[[]];
-}
-function buildCampaignRows(cfg){
-  const out=[]; const matches=selectedMatches(cfg);
-  const skus=linesOf(cfg.skus);
-  const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
-  const start=Math.max(1,parseInt(cfg.startNum||1)||1);
-  const numbered = cfg.type!=='auto' && per>0;   // number campaigns only when splitting keywords
-  matches.forEach(match=>{
-    const groups=kwGroups(cfg);
-    groups.forEach((grp,gi)=>{
-      const num = numbered? start+gi : null;
-      const cname=buildName(cfg,match,num), agname=cname+'_AG';
-      const c={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':cfg.type==='auto'?'Auto':'Manual','State':'enabled','Daily Budget':cfg.budget,'Bidding Strategy':cfg.strategy};
-      if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
-      out.push(bulkRow(c));
-      if(+cfg.tos>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Top','Percentage':cfg.tos}));
-      out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
-      (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
-      if(cfg.type!=='auto') grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase(),'Bid':cfg.bid})));
-    });
-  });
-  return out;
-}
-function builderIssues(cfg){
-  const iss=[]; const matches=selectedMatches(cfg);
-  if(!matches.length) iss.push('Select at least one match type.');
-  if(!String(cfg.brand).trim() && !String(cfg.asin).trim()) iss.push('Enter a Brand/Niche or ASIN for the campaign name.');
-  if(cfg.type!=='auto' && !linesOf(cfg.keywords).length) iss.push('Enter at least one keyword (manual campaigns).');
-  if(!linesOf(cfg.skus).length) iss.push('Add at least one SKU (the product to advertise).');
-  return iss;
-}
-function renderCampaignCreate(){
-  const cfg=ensureBuilderInit();
-  const strat=['Dynamic bids - down only','Dynamic bids - up and down','Fixed bids'];
-  $('#app').innerHTML=`
-    <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campaign Setup</h3>
-        <div class="seg" id="cc-type">
-          <button data-t="manual" class="${cfg.type==='manual'?'active':''}">Manual (keywords)</button>
-          <button data-t="auto" class="${cfg.type==='auto'?'active':''}">Auto targeting</button>
-        </div>
-      </div>
-      <div class="ctrls" id="cc-source" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
-        <div class="field"><label>Account (Brand Table)</label><select id="cc-acc">${btAccountOptions(cfg.btAccount)}</select></div>
-        <div class="field"><label>Portfolio</label><select id="cc-pf">${btPortfolioOptions(cfg.btAccount,cfg.portfolioId)}</select></div>
-        <div class="field grow"><label>Product — auto-fills Brand, ASIN, SKUs & Portfolio ID</label><select id="cc-prod">${btProductOptions(cfg.btAccount,cfg.btProduct)}</select></div>
-        ${Object.keys(BT.accounts).length? '' : '<div class="hint">No saved data yet — add products in the <b>Brand Table</b> tab, or fill the fields below manually.</div>'}
-      </div>
-      <div class="ctrls" id="cc-matches" style="${cfg.type==='auto'?'display:none;':''}">
-        <div class="field"><label>Match types (one campaign each)</label>
-          <div style="display:flex;gap:14px;height:32px;align-items:center;">
-            <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-exact" ${cfg.m_exact?'checked':''}> Exact</label>
-            <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-phrase" ${cfg.m_phrase?'checked':''}> Phrase</label>
-            <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-broad" ${cfg.m_broad?'checked':''}> Broad</label>
-          </div>
-        </div>
-        <div class="field"><label>Keywords / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
-        <div class="field"><label>Start #</label><input type="number" id="cc-start" min="1" value="${esc(cfg.startNum)}" style="width:80px;"></div>
-        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all keywords in 1 campaign · 1 = single-keyword campaigns · N = N per campaign. Numbered from Start #.</div></div>
-      </div>
-      <div class="ctrls" style="margin-top:12px;">
-        <div class="field"><label>Prefix</label><input type="text" id="cc-prefix" value="${esc(cfg.prefix)}" style="width:80px;"></div>
-        <div class="field"><label>Type (Tip)</label><input type="text" id="cc-tip" value="${esc(cfg.tip)}" placeholder="BRND" style="width:90px;"></div>
-        <div class="field"><label>Brand / Niche</label><input type="text" id="cc-brand" value="${esc(cfg.brand)}" placeholder="BNP" style="width:110px;"></div>
-        <div class="field"><label>ASIN (parent)</label><input type="text" id="cc-asin" value="${esc(cfg.asin)}" placeholder="B0DP1GX3J9" style="width:130px;"></div>
-        <div class="field"><label>Agent</label><input type="text" id="cc-agent" value="${esc(cfg.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
-        <div class="field"><label>Month+Year</label><input type="text" id="cc-my" value="${esc(cfg.monthyear)}" style="width:80px;"></div>
-        <div class="field"><label>Agency suffix</label><input type="text" id="cc-agency" value="${esc(cfg.agency)}" style="width:100px;"></div>
-      </div>
-      <div class="ctrls" style="margin-top:12px;">
-        <div class="field"><label>Daily Budget ($)</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
-        <div class="field"><label>Default Bid ($)</label><input type="number" id="cc-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
-        <div class="field"><label>Bidding Strategy</label><select id="cc-strat">${strat.map(x=>`<option ${cfg.strategy===x?'selected':''}>${x}</option>`).join('')}</select></div>
-        <div class="field"><label>Top-of-Search boost %</label><input type="number" id="cc-tos" value="${esc(cfg.tos)}" style="width:90px;"></div>
-        <div class="field"><label>Portfolio ID (optional)</label><input type="text" id="cc-port" value="${esc(cfg.portfolioId)}" placeholder="numeric" style="width:140px;"></div>
-      </div>
-      <div class="ctrls" style="margin-top:12px;align-items:stretch;">
-        <div class="field grow"><label>SKUs to advertise (one per line)</label><textarea class="kwbox" id="cc-skus" style="min-height:120px;" placeholder="SKU-001&#10;SKU-002">${esc(cfg.skus)}</textarea></div>
-        <div class="field grow" id="cc-kw-field" style="${cfg.type==='auto'?'display:none;':''}"><label>Keywords (one per line)</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="blue widget&#10;widget for desk">${esc(cfg.keywords)}</textarea></div>
-      </div>
-    </div>
-    <div class="card pad">
-      <h3 class="sectitle">Campaign Name Preview</h3>
-      <div id="cc-names" style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.9;"></div>
-      <div id="cc-summary" class="countnote" style="margin-top:8px;"></div>
-    </div>
-    <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bulk Preview</h3><div class="spacer"></div>
-        <span id="cc-issues" class="countnote"></span>
-        <button class="btn grad" id="cc-export">⬇ Export Bulk (.xlsx)</button>
-      </div>
-      <div id="cc-preview"></div>
-    </div>`;
-  const upd=debounce(updateBuilderOutputs,180);
-  const bindText=(id,key)=>{ const e=$('#'+id); e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
-  bindText('cc-prefix','prefix'); bindText('cc-tip','tip'); bindText('cc-brand','brand'); bindText('cc-asin','asin');
-  bindText('cc-agent','agent'); bindText('cc-budget','budget');
-  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-bid','bid'); bindText('cc-tos','tos');
-  bindText('cc-port','portfolioId'); bindText('cc-skus','skus'); bindText('cc-kw','keywords');
-  bindText('cc-per','perCampaign'); bindText('cc-start','startNum');
-  $('#cc-strat').onchange=e=>{ cfg.strategy=e.target.value; };
-  $('#cc-acc').onchange=e=>{ cfg.btAccount=e.target.value; cfg.btProduct=''; renderCampaignCreate(); };
-  $('#cc-pf').onchange=e=>{
-    cfg.portfolioId=e.target.value;
-    // pull the parent ASIN out of the portfolio name (e.g. "01. GFK Repair Set | B085TNZDYQ |")
-    const A = cfg.btAccount && BT.accounts[cfg.btAccount] ? acctObj(cfg.btAccount) : null;
-    const pf = A ? A.portfolios.find(p=>String(p.id)===String(e.target.value)) : null;
-    if(pf){
-      const nm = pf.name||'';
-      const isMixed = /\bmixed\b|alle\s*produkte|all\s*products/i.test(nm);
-      const m = nm.match(/B0[A-Z0-9]{8}/i);
-      if(!isMixed && m) cfg.asin = m[0].toUpperCase();
-    }
-    renderCampaignCreate();
-  };
-  $('#cc-prod').onchange=e=>{ cfg.btProduct=e.target.value; const p=cfg.btAccount&&BT.accounts[cfg.btAccount]?acctObj(cfg.btAccount).products[+e.target.value]:null; if(p){ cfg.brand=p.niche||p.brand||cfg.brand; cfg.asin=p.asin||''; cfg.skus=(p.skus||[]).join('\n'); if(p.portfolioId) cfg.portfolioId=p.portfolioId; } renderCampaignCreate(); };
-  $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
-  $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
-  $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
-  $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{ cfg.type=b.dataset.t; renderCampaignCreate(); });
-  $('#cc-export').onclick=exportCreatedCampaigns;
-  updateBuilderOutputs();
-}
-function updateBuilderOutputs(){
-  const cfg=stFor('create'); if(cfg._init===undefined) return;
-  const matches=selectedMatches(cfg);
-  const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
-  const start=Math.max(1,parseInt(cfg.startNum||1)||1);
-  const numbered=cfg.type!=='auto'&&per>0;
-  const groups=kwGroups(cfg);
-  // build all campaign names (name + first keyword hint when single-keyword)
-  const names=[];
-  matches.forEach(m=>groups.forEach((grp,gi)=>{ const num=numbered?start+gi:null; names.push({name:buildName(cfg,m,num), kw: (per===1&&grp.length)?grp[0]:null}); }));
-  const shown=names.slice(0,30).map(n=>`📁 ${esc(n.name)}${n.kw?` <span style="color:#9aa3af;">→ ${esc(n.kw)}</span>`:''}<br><span style="color:#c3c3cc;">   └ ${esc(n.name)}_AG</span>`).join('<br>');
-  $('#cc-names').innerHTML = names.length? shown+(names.length>30?`<br><span class="muted">…+${names.length-30} more campaigns</span>`:'') : '<span class="muted">Select a match type to preview names.</span>';
-  const skus=linesOf(cfg.skus).length, kws=linesOf(cfg.keywords).length;
-  const nCamp=names.length, nAds=nCamp*Math.max(1,skus), nKw=cfg.type==='auto'?0:matches.length*kws;
-  $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${cfg.type==='auto'?' · auto targeting':` · ${nKw} keyword(s)`}`;
-  const iss=builderIssues(cfg);
-  $('#cc-issues').innerHTML = iss.length? `<span style="color:#dc2626;">⚠ ${esc(iss[0])}</span>`:'<span style="color:#15803d;">✓ Ready to export</span>';
-  const exp=$('#cc-export'); if(exp) exp.disabled = iss.length>0;
-  // preview table
-  const rows=buildCampaignRows(cfg);
-  const H=BULK_HEADERS, ix=n=>H.indexOf(n);
-  const pr=rows.map(r=>({entity:r[ix('Entity')],campaign:r[ix('Campaign Name')]||r[ix('Campaign ID')],ag:r[ix('Ad Group ID')],detail:r[ix('Keyword Text')]||r[ix('SKU')]||r[ix('Placement')]||'',match:r[ix('Match Type')]||'',bid:r[ix('Bid')]||r[ix('Ad Group Default Bid')]||r[ix('Daily Budget')]||r[ix('Percentage')]||''}));
-  let h='<div class="tablewrap"><table><thead><tr><th class="l">Entity</th><th class="l">Campaign</th><th class="l">Ad Group</th><th class="l">Keyword / SKU / Placement</th><th class="l">Match</th><th>Bid / Budget</th></tr></thead><tbody>';
-  pr.slice(0,300).forEach(r=>{ h+=`<tr><td class="l"><b>${esc(r.entity)}</b></td><td class="l">${esc(r.campaign)}</td><td class="l">${esc(r.ag)}</td><td class="l">${esc(r.detail)}</td><td class="l">${esc(r.match)}</td><td>${esc(r.bid)}</td></tr>`; });
-  if(!pr.length) h+='<tr><td colspan="6" class="l" style="padding:22px;color:#9aa3af;text-align:center;">Fill in the setup above to see the rows that will be generated.</td></tr>';
-  h+='</tbody></table></div>';
-  if(pr.length>300) h+=`<div class="countnote" style="margin-top:6px;">Showing first 300 of ${pr.length} rows — export includes all.</div>`;
-  $('#cc-preview').innerHTML=h;
-}
-
 /* ============================ exports ============================ */
 const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression"];
 function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
 function writeBulk(rows,filename,sheet){ const aoa=[BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
-function exportCreatedCampaigns(){
-  const cfg=ensureBuilderInit(); const iss=builderIssues(cfg);
-  if(iss.length){ alert('Please fix before export:\n\n• '+iss.join('\n• ')); return; }
-  const rows=buildCampaignRows(cfg);
-  const fn=(buildName(cfg,selectedMatches(cfg)[0])||'campaigns').replace(/[^a-z0-9_]+/gi,'_').slice(0,50);
-  writeBulk(rows, fn+'_bulk.xlsx');
-}
 function exportCSV(columns,rows,name){
   const cols=columns.filter(c=>c.type&&['num','int','money','pct','acos','roas','text'].includes(c.type));
   const useCols=columns.filter(c=>!c.noSort||c.type);
@@ -1496,7 +1148,7 @@ function loadArrayBuffer(buf,name){
       const opts=Object.keys(BT.accounts).map(n=>`<option ${n===BT.current?'selected':''}>${esc(n)}</option>`).join('');
       bar.classList.remove('hidden');
       bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's master data to <b>Brand Table</b>: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). &nbsp;Account: <select id="btbar-acc" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;">${opts}<option value="__new">➕ New account…</option></select> <button class="btn grad" id="btbar-save">Save to Brand Table</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
-      $('#btbar-save').onclick=()=>{ let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (name||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; } mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc); $('#btbar-done').textContent=`✓ Saved to "${acc}" (${A.products.length} products, ${A.portfolios.length} portfolios)`; if(S.tab==='brandtable'||S.tab==='create') renderTab(); };
+      $('#btbar-save').onclick=()=>{ let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (name||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; } mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc); $('#btbar-done').innerHTML=`✓ Saved to "${esc(acc)}" (${A.products.length} products, ${A.portfolios.length} portfolios) — <a href="Campaign_Builder.html">open Campaign Builder →</a>`; };
     } else if(bar){ bar.classList.add('hidden'); bar.innerHTML=''; }
   }catch(err){ console.error(err); $('#loadNote').textContent='Error reading file: '+err.message; }
 }
