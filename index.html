@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:33</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:35</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1159,7 +1159,11 @@ function loadArrayBuffer(buf,name){
       const opts=Object.keys(BT.accounts).map(n=>`<option ${n===BT.current?'selected':''}>${esc(n)}</option>`).join('');
       bar.classList.remove('hidden');
       bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's master data to <b>Brand Table</b>: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). &nbsp;Account: <select id="btbar-acc" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;">${opts}<option value="__new">➕ New account…</option></select> <button class="btn grad" id="btbar-save">Save to Brand Table</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
-      $('#btbar-save').onclick=()=>{ let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (name||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; } mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc); $('#btbar-done').innerHTML=`✓ Saved to "${esc(acc)}" (${A.products.length} products, ${A.portfolios.length} portfolios) — <a href="Campaign_Builder.html">open Campaign Builder →</a>`; };
+      $('#btbar-save').onclick=()=>{
+        let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (name||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; }
+        mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc);
+        bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;">✓ Saved to <b>"${esc(acc)}"</b> (${A.products.length} products, ${A.portfolios.length} portfolios). <a href="Campaign_Builder.html">Open Campaign Builder →</a></div>`;
+      };
     } else if(bar){ bar.classList.add('hidden'); bar.innerHTML=''; }
   }catch(err){ console.error(err); $('#loadNote').textContent='Error reading file: '+err.message; }
 }
