@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 10:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 10:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1168,11 +1168,13 @@ function exportTargetsPause(product,rows){
   writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
 }
 /* ---- naming pattern detection: reuse the convention of an existing campaign in the same portfolio ---- */
-function detectNamingTemplate(portfolioName, matchType){
+function detectNamingTemplate(portfolioName, matchType, product){
   const mt=String(matchType||'').toUpperCase();
+  const prod=product||'SP';
   const re=new RegExp('^([A-Za-z0-9]+)_'+mt+'(?:_(\\d+))?_(.*)$','i');
   let best=null;
   DATA.campaigns.forEach(c=>{
+    if(c.product!==prod) return; // don't let an SB (SBV_...) campaign match while building SP naming, or vice versa
     if(portfolioName && (c.portfolioName||'(No Portfolio)')!==portfolioName) return;
     const m=(c.campaignName||'').match(re);
     if(m){ const num=m[2]?parseInt(m[2],10):0; if(!best||num>=best.num) best={prefix:m[1],num,suffix:m[3],fullName:c.campaignName}; }
@@ -1188,7 +1190,7 @@ function renderLaunchPanel(st, selOpps){
     const counts={}; selOpps.forEach(o=>{ const p=o.portfolioName||'(No Portfolio)'; counts[p]=(counts[p]||0)+1; });
     st.launchPortfolio=Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0]||'';
   }
-  const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch);
+  const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP');
   const nextNum=template?template.num+1:1;
   return `
   <div class="ctrls">
@@ -1218,7 +1220,7 @@ function exportNewCampaigns(opps, settings){
   if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
   settings=settings||{}; const matchType=(settings.matchType||'EXACT').toUpperCase();
   const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
-  const template=detectNamingTemplate(settings.portfolioName, matchType);
+  const template=detectNamingTemplate(settings.portfolioName, matchType, 'SP');
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   let nextNum=template?template.num+1:1;
   function nextFreeName(){
