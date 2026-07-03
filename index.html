@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-02 10:42</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 09:55</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -400,6 +400,23 @@ function mergeIntoAccount(accName, data){
   const have=new Map(A.portfolios.map(p=>[String(p.id),p]));
   data.portfolios.forEach(pf=>{ if(!pf.id) return; const ex=have.get(String(pf.id)); if(ex){ if(!ex.name && pf.name) ex.name=pf.name; } else { const np={name:pf.name||'',id:String(pf.id)}; A.portfolios.push(np); have.set(String(pf.id),np); } });
   btSave(); return A;
+}
+function renderBtSaveBar(bar, bd, fileName){
+  const names=Object.keys(BT.accounts);
+  const opts=names.map(n=>`<option ${n===BT.current?'selected':''}>${esc(n)}</option>`).join('');
+  bar.classList.remove('hidden');
+  bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's ASINs, SKUs &amp; portfolios for use in the <a href="Campaign_Builder.html" style="font-weight:700;">🏗️ Campaign Builder</a> tool: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). &nbsp;Account: <select id="btbar-acc" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;">${opts}<option value="__new">➕ New account…</option></select> <button class="btn ghost" id="btbar-delacc" title="Delete selected account" ${names.length?'':'disabled'} style="padding:6px 9px;">🗑</button> <button class="btn grad" id="btbar-save">Save</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
+  $('#btbar-save').onclick=()=>{
+    let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (fileName||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; }
+    mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc);
+    bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;">✓ Saved to <b>"${esc(acc)}"</b> (${A.products.length} products, ${A.portfolios.length} portfolios). <a href="Campaign_Builder.html">Open Campaign Builder →</a></div>`;
+  };
+  $('#btbar-delacc').onclick=()=>{
+    const acc=$('#btbar-acc').value; if(!acc||acc==='__new') return;
+    if(!confirm(`Delete account "${acc}" from the Brand Table? This removes its products and portfolios permanently.`)) return;
+    delete BT.accounts[acc]; if(BT.current===acc) BT.current=Object.keys(BT.accounts)[0]||''; btSave();
+    renderBtSaveBar(bar, bd, fileName);
+  };
 }
 function stFor(tab){ return S.filt[tab] = S.filt[tab] || {}; }
 function selFor(tab){ return S.sel[tab] = S.sel[tab] || new Set(); }
@@ -1156,14 +1173,7 @@ function loadArrayBuffer(buf,name){
     const bd=extractBrandDataFromBulk(); const bar=$('#btSaveBar');
     if(bar && (bd.products.length||bd.portfolios.length)){
       window.__pendingBrand=bd;
-      const opts=Object.keys(BT.accounts).map(n=>`<option ${n===BT.current?'selected':''}>${esc(n)}</option>`).join('');
-      bar.classList.remove('hidden');
-      bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's ASINs, SKUs &amp; portfolios for use in the <a href="Campaign_Builder.html" style="font-weight:700;">🏗️ Campaign Builder</a> tool: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). &nbsp;Account: <select id="btbar-acc" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;">${opts}<option value="__new">➕ New account…</option></select> <button class="btn grad" id="btbar-save">Save</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
-      $('#btbar-save').onclick=()=>{
-        let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (name||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; }
-        mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc);
-        bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;">✓ Saved to <b>"${esc(acc)}"</b> (${A.products.length} products, ${A.portfolios.length} portfolios). <a href="Campaign_Builder.html">Open Campaign Builder →</a></div>`;
-      };
+      renderBtSaveBar(bar, bd, name);
     } else if(bar){ bar.classList.add('hidden'); bar.innerHTML=''; }
   }catch(err){ console.error(err); $('#loadNote').textContent='Error reading file: '+err.message; }
 }
