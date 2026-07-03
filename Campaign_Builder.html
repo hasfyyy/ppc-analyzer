@@ -105,7 +105,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-03 12:48</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-03 13:02</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -200,6 +200,50 @@ function refStatusText(){
   const n=REF.campaigns.length;
   return n? `${n} existing campaign(s) loaded — naming will be copied from matches in the chosen portfolio.` : 'No reference bulk loaded — campaign names will use the manual fields below. Upload your Bulk Operations export to copy naming (and continue numbering) from campaigns that already exist.';
 }
+// True Amazon Bulk Operations export → false for a hand-made "Brand Table"-style sheet (which has no Entity column).
+function looksLikeBulkExport(wb){
+  return wb.SheetNames.some(sn=>{
+    const json=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:''});
+    return json.length && Object.keys(json[0]).some(h=>normH(h)==='entity');
+  });
+}
+// Pull ASIN/SKU/Portfolio straight out of a real Bulk Operations export (same approach as the PPC Analyzer's
+// "Save to Brand Table" bar) — so users can drop their actual bulk file here instead of a hand-curated sheet.
+function extractBrandDataFromBulk(wb){
+  const campaigns=[], productAds=[];
+  wb.SheetNames.forEach(sn=>{
+    const ws=wb.Sheets[sn]; const json=XLSX.utils.sheet_to_json(ws,{defval:''});
+    if(!json.length) return;
+    const headers=Object.keys(json[0]);
+    const cEntity=headers.find(h=>normH(h)==='entity');
+    if(!cEntity) return;
+    const cProduct=headers.find(h=>normH(h)==='product');
+    const cCampId=headers.find(h=>normH(h)==='campaign id');
+    const cPortId=headers.find(h=>normH(h)==='portfolio id');
+    const cPortName=headers.find(h=>normH(h)==='portfolio name');
+    const cSku=headers.find(h=>normH(h)==='sku');
+    const cAsin=headers.find(h=>normH(h).indexOf('asin')!==-1);
+    json.forEach(row=>{
+      const ent=String(row[cEntity]||'').trim().toLowerCase();
+      const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':'SP') : (/brand/i.test(sn)?'SB':'SP');
+      const campaignId=String(cCampId?row[cCampId]:'').trim();
+      if(ent==='campaign') campaigns.push({campaignId, portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod});
+      else if(ent==='product ad') productAds.push({campaignId, asin:String(cAsin?row[cAsin]:'').trim(), sku:String(cSku?row[cSku]:'').trim()});
+    });
+  });
+  const campToPortfolio={}; campaigns.forEach(c=>{ if(c.portfolioId) campToPortfolio[c.campaignId]=c.portfolioId; });
+  const pfMap=new Map();
+  campaigns.forEach(c=>{ if(!c.portfolioId) return; if(!pfMap.has(c.portfolioId) || (!pfMap.get(c.portfolioId) && c.portfolioName)) pfMap.set(c.portfolioId, c.portfolioName); });
+  const portfolios=[...pfMap.entries()].map(([id,name])=>({id,name}));
+  const byKey=new Map();
+  productAds.forEach(a=>{
+    const key=(a.asin||a.sku||'').toLowerCase(); if(!key) return;
+    if(!byKey.has(key)) byKey.set(key,{asin:a.asin,skus:new Set(),portfolioId:campToPortfolio[a.campaignId]||''});
+    const e=byKey.get(key); if(a.sku) e.skus.add(a.sku); if(!e.asin && a.asin) e.asin=a.asin; if(!e.portfolioId && campToPortfolio[a.campaignId]) e.portfolioId=campToPortfolio[a.campaignId];
+  });
+  const products=[...byKey.values()].map(e=>({brand:'',niche:'',name:'',asin:e.asin,portfolioId:e.portfolioId,skus:[...e.skus]}));
+  return {products, portfolios};
+}
 // Copying an existing campaign's naming verbatim would also copy its stale month/year (e.g. IAN26 from January).
 // Find a month-abbreviation+2-digit-year token (English or Romanian) and swap it for the current month.
 const MONTH_ABBR={en:['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'],ro:['IAN','FEB','MAR','APR','MAI','IUN','IUL','AUG','SEP','OCT','NOI','DEC']};
@@ -292,7 +336,7 @@ function renderBrandTable(){
       <div class="banner">Saved in this browser (shared with the PPC Analyzer, same site). Maintain your <b>Products</b> and <b>Portfolios</b> per account here once — then in <b>Campaign Builder</b> just pick the account &amp; portfolio and every SKU auto-fills. (Niche/Code is the short code used in the campaign name — e.g. BNP.)</div>
       <div class="rowbar">
         <label class="btn ghost" style="cursor:pointer;">⬆ Import products from Excel/CSV<input type="file" id="bt-import" accept=".xlsx,.xls,.csv" style="display:none;"></label>
-        <span class="hint">Reads: Brand Name · Product Name · Product Code (ASIN) · Portfolio ID · SKU1..SKUn</span>
+        <span class="hint">Accepts either a "Brand Table" sheet (Brand Name/Product Code/Portfolio ID/SKU columns) or your real Amazon Bulk Operations export (auto-detected either way)</span>
         <div class="spacer"></div>
         <button class="btn grad" id="bt-add" ${acc?'':'disabled'}>＋ Add product</button>
       </div>
@@ -343,12 +387,27 @@ function renderBrandTable(){
     const i=+inp.dataset.pi, f=inp.dataset.pf, p=A.portfolios[i]; if(!p) return; p[f]=inp.value.trim(); btSave();
   });
 }
+function mergeImportedIntoAccount(acc, prods, portfoliosIn){
+  const A=acctObj(acc);
+  if(A.products.length){
+    const rep=confirm(`"${acc}" already has ${A.products.length} product(s).\n\nOK = REPLACE with ${prods.length} imported\nCancel = APPEND the ${prods.length} imported`);
+    A.products = rep? prods : A.products.concat(prods);
+  } else A.products=prods;
+  const have=new Set(A.portfolios.map(p=>String(p.id)));
+  (portfoliosIn||[]).forEach(pf=>{ if(pf.id && !have.has(String(pf.id))){ have.add(String(pf.id)); A.portfolios.push({name:pf.name||'',id:String(pf.id)}); } });
+  A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); } });
+  btSave(); renderBrandTable();
+  return A;
+}
 function importBrandTable(file){
   if(!file) return;
   const r=new FileReader();
   r.onload=ev=>{
     try{
-      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+      const buf=new Uint8Array(ev.target.result);
+      const wb=XLSX.read(buf,{type:'array'});
+
+      // 1) Try to detect a hand-curated "Brand Table"-style sheet first (Brand Name + Product Code columns).
       let best=null;
       wb.SheetNames.forEach(sn=>{
         const js=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
@@ -356,32 +415,43 @@ function importBrandTable(file){
         const hdr=js[0].map(h=>String(h).toLowerCase());
         if(hdr.some(h=>h.includes('brand'))&&hdr.some(h=>h.includes('product code')||h.includes('asin'))){ if(!best) best={js,hdr}; }
       });
-      if(!best){ const sn=wb.SheetNames[0]; const js=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''}); best={js,hdr:(js[0]||[]).map(h=>String(h).toLowerCase())}; }
-      const {js,hdr}=best;
-      const find=preds=>hdr.findIndex(h=>preds.some(p=>h.includes(p)));
-      const ci={ brand:find(['brand']), niche:find(['niche']), name:find(['product name']), asin:find(['product code','asin']), port:find(['portfolio']) };
-      const skuCols=[]; hdr.forEach((h,idx)=>{ const c=h.replace(/\s/g,''); if(/^sku\d+$/.test(c)||c==='sku') skuCols.push(idx); });
-      const asStr=v=> (typeof v==='number')? (Number.isInteger(v)? v.toFixed(0): String(v)) : String(v||'').trim();
-      const prods=[];
-      for(let i=1;i<js.length;i++){
-        const row=js[i]; const g=idx=>idx>=0?row[idx]:'';
-        const asin=asStr(g(ci.asin)), brand=asStr(g(ci.brand));
-        if(!asin && !brand) continue;
-        const skus=skuCols.map(idx=>row[idx]).filter(v=>v!=='' && v!=null).map(asStr);
-        prods.push({brand, niche:asStr(g(ci.niche)), name:asStr(g(ci.name)), asin, portfolioId:asStr(g(ci.port)), skus});
+      if(best){
+        const {js,hdr}=best;
+        const find=preds=>hdr.findIndex(h=>preds.some(p=>h.includes(p)));
+        const ci={ brand:find(['brand']), niche:find(['niche']), name:find(['product name']), asin:find(['product code','asin']), port:find(['portfolio']) };
+        const skuCols=[]; hdr.forEach((h,idx)=>{ const c=h.replace(/\s/g,''); if(/^sku\d+$/.test(c)||c==='sku') skuCols.push(idx); });
+        const asStr=v=> (typeof v==='number')? (Number.isInteger(v)? v.toFixed(0): String(v)) : String(v||'').trim();
+        const prods=[];
+        for(let i=1;i<js.length;i++){
+          const row=js[i]; const g=idx=>idx>=0?row[idx]:'';
+          const asin=asStr(g(ci.asin)), brand=asStr(g(ci.brand));
+          if(!asin && !brand) continue;
+          const skus=skuCols.map(idx=>row[idx]).filter(v=>v!=='' && v!=null).map(asStr);
+          prods.push({brand, niche:asStr(g(ci.niche)), name:asStr(g(ci.name)), asin, portfolioId:asStr(g(ci.port)), skus});
+        }
+        if(prods.length){
+          let acc=BT.current;
+          if(!acc){ acc=(prompt('Import into which account? (name):','Imported')||'').trim()||'Imported'; BT.current=acc; }
+          const A=mergeImportedIntoAccount(acc, prods, []);
+          alert(`Imported ${prods.length} product(s) into "${acc}". ${A.portfolios.length} portfolio ID(s) available — add friendly names in the Portfolios section.`);
+          return;
+        }
       }
-      if(!prods.length){ alert('No product rows found. Expected a "Brand Table"-style sheet with Brand Name / Product Code columns.'); return; }
-      let acc=BT.current;
-      if(!acc){ acc=(prompt('Import into which account? (name):','Imported')||'').trim()||'Imported'; BT.current=acc; }
-      const A=acctObj(acc);
-      if(A.products.length){
-        const rep=confirm(`"${acc}" already has ${A.products.length} product(s).\n\nOK = REPLACE with ${prods.length} imported\nCancel = APPEND the ${prods.length} imported`);
-        A.products = rep? prods : A.products.concat(prods);
-      } else A.products=prods;
-      const have=new Set(A.portfolios.map(p=>String(p.id)));
-      A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); } });
-      btSave(); renderBrandTable();
-      alert(`Imported ${prods.length} product(s) into "${acc}". ${A.portfolios.length} portfolio ID(s) available — add friendly names in the Portfolios section.`);
+
+      // 2) Not a Brand Table sheet — is it an actual Amazon Bulk Operations export? Extract ASIN/SKU/Portfolio
+      //    from it directly (same logic the PPC Analyzer uses), so you can drop your real bulk file here too.
+      if(looksLikeBulkExport(wb)){
+        const bd=extractBrandDataFromBulk(wb);
+        if(!bd.products.length && !bd.portfolios.length){ alert('This looks like a Bulk Operations file, but no Product ad / Campaign rows with ASIN, SKU or Portfolio data were found in it.'); return; }
+        let acc=BT.current;
+        if(!acc){ acc=(prompt('Import into which account? (name):', file.name.replace(/\.[^.]+$/,''))||'').trim()||'Imported'; BT.current=acc; }
+        const A=mergeImportedIntoAccount(acc, bd.products, bd.portfolios);
+        parseReferenceBulk(wb); // bonus: same file also sets up naming detection for this session
+        alert(`Imported from your Bulk Operations file: ${bd.products.length} product(s), ${bd.portfolios.length} portfolio(s) into "${acc}". Naming detection is also set up from this file (${REF.campaigns.length} campaign(s)).`);
+        return;
+      }
+
+      alert('No product rows found. Expected either a "Brand Table"-style sheet (Brand Name / Product Code columns) or an Amazon Bulk Operations export (has an Entity column).');
     }catch(err){ console.error(err); alert('Import error: '+err.message); }
   };
   r.readAsArrayBuffer(file);
