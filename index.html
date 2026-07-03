@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 12:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 12:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1171,6 +1171,19 @@ function exportTargetsPause(product,rows){
 // Only matches campaigns using the given PREFIX (default BSQ = multi-keyword "bulk search query" campaigns).
 // Anchoring to the exact prefix — instead of accepting any alphanumeric prefix — keeps this from picking up
 // single-keyword conventions like SUP_EXACT (one keyword per campaign) when harvesting builds multi-keyword ones.
+// Copying an existing campaign's naming verbatim would also copy its stale month/year (e.g. IAN26 from January).
+// Find a month-abbreviation+2-digit-year token (English or Romanian) in the copied text and swap it for the current month.
+const MONTH_ABBR={en:['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'],ro:['IAN','FEB','MAR','APR','MAI','IUN','IUL','AUG','SEP','OCT','NOI','DEC']};
+function currentMonthYearIn(lang){ const d=new Date(); return MONTH_ABBR[lang][d.getMonth()]+String(d.getFullYear()).slice(2); }
+function refreshDateToken(text){
+  // NOT \b — "_" counts as a word char in regex, so \b fails right at the underscores in "_IAN26_"
+  const re=/(?<![A-Za-z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|IAN|MAI|IUN|IUL|NOI)(\d{2})(?!\d)/i;
+  const m=String(text||'').match(re);
+  if(!m) return text;
+  const abbrUpper=m[1].toUpperCase();
+  const lang=MONTH_ABBR.en.includes(abbrUpper)?'en':'ro';
+  return text.slice(0,m.index)+currentMonthYearIn(lang)+text.slice(m.index+m[0].length);
+}
 function detectNamingTemplate(portfolioName, matchType, product, prefix){
   const mt=String(matchType||'').toUpperCase();
   const prod=product||'SP';
@@ -1205,6 +1218,7 @@ function renderLaunchPanel(st, selOpps){
   const numCampaigns=Math.max(1,Math.min(+st.launchCount||1, selOpps.length));
   const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix);
   const nextNum=template?template.num+1:1;
+  const suffix=template?refreshDateToken(template.suffix):'';
   return `
   <div class="ctrls">
     <div class="field grow"><label>Portfolio (naming copied from here)</label><select id="hv-lport">${portOptions(st.launchPortfolio)}</select></div>
@@ -1216,7 +1230,7 @@ function renderLaunchPanel(st, selOpps){
   <div class="hint" style="margin-top:8px;">${selOpps.length} keyword(s) selected → split into ${numCampaigns} campaign(s) (${numCampaigns===1?'all keywords together':numCampaigns===selOpps.length?'1 keyword each':'~'+Math.ceil(selOpps.length/numCampaigns)+' keywords each'}).</div>
   <div class="banner" style="margin-top:12px;">
     ${template
-      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)}_${nextNum}_${esc(template.suffix)}</b> onward (no duplicates — skips any number already taken).`
+      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)}_${nextNum}_${esc(suffix)}</b> onward — month/year refreshed to the current one, no duplicates.`
       : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)}_1, _2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
   </div>
   <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">➕ Create ${numCampaigns} campaign(s)</button></div>`;
@@ -1235,18 +1249,19 @@ function exportNewCampaigns(opps, settings){
   settings=settings||{}; const matchType=(settings.matchType||'EXACT').toUpperCase();
   const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
   const template=detectNamingTemplate(settings.portfolioName, matchType, 'SP', settings.prefix);
+  const suffix = template? refreshDateToken(template.suffix) : '';
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   let nextNum=template?template.num+1:1;
   function nextFreeName(){
-    let name = template? `${template.prefix}_${matchType}_${nextNum}_${template.suffix}` : `HARVEST_${matchType}_${nextNum}`;
-    while(existingNames.has(name)){ nextNum++; name = template? `${template.prefix}_${matchType}_${nextNum}_${template.suffix}` : `HARVEST_${matchType}_${nextNum}`; }
+    let name = template? `${template.prefix}_${matchType}_${nextNum}_${suffix}` : `HARVEST_${matchType}_${nextNum}`;
+    while(existingNames.has(name)){ nextNum++; name = template? `${template.prefix}_${matchType}_${nextNum}_${suffix}` : `HARVEST_${matchType}_${nextNum}`; }
     existingNames.add(name); nextNum++;
     return name;
   }
   const out=[]; let missingSku=0;
   const perKwBid = o => settings.bidOverride || (o.cpc&&o.cpc>0? Math.max(0.10,+o.cpc.toFixed(2)) : 0.75);
   function addCampaign(cname, kwList){
-    const agname=cname+'_AG';
+    const agname=cname; // Ad Group ID/name = campaign name, no "_AG" suffix
     const agDefaultBid = kwList.length===1? perKwBid(kwList[0]) : (settings.bidOverride||0.75);
     out.push(bulkRow({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'}));
     out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':agDefaultBid}));
