@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 09:55</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 10:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -522,6 +522,7 @@ const TABS=[
   {id:'negatives-sb',label:'Negatives – SB',ic:'⊘'},
   {id:'ngram',label:'N-Gram',ic:'🔤'},
   {id:'targets',label:'Targets SP',ic:'🎯'},
+  {id:'targets-sb',label:'Targets SB',ic:'🎯'},
   {id:'harvesting',label:'Harvesting',ic:'🌱'},
   {id:'kwcheck',label:'Keyword Checker',ic:'🔍'},
   {id:'products',label:'Products',ic:'📦'},
@@ -543,7 +544,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic">📁</div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:renderTargets, harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -658,6 +659,7 @@ function renderNegatives(product){
   const tab = product==='SP'?'negatives':'negatives-sb';
   const st=stFor(tab); if(st.acos===undefined)st.acos=100; if(st.clicks===undefined)st.clicks=10;
   if(st.orders===undefined)st.orders='all'; if(st.negated===undefined)st.negated='all';
+  if(st.exExact===undefined)st.exExact=true; // negating a term that IS the exact keyword targeted makes no sense — excluded by default
   const src=DATA.searchTerms.filter(s=>s.product===product);
   let cand=src.map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm)}); })
     .filter(r=>{
@@ -667,7 +669,8 @@ function renderNegatives(product){
       if(!(noConv||highAcos)) return false;
       if(st.orders==='0' && r.orders!==0) return false;
       if(st.orders==='1' && r.orders<1) return false;
-      if(product==='SP' && st.exExact && (r.matchType||'').toLowerCase()==='exact') return false;
+      if(st.exExact && (r.matchType||'').toLowerCase()==='exact') return false;
+      if(st.exExact && isExactCampaign(r.campaignName)) return false;
       if(product==='SP' && st.exAsin && /^b0[a-z0-9]{8}$/i.test(r.searchTerm.trim())) return false;
       if(st.negated==='hide' && r.negated) return false;
       if(st.negated==='only' && !r.negated) return false;
@@ -711,8 +714,8 @@ function renderNegatives(product){
         <div class="slider"><div class="top"><span>ACoS Threshold</span><b>&gt;${st.acos}%</b></div><input type="range" id="ng-acos" min="0" max="100" step="5" value="${st.acos}"></div>
         <div class="slider"><div class="top"><span>Clicks (No Conv.)</span><b>≥ ${st.clicks}</b></div><input type="range" id="ng-clicks" min="0" max="30" step="1" value="${st.clicks}"></div>
         <div class="field"><label>Orders Filter</label><select id="ng-orders"><option value="all" ${st.orders==='all'?'selected':''}>All</option><option value="0" ${st.orders==='0'?'selected':''}>No orders (0)</option><option value="1" ${st.orders==='1'?'selected':''}>Has orders</option></select></div>
-        ${spTip?`<div class="field"><label>Exclude</label><label style="flex-direction:row;gap:6px;font-size:12px;"><input type="checkbox" id="ng-exex" ${st.exExact?'checked':''}> Exact Match</label></div>
-        <div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;"><input type="checkbox" id="ng-exasin" ${st.exAsin?'checked':''}> ASIN (b0…)</label></div>`:''}
+        <div class="field"><label>Exclude</label><label style="flex-direction:row;gap:6px;font-size:12px;" title="A term identical to the exact keyword already targeted can't be meaningfully negated — excluded by default."><input type="checkbox" id="ng-exex" ${st.exExact?'checked':''}> Exact Match campaigns</label></div>
+        ${spTip?`<div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;"><input type="checkbox" id="ng-exasin" ${st.exAsin?'checked':''}> ASIN (b0…)</label></div>`:''}
         <div class="field"><label>Already Negated</label><select id="ng-negf"><option value="all" ${st.negated==='all'?'selected':''}>Show All</option><option value="hide" ${st.negated==='hide'?'selected':''}>Hide Negated</option><option value="only" ${st.negated==='only'?'selected':''}>Only Negated</option></select></div>
       </div>
     </div>
@@ -736,7 +739,8 @@ function renderNegatives(product){
   $('#ng-clicks').oninput=e=>{st.clicks=+e.target.value; upd();};
   $('#ng-orders').onchange=e=>{st.orders=e.target.value; upd();};
   $('#ng-negf').onchange=e=>{st.negated=e.target.value; upd();};
-  if(spTip){ $('#ng-exex').onchange=e=>{st.exExact=e.target.checked; upd();}; $('#ng-exasin').onchange=e=>{st.exAsin=e.target.checked; upd();}; }
+  $('#ng-exex').onchange=e=>{st.exExact=e.target.checked; upd();};
+  if(spTip){ $('#ng-exasin').onchange=e=>{st.exAsin=e.target.checked; upd();}; }
   $('#ng-term').oninput=debounce(()=>{st.term=$('#ng-term').value; upd();},200);
   $('#ng-camp').oninput=debounce(e=>{st.camp=$('#ng-camp').value; upd();},200);
   $('#ng-dlall').onclick=()=>exportNegatives(product,cand);
@@ -868,18 +872,19 @@ function wireSidebar(){
   $('#sb-reset').onclick=()=>{ S.sidebarPortfolios.clear(); S.sidebarCampaigns.clear(); st.psearch=''; st.csearch=''; renderNgram(); };
 }
 
-/* ============================ TARGETS SP ============================ */
-function renderTargets(){
-  const st=stFor('targets'); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
-  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled');
+/* ============================ TARGETS (SP + SB) ============================ */
+function renderTargets(product){
+  const tab = product==='SP'?'targets':'targets-sb';
+  const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
+  const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled');
   let rows=src.map(t=>{ const d=derive(agg([t])); let reason=null;
     if(t.clicks>=st.clicks && t.orders<=st.maxOrders) reason='No Sales';
     else if(t.orders>=1 && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
     return reason && t.spend>=st.minSpend ? Object.assign({reason},t,d):null; }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  rows.forEach((r,i)=>r._uid='tg'+i);
-  const sel=selFor('targets'); const totals=agg(rows);
+  rows.forEach((r,i)=>r._uid=tab+i);
+  const sel=selFor(tab); const totals=agg(rows);
   const cols=[
     {key:'reason',label:'Reason',l:true,noSort:true,cell:r=>`<span class="badge ${r.reason==='No Sales'?'nt':''}" style="${r.reason==='High ACoS'?'background:#fef3e2;color:#c2760a;':''}">${r.reason}</span>`},
     {key:'text',label:'Target',l:true,type:'text'},
@@ -894,7 +899,7 @@ function renderTargets(){
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
     {key:'bid',label:'Bid',type:'money'},
   ];
-  const tbl=buildTable({columns:cols,rows,tab:'targets',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderTargets});
+  const tbl=buildTable({columns:cols,rows,tab,selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:()=>renderTargets(product)});
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Filter Settings</h3>
@@ -911,21 +916,22 @@ function renderTargets(){
       ${kpi('Underperforming Targets',fInt(rows.length))}${kpi('Wasted Spend',fMoney(rows.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0)),'red')}${kpi('Total Spend',fMoney(totals.spend))}${kpi('Selected to Pause',fInt(sel.size),'pink')}
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Underperforming Targets (${rows.length})</h3><div class="spacer"></div>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${product} Underperforming Targets (${rows.length})</h3><div class="spacer"></div>
         <button class="btn ghost" id="tg-dlall">⬇ Download All</button>
         <button class="btn grad" id="tg-pause" ${sel.size?'':'disabled'}>⏸ Export Pause (${sel.size})</button>
       </div>
       <div id="tg-table">${tbl.html}</div>
     </div>`;
   tbl.wire($('#tg-table'));
-  $('#tg-clicks').oninput=e=>{st.clicks=+e.target.value; renderTargets();};
-  $('#tg-acos').oninput=e=>{st.acos=+e.target.value; renderTargets();};
-  $('#tg-mo').oninput=debounce(()=>{st.maxOrders=+$('#tg-mo').value; renderTargets();},250);
-  $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; renderTargets();},250);
-  $('#tg-port').onchange=e=>{st.port=e.target.value; renderTargets();};
-  $('#tg-camp').oninput=debounce(()=>{st.camp=$('#tg-camp').value; renderTargets();},220);
-  $('#tg-dlall').onclick=()=>exportTargetsPause(rows);
-  $('#tg-pause').onclick=()=>exportTargetsPause(rows.filter(r=>sel.has(r._uid)));
+  const upd=()=>renderTargets(product);
+  $('#tg-clicks').oninput=e=>{st.clicks=+e.target.value; upd();};
+  $('#tg-acos').oninput=e=>{st.acos=+e.target.value; upd();};
+  $('#tg-mo').oninput=debounce(()=>{st.maxOrders=+$('#tg-mo').value; upd();},250);
+  $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; upd();},250);
+  $('#tg-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#tg-camp').oninput=debounce(()=>{st.camp=$('#tg-camp').value; upd();},220);
+  $('#tg-dlall').onclick=()=>exportTargetsPause(product,rows);
+  $('#tg-pause').onclick=()=>exportTargetsPause(product,rows.filter(r=>sel.has(r._uid)));
 }
 
 /* ============================ HARVESTING ============================ */
@@ -1135,10 +1141,11 @@ function exportNegatives(product,rows){
   writeBulk(out, (product==='SB'?'sb_':'')+'negatives_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   if(asinCount) alert(`Exported ${out.length} row(s). Note: ${asinCount} were ASINs (from auto/product targeting) — exported as Negative product targeting instead of Negative keyword, since Amazon shoppers don't type ASINs as search terms.`);
 }
-function exportTargetsPause(rows){
+function exportTargetsPause(product,rows){
   if(!rows.length){ alert('No targets selected.'); return; }
-  const out=rows.map(r=>bulkRow(Object.assign({'Product':'Sponsored Products','Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
-  writeBulk(out,'targets_pause_bulk.xlsx');
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+  writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
 }
 function exportNewCampaigns(opps){
   if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
