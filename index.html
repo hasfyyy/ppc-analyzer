@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 12:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 12:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1168,16 +1168,20 @@ function exportTargetsPause(product,rows){
   writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
 }
 /* ---- naming pattern detection: reuse the convention of an existing campaign in the same portfolio ---- */
-function detectNamingTemplate(portfolioName, matchType, product){
+// Only matches campaigns using the given PREFIX (default BSQ = multi-keyword "bulk search query" campaigns).
+// Anchoring to the exact prefix — instead of accepting any alphanumeric prefix — keeps this from picking up
+// single-keyword conventions like SUP_EXACT (one keyword per campaign) when harvesting builds multi-keyword ones.
+function detectNamingTemplate(portfolioName, matchType, product, prefix){
   const mt=String(matchType||'').toUpperCase();
   const prod=product||'SP';
-  const re=new RegExp('^([A-Za-z0-9]+)_'+mt+'(?:_(\\d+))?_(.*)$','i');
+  const pfx=String(prefix||'BSQ');
+  const re=new RegExp('^'+pfx+'_'+mt+'(?:_(\\d+))?_(.*)$','i');
   let best=null;
   DATA.campaigns.forEach(c=>{
     if(c.product!==prod) return; // don't let an SB (SBV_...) campaign match while building SP naming, or vice versa
     if(portfolioName && (c.portfolioName||'(No Portfolio)')!==portfolioName) return;
     const m=(c.campaignName||'').match(re);
-    if(m){ const num=m[2]?parseInt(m[2],10):0; if(!best||num>=best.num) best={prefix:m[1],num,suffix:m[3],fullName:c.campaignName}; }
+    if(m){ const num=m[1]?parseInt(m[1],10):0; if(!best||num>=best.num) best={prefix:pfx,num,suffix:m[2],fullName:c.campaignName}; }
   });
   return best;
 }
@@ -1199,7 +1203,7 @@ function renderLaunchPanel(st, selOpps){
   if(!st.launchCountTouched) st.launchCount=selOpps.length;
   else if(st.launchCount>selOpps.length) st.launchCount=selOpps.length;
   const numCampaigns=Math.max(1,Math.min(+st.launchCount||1, selOpps.length));
-  const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP');
+  const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix);
   const nextNum=template?template.num+1:1;
   return `
   <div class="ctrls">
@@ -1230,7 +1234,7 @@ function exportNewCampaigns(opps, settings){
   if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
   settings=settings||{}; const matchType=(settings.matchType||'EXACT').toUpperCase();
   const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
-  const template=detectNamingTemplate(settings.portfolioName, matchType, 'SP');
+  const template=detectNamingTemplate(settings.portfolioName, matchType, 'SP', settings.prefix);
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   let nextNum=template?template.num+1:1;
   function nextFreeName(){
