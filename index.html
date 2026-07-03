@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 10:24</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 12:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1181,15 +1181,24 @@ function detectNamingTemplate(portfolioName, matchType, product){
   });
   return best;
 }
+function splitIntoGroups(arr, n){
+  n=Math.max(1,Math.min(Math.round(n)||1,arr.length));
+  const groups=Array.from({length:n},()=>[]);
+  arr.forEach((item,i)=>groups[i%n].push(item));
+  return groups;
+}
 function renderLaunchPanel(st, selOpps){
   if(!selOpps.length) return `<div class="empty" style="padding:24px;"><p>Toggle the switch next to the search terms you want to launch above — the naming &amp; export controls appear here.</p></div>`;
   if(st.launchMatch===undefined) st.launchMatch='EXACT';
-  if(st.launchMode===undefined) st.launchMode='single';
   if(st.launchPrefix===undefined) st.launchPrefix='BSQ';
   if(st.launchPortfolio===undefined){
     const counts={}; selOpps.forEach(o=>{ const p=o.portfolioName||'(No Portfolio)'; counts[p]=(counts[p]||0)+1; });
     st.launchPortfolio=Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0]||'';
   }
+  // until the user manually edits the count, keep it in sync with however many are currently selected (defaults to "1 per keyword")
+  if(!st.launchCountTouched) st.launchCount=selOpps.length;
+  else if(st.launchCount>selOpps.length) st.launchCount=selOpps.length;
+  const numCampaigns=Math.max(1,Math.min(+st.launchCount||1, selOpps.length));
   const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP');
   const nextNum=template?template.num+1:1;
   return `
@@ -1197,24 +1206,25 @@ function renderLaunchPanel(st, selOpps){
     <div class="field grow"><label>Portfolio (naming copied from here)</label><select id="hv-lport">${portOptions(st.launchPortfolio)}</select></div>
     <div class="field"><label>Prefix (used only if no existing campaign found)</label><input type="text" id="hv-lprefix" value="${esc(st.launchPrefix)}" style="width:90px;"></div>
     <div class="field"><label>Match Type</label><select id="hv-lmatch">${['EXACT','PHRASE','BROAD'].map(x=>`<option ${st.launchMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>
-    <div class="field"><label>Mode</label><select id="hv-lmode"><option value="single" ${st.launchMode==='single'?'selected':''}>1 campaign per keyword</option><option value="one" ${st.launchMode==='one'?'selected':''}>All in 1 campaign</option></select></div>
+    <div class="field"><label>Number of campaigns</label><input type="number" id="hv-lcount" min="1" max="${selOpps.length}" value="${numCampaigns}" style="width:90px;"></div>
     <div class="field"><label>Bid override ($, optional)</label><input type="number" id="hv-lbid" step="0.01" placeholder="auto (from CPC)" value="${esc(st.launchBid||'')}" style="width:130px;"></div>
   </div>
+  <div class="hint" style="margin-top:8px;">${selOpps.length} keyword(s) selected → split into ${numCampaigns} campaign(s) (${numCampaigns===1?'all keywords together':numCampaigns===selOpps.length?'1 keyword each':'~'+Math.ceil(selOpps.length/numCampaigns)+' keywords each'}).</div>
   <div class="banner" style="margin-top:12px;">
     ${template
       ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)}_${nextNum}_${esc(template.suffix)}</b> onward (no duplicates — skips any number already taken).`
       : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)}_1, _2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
   </div>
-  <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">➕ ${st.launchMode==='one'?`Create 1 campaign (${selOpps.length} keywords)`:`Create ${selOpps.length} campaign(s)`}</button></div>`;
+  <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">➕ Create ${numCampaigns} campaign(s)</button></div>`;
 }
 function wireLaunchPanel(st, selOpps){
   if(!selOpps.length) return;
   $('#hv-lport').onchange=e=>{ st.launchPortfolio=e.target.value; renderHarvesting(); };
   $('#hv-lprefix').oninput=debounce(()=>{ st.launchPrefix=$('#hv-lprefix').value; renderHarvesting(); },300);
   $('#hv-lmatch').onchange=e=>{ st.launchMatch=e.target.value; renderHarvesting(); };
-  $('#hv-lmode').onchange=e=>{ st.launchMode=e.target.value; renderHarvesting(); };
+  $('#hv-lcount').oninput=debounce(()=>{ st.launchCount=+$('#hv-lcount').value||1; st.launchCountTouched=true; renderHarvesting(); },250);
   $('#hv-lbid').oninput=debounce(()=>{ st.launchBid=$('#hv-lbid').value; },300);
-  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, mode:st.launchMode, bidOverride: st.launchBid?+st.launchBid:null});
+  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, numCampaigns:st.launchCount, bidOverride: st.launchBid?+st.launchBid:null});
 }
 function exportNewCampaigns(opps, settings){
   if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
@@ -1241,11 +1251,10 @@ function exportNewCampaigns(opps, settings){
     (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
     kwList.forEach(o=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':o.searchTerm,'Match Type':matchTypeCap,'Bid':perKwBid(o)})));
   }
-  if(settings.mode==='one'){ addCampaign(nextFreeName(), opps); }
-  else opps.forEach(o=>addCampaign(nextFreeName(),[o]));
+  const groups=splitIntoGroups(opps, settings.numCampaigns||opps.length);
+  groups.forEach(g=>addCampaign(nextFreeName(), g));
   writeBulk(out,'harvest_new_campaigns_bulk.xlsx');
-  const n=settings.mode==='one'?1:opps.length;
-  alert(`Created ${n} campaign(s)${template?` using the naming pattern from "${template.fullName}"`:' (no matching naming pattern found — used a fallback name)'}.${missingSku?` Note: ${missingSku} campaign(s) had no SKU found in the source campaign — fill the SKU column before uploading.`:''}`);
+  alert(`Created ${groups.length} campaign(s)${template?` using the naming pattern from "${template.fullName}"`:' (no matching naming pattern found — used a fallback name)'}.${missingSku?` Note: ${missingSku} campaign(s) had no SKU found in the source campaign — fill the SKU column before uploading.`:''}`);
 }
 
 /* ============================ file loading + IDB ============================ */
