@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 10:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-03 10:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -520,7 +520,7 @@ const TABS=[
   {id:'placement',label:'Placement',ic:'📍'},
   {id:'negatives',label:'Negatives',ic:'⊘'},
   {id:'negatives-sb',label:'Negatives – SB',ic:'⊘'},
-  {id:'ngram',label:'N-Gram',ic:'🔤'},
+  {id:'ngram',label:'Negative Phrase',ic:'🔤'},
   {id:'targets',label:'Targets SP',ic:'🎯'},
   {id:'targets-sb',label:'Targets SB',ic:'🎯'},
   {id:'harvesting',label:'Harvesting',ic:'🌱'},
@@ -748,14 +748,23 @@ function renderNegatives(product){
 }
 
 /* ============================ N-GRAM ============================ */
-const STOP=new Set(['and','or','for','the','with','a','an','of','in','to','on','is','are','your','you','by','from','at']);
+const STOP=new Set([
+  // English
+  'and','or','for','the','with','a','an','of','in','to','on','is','are','your','you','by','from','at',
+  // German — market is largely German-language; without these, function words dominate the n-gram list
+  'und','oder','für','fur','mit','auf','das','der','die','den','dem','des','ein','eine','einen','einem','einer',
+  'ist','sind','war','waren','von','zu','zum','zur','im','am','als','auch','aber','nicht','sich','so','wie',
+  'was','wer','wo','durch','über','uber','unter','vor','nach','bei','aus','an','es','man','sie','er','wir','ich',
+]);
+// splits on anything that ISN'T a Unicode letter/number, so "ü/ö/ä/ß" stay part of the word instead of being cut as delimiters
+function wordsOf(s){ return String(s||'').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); }
 function renderNgram(){
-  const st=stFor('ngram'); if(st.quick===undefined)st.quick='all';
+  const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2;
   // sidebar + product filter
   let src=stByToggle().filter(passesSidebar);
   const map=new Map();
   src.forEach(r=>{
-    const words=r.searchTerm.toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>1 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
+    const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
     new Set(words).forEach(w=>{
       if(!map.has(w)) map.set(w,{root:w,impressions:0,clicks:0,spend:0,sales:0,orders:0,terms:[]});
       const e=map.get(w); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders; e.terms.push(r);
@@ -764,8 +773,8 @@ function renderNgram(){
   let rows=[...map.values()].map(e=>Object.assign(e,derive(e),{count:e.terms.length}));
   const totAll=derive(agg(src));
   // filters
-  const mi=+st.mi||0, mc=+st.mc||0, ms=+st.ms||0, ma=+st.ma||0;
-  rows=rows.filter(e=>e.impressions>=mi && e.clicks>=mc && e.spend>=ms && (ma? (e.acos===Infinity||e.acos>=ma):true));
+  const mi=+st.mi||0, mc=+st.mc||0, ms=+st.ms||0, ma=+st.ma||0, mt=+st.minTerms||0;
+  rows=rows.filter(e=>e.impressions>=mi && e.clicks>=mc && e.spend>=ms && e.terms.length>=mt && (ma? (e.acos===Infinity||e.acos>=ma):true));
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
@@ -796,6 +805,7 @@ function renderNgram(){
           <div class="field"><label>Min Clicks</label><input type="number" id="ng-mc" value="${mc}"></div>
           <div class="field"><label>Min Spend</label><input type="number" id="ng-ms" value="${ms}"></div>
           <div class="field"><label>Min ACOS %</label><input type="number" id="ng-ma" value="${ma}"></div>
+          <div class="field"><label>Min Search Terms</label><input type="number" id="ng-mt" min="1" value="${mt}" title="Only show a root if it shows up across at least this many different search terms — a single one-off term isn't a real pattern."></div>
           <div class="field grow"><label>Search n-gram</label><input type="text" id="ng-text" placeholder="Filter by text…" value="${esc(st.text||'')}"></div>
           <button class="btn ghost" id="ng-csv">⬇ Export CSV</button>
           <select id="ng-negtype" style="border:1px solid var(--border);border-radius:8px;padding:8px 9px;font-size:12.5px;background:#fff;">${['Negative Phrase','Negative Exact'].map(x=>`<option ${(st.negtype||'Negative Phrase')===x?'selected':''}>${x}</option>`).join('')}</select>
@@ -834,7 +844,7 @@ function renderNgram(){
     detail.innerHTML=`<td></td><td colspan="${colspan}" class="l" style="background:#fbfaff;padding:10px 14px;"><div style="font-weight:600;margin-bottom:6px;">${entry.terms.length} search term(s) containing “${esc(entry.root)}”:</div>${list}${entry.terms.length>60?`<div class="muted" style="margin-top:6px;">…+${entry.terms.length-60} more</div>`:''}</td>`;
     tr.after(detail);
   });
-  ['mi','mc','ms','ma'].forEach(k=>$('#ng-'+k).oninput=debounce(()=>{st[k]=$('#ng-'+k).value; renderNgram();},250));
+  ['mi','mc','ms','ma','mt'].forEach(k=>$('#ng-'+k).oninput=debounce(()=>{st[k==='mt'?'minTerms':k]=$('#ng-'+k).value; renderNgram();},250));
   $('#ng-text').oninput=debounce(()=>{st.text=$('#ng-text').value; renderNgram();},220);
   $('.chips')&&document.querySelectorAll('#app .chip').forEach(c=>c.onclick=()=>{st.quick=c.dataset.q; renderNgram();});
   $('#ng-csv').onclick=()=>exportCSV(cols,rows,'ngram');
@@ -843,7 +853,7 @@ function renderNgram(){
   $('#ng-neg').onclick=()=>{
     const chosen = sel.size? rows.filter(r=>sel.has(r._uid)) : rows;
     if(!chosen.length){ alert('No n-grams to export.'); return; }
-    if(!sel.size && !confirm(`No n-grams selected — export ALL ${rows.length} filtered n-grams as campaign-level negatives across their portfolios?`)) return;
+    if(!sel.size && !confirm(`No n-grams selected — export ALL ${rows.length} filtered n-grams as campaign-level negatives (in the campaigns that generated them)?`)) return;
     exportNgramNegatives(chosen, st.negtype||'Negative Phrase', st.exExactCamp!==false);
   };
 }
@@ -945,6 +955,7 @@ function renderHarvesting(){
   rows.forEach(r=>{ const k=r.searchTerm.toLowerCase(); if(!byTerm.has(k)) byTerm.set(k,{searchTerm:r.searchTerm,portfolioName:r.portfolioName,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0}); const e=byTerm.get(k); e.impressions+=r.impressions;e.clicks+=r.clicks;e.spend+=r.spend;e.sales+=r.sales;e.orders+=r.orders; });
   let opps=[...byTerm.values()].map(e=>{ const term=e.searchTerm.toLowerCase(); return Object.assign(e,derive(e),{
     exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term), targetedP:false }); });
+  if(st.port) opps=opps.filter(o=>(o.portfolioName||'(No Portfolio)')===st.port);
   if(st.term) opps=opps.filter(o=>o.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
   if(st.camp) opps=opps.filter(o=>(o.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const statusF=(o,key,val)=>{ if(!val||val==='all')return true; const has=o[key]; return val==='targeted'?has:val==='not'? !has:true; };
@@ -952,6 +963,8 @@ function renderHarvesting(){
   opps.forEach((o,i)=>o._uid='hv'+i);
   const totals=agg(opps); const tot=derive(totals);
   const sel=selFor('harvesting');
+  const selOpps=opps.filter(o=>sel.has(o._uid));
+  const selTot=derive(agg(selOpps));
   const badge=(v)=>v?'<span class="badge tg">TARGETED</span>':'<span class="badge nt">NOT TARGETED</span>';
   const cols=[
     {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
@@ -976,6 +989,7 @@ function renderHarvesting(){
       <div class="ctrls">
         <div class="slider"><div class="top"><span>ACoS Threshold</span><b>&lt; ${st.acos}%</b></div><input type="range" id="hv-acos" min="5" max="100" step="5" value="${st.acos}"></div>
         <div class="slider"><div class="top"><span>Minimum Conversions</span><b>≥ ${st.minConv}</b></div><input type="range" id="hv-conv" min="1" max="10" value="${st.minConv}"></div>
+        <div class="field"><label>Portfolio</label><select id="hv-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Search Term</label><input type="text" id="hv-term" placeholder="Filter search terms…" value="${esc(st.term||'')}"></div>
         <div class="field grow"><label>Campaign Name</label><input type="text" id="hv-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
         <div class="field"><label>Exact Status</label><select id="hv-ex">${statOpts(st.exStat)}</select></div>
@@ -988,22 +1002,28 @@ function renderHarvesting(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Harvesting Opportunities (${opps.length})</h3><div class="spacer"></div>
-        <button class="btn grad" id="hv-create" ${sel.size?'':'disabled'}>➕ Create New Campaign (${sel.size})</button>
         <button class="btn ghost" id="hv-dl">⬇ Download</button>
       </div>
       <div id="hv-table">${tbl.html}</div>
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">🚀 Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
+        <span class="countnote">${sel.size} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
+      </div>
+      ${renderLaunchPanel(st, selOpps)}
     </div>`;
   tbl.wire($('#hv-table'));
   document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderHarvesting(); });
   $('#hv-acos').oninput=e=>{st.acos=+e.target.value; renderHarvesting();};
   $('#hv-conv').oninput=e=>{st.minConv=+e.target.value; renderHarvesting();};
+  $('#hv-port').onchange=e=>{st.port=e.target.value; renderHarvesting();};
   $('#hv-term').oninput=debounce(()=>{st.term=$('#hv-term').value; renderHarvesting();},220);
   $('#hv-camp').oninput=debounce(()=>{st.camp=$('#hv-camp').value; renderHarvesting();},220);
   $('#hv-ex').onchange=e=>{st.exStat=e.target.value; renderHarvesting();};
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
-  $('#hv-create').onclick=()=>exportNewCampaigns(opps.filter(o=>sel.has(o._uid)));
+  wireLaunchPanel(st, selOpps);
 }
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
 
@@ -1107,23 +1127,23 @@ function exportCSV(columns,rows,name){
 }
 function isExactCampaign(name){ return /(^|[^a-z])exact([^a-z]|$)/i.test(String(name||'')); }
 function exportNgramNegatives(entries, matchType, excludeExact){
-  const out=[]; const seen=new Set(); const portsAll=new Set();
+  const out=[]; const seen=new Set(); const campsAll=new Set();
   const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
   entries.forEach(e=>{
-    // portfolio(s) this root originates from
-    const ports=new Set();
-    (e.terms||[]).forEach(c=>{ const cm=DATA.campById[c.campaignId]; const pf=((cm?cm.portfolio:c.portfolioName)||'(No Portfolio)'); ports.add(pf); portsAll.add(pf); });
-    // every campaign in those portfolios (current product), excluding exact campaigns
-    DATA.campaigns.filter(cp=>cp.product===S.product && ports.has(cp.portfolioName||'(No Portfolio)')).forEach(cp=>{
-      if(excludeExact && isExactCampaign(cp.campaignName)) return;
-      const dk=cp.campaignId+'|'+String(e.root).toLowerCase();
-      if(seen.has(dk)) return; seen.add(dk);
-      out.push(bulkRow({'Product':prod,'Entity':'Campaign negative keyword','Operation':'Create','Campaign ID':cp.campaignId,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
+    // only the campaign(s) that actually generated this root's search terms — NOT the whole portfolio
+    const campIds=new Set((e.terms||[]).map(c=>c.campaignId).filter(Boolean));
+    campIds.forEach(cid=>{
+      const cm=DATA.campById[cid];
+      const cname = cm? cm.name : ((e.terms.find(t=>t.campaignId===cid)||{}).campaignName||'');
+      if(excludeExact && isExactCampaign(cname)) return;
+      const dk=cid+'|'+String(e.root).toLowerCase();
+      if(seen.has(dk)) return; seen.add(dk); campsAll.add(cid);
+      out.push(bulkRow({'Product':prod,'Entity':'Campaign negative keyword','Operation':'Create','Campaign ID':cid,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
     });
   });
-  if(!out.length){ alert('Nothing to export — no matching campaigns found in the source portfolio(s). (All may be Exact campaigns, which are excluded.)'); return; }
+  if(!out.length){ alert('Nothing to export — the campaign(s) these roots come from are all Exact Match (excluded). Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
   writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} ${matchType} row(s) across ${new Set(out.map(r=>r[3])).size} campaign(s) in ${portsAll.size} portfolio(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s).`);
+  alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated only in the campaign(s) that generated them — not portfolio-wide.`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 function exportNegatives(product,rows){
@@ -1147,23 +1167,83 @@ function exportTargetsPause(product,rows){
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
   writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
 }
-function exportNewCampaigns(opps){
-  if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
-  const out=[]; let n=0;
-  opps.forEach(o=>{
-    n++;
-    const cname=`HARVEST_EXACT_${(o.searchTerm||'').replace(/[^a-z0-9]+/gi,'_').slice(0,30)}_${n}`;
-    const agname='Exact';
-    const bid=(o.cpc&&o.cpc>0? Math.max(0.10,+o.cpc.toFixed(2)) : 0.75);
-    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only','Start Date':''}));
-    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':bid}));
-    const skus=(DATA.skuByCampaign[o.campaignId]||[]);
-    (skus.length?skus:[{sku:''}]).forEach(s=>{ out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':s.sku||''})); });
-    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':o.searchTerm,'Match Type':'Exact','Bid':bid}));
+/* ---- naming pattern detection: reuse the convention of an existing campaign in the same portfolio ---- */
+function detectNamingTemplate(portfolioName, matchType){
+  const mt=String(matchType||'').toUpperCase();
+  const re=new RegExp('^([A-Za-z0-9]+)_'+mt+'(?:_(\\d+))?_(.*)$','i');
+  let best=null;
+  DATA.campaigns.forEach(c=>{
+    if(portfolioName && (c.portfolioName||'(No Portfolio)')!==portfolioName) return;
+    const m=(c.campaignName||'').match(re);
+    if(m){ const num=m[2]?parseInt(m[2],10):0; if(!best||num>=best.num) best={prefix:m[1],num,suffix:m[3],fullName:c.campaignName}; }
   });
-  writeBulk(out,'new_campaigns_bulk.xlsx');
-  const missing=opps.filter(o=>!(DATA.skuByCampaign[o.campaignId]||[]).length).length;
-  if(missing) alert(`Created ${opps.length} campaign scaffold(s). Note: ${missing} had no SKU found in the source campaign — fill the SKU column before uploading.`);
+  return best;
+}
+function renderLaunchPanel(st, selOpps){
+  if(!selOpps.length) return `<div class="empty" style="padding:24px;"><p>Toggle the switch next to the search terms you want to launch above — the naming &amp; export controls appear here.</p></div>`;
+  if(st.launchMatch===undefined) st.launchMatch='EXACT';
+  if(st.launchMode===undefined) st.launchMode='single';
+  if(st.launchPrefix===undefined) st.launchPrefix='BSQ';
+  if(st.launchPortfolio===undefined){
+    const counts={}; selOpps.forEach(o=>{ const p=o.portfolioName||'(No Portfolio)'; counts[p]=(counts[p]||0)+1; });
+    st.launchPortfolio=Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0]||'';
+  }
+  const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch);
+  const nextNum=template?template.num+1:1;
+  return `
+  <div class="ctrls">
+    <div class="field grow"><label>Portfolio (naming copied from here)</label><select id="hv-lport">${portOptions(st.launchPortfolio)}</select></div>
+    <div class="field"><label>Prefix (used only if no existing campaign found)</label><input type="text" id="hv-lprefix" value="${esc(st.launchPrefix)}" style="width:90px;"></div>
+    <div class="field"><label>Match Type</label><select id="hv-lmatch">${['EXACT','PHRASE','BROAD'].map(x=>`<option ${st.launchMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label>Mode</label><select id="hv-lmode"><option value="single" ${st.launchMode==='single'?'selected':''}>1 campaign per keyword</option><option value="one" ${st.launchMode==='one'?'selected':''}>All in 1 campaign</option></select></div>
+    <div class="field"><label>Bid override ($, optional)</label><input type="number" id="hv-lbid" step="0.01" placeholder="auto (from CPC)" value="${esc(st.launchBid||'')}" style="width:130px;"></div>
+  </div>
+  <div class="banner" style="margin-top:12px;">
+    ${template
+      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)}_${nextNum}_${esc(template.suffix)}</b> onward (no duplicates — skips any number already taken).`
+      : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)}_1, _2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
+  </div>
+  <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">➕ ${st.launchMode==='one'?`Create 1 campaign (${selOpps.length} keywords)`:`Create ${selOpps.length} campaign(s)`}</button></div>`;
+}
+function wireLaunchPanel(st, selOpps){
+  if(!selOpps.length) return;
+  $('#hv-lport').onchange=e=>{ st.launchPortfolio=e.target.value; renderHarvesting(); };
+  $('#hv-lprefix').oninput=debounce(()=>{ st.launchPrefix=$('#hv-lprefix').value; renderHarvesting(); },300);
+  $('#hv-lmatch').onchange=e=>{ st.launchMatch=e.target.value; renderHarvesting(); };
+  $('#hv-lmode').onchange=e=>{ st.launchMode=e.target.value; renderHarvesting(); };
+  $('#hv-lbid').oninput=debounce(()=>{ st.launchBid=$('#hv-lbid').value; },300);
+  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, mode:st.launchMode, bidOverride: st.launchBid?+st.launchBid:null});
+}
+function exportNewCampaigns(opps, settings){
+  if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
+  settings=settings||{}; const matchType=(settings.matchType||'EXACT').toUpperCase();
+  const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
+  const template=detectNamingTemplate(settings.portfolioName, matchType);
+  const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
+  let nextNum=template?template.num+1:1;
+  function nextFreeName(){
+    let name = template? `${template.prefix}_${matchType}_${nextNum}_${template.suffix}` : `HARVEST_${matchType}_${nextNum}`;
+    while(existingNames.has(name)){ nextNum++; name = template? `${template.prefix}_${matchType}_${nextNum}_${template.suffix}` : `HARVEST_${matchType}_${nextNum}`; }
+    existingNames.add(name); nextNum++;
+    return name;
+  }
+  const out=[]; let missingSku=0;
+  const perKwBid = o => settings.bidOverride || (o.cpc&&o.cpc>0? Math.max(0.10,+o.cpc.toFixed(2)) : 0.75);
+  function addCampaign(cname, kwList){
+    const agname=cname+'_AG';
+    const agDefaultBid = kwList.length===1? perKwBid(kwList[0]) : (settings.bidOverride||0.75);
+    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'}));
+    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':agDefaultBid}));
+    const skuSet=new Set(); kwList.forEach(o=>{ (DATA.skuByCampaign[o.campaignId]||[]).forEach(s=>{ if(s.sku) skuSet.add(s.sku); }); });
+    const skus=[...skuSet]; if(!skus.length) missingSku++;
+    (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
+    kwList.forEach(o=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':o.searchTerm,'Match Type':matchTypeCap,'Bid':perKwBid(o)})));
+  }
+  if(settings.mode==='one'){ addCampaign(nextFreeName(), opps); }
+  else opps.forEach(o=>addCampaign(nextFreeName(),[o]));
+  writeBulk(out,'harvest_new_campaigns_bulk.xlsx');
+  const n=settings.mode==='one'?1:opps.length;
+  alert(`Created ${n} campaign(s)${template?` using the naming pattern from "${template.fullName}"`:' (no matching naming pattern found — used a fallback name)'}.${missingSku?` Note: ${missingSku} campaign(s) had no SKU found in the source campaign — fill the SKU column before uploading.`:''}`);
 }
 
 /* ============================ file loading + IDB ============================ */
