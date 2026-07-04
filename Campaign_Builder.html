@@ -105,7 +105,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-04 12:15</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-04 13:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -482,11 +482,14 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_'); }
+// ignoreNaming lets the user force the manual fields even when an existing campaign's naming could be copied —
+// needed because the copied suffix can carry over stale/typo'd segments (e.g. a duplicated day code) from real data.
 function templateFor(cfg,match){
+  if(cfg.ignoreNaming) return null;
   if(!match||match==='AUTO') return null;
   const pfName=getPortfolioNameById(cfg.btAccount, cfg.portfolioId);
   if(!pfName) return null;
@@ -560,6 +563,7 @@ function namingBannerHtml(cfg){
   const matches=selectedMatches(cfg);
   if(cfg.type==='auto'||!matches.length) return '';
   const m=matches[0];
+  if(cfg.ignoreNaming) return `Ignoring existing naming (checkbox below) — campaigns will use the manual fields below, regardless of what's already in this portfolio.`;
   const tmpl=templateFor(cfg,m);
   if(tmpl){
     const suffix=refreshDateToken(tmpl.suffix);
@@ -614,6 +618,9 @@ function renderCampaignCreate(){
         </div>
       </div>
       <div class="banner" id="cc-naming-banner" style="margin:4px 0 12px;">${namingBannerHtml(cfg)}</div>
+      <div class="ctrls" style="${cfg.type==='auto'?'display:none;':''}">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-ignore-naming" ${cfg.ignoreNaming?'checked':''}> Ignore existing naming in this portfolio — always use the manual fields below</label>
+      </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Prefix</label><input type="text" id="cc-prefix" value="${esc(cfg.prefix)}" style="width:80px;"></div>
         <div class="field"><label>Type (Tip) — used only if no existing campaign found</label><input type="text" id="cc-tip" value="${esc(cfg.tip)}" placeholder="BRND" style="width:90px;"></div>
@@ -687,6 +694,7 @@ function renderCampaignCreate(){
   $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
   document.querySelectorAll('.cc-auto-g').forEach(cb=>cb.onchange=()=>{ cfg[cb.dataset.g]=cb.checked; updateBuilderOutputs(); });
+  const ignoreEl=$('#cc-ignore-naming'); if(ignoreEl) ignoreEl.onchange=()=>{ cfg.ignoreNaming=ignoreEl.checked; renderCampaignCreate(); };
   $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{ cfg.type=b.dataset.t; renderCampaignCreate(); });
   $('#cc-export').onclick=exportCreatedCampaigns;
   updateBuilderOutputs();
