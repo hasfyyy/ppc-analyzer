@@ -105,7 +105,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-03 13:02</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-04 12:06</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -150,18 +150,28 @@ function btSave(){ try{ localStorage.setItem(BT_KEY, JSON.stringify(BT)); }catch
 function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
 // A "dedicated" portfolio (one product/parent) is numbered: "01. …", "24. …". Mixed/branded ones aren't.
 function isDedicatedPortfolio(name){ return /^\s*\d/.test(String(name||'')); }
+// Dedicated (numbered) portfolios sorted by their leading number; anything else sorted alphabetically after.
+function sortPortfolios(list){
+  const ded=list.filter(p=>isDedicatedPortfolio(p.name));
+  const other=list.filter(p=>!isDedicatedPortfolio(p.name));
+  ded.sort((a,b)=>{
+    const na=parseInt(String(a.name||'').match(/^\s*(\d+)/)[1],10);
+    const nb=parseInt(String(b.name||'').match(/^\s*(\d+)/)[1],10);
+    return na-nb || String(a.name||'').localeCompare(String(b.name||''));
+  });
+  other.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id)));
+  return [...ded, ...other];
+}
+// Mixed/branded (non-numbered) portfolios are excluded from selection entirely — they group many parents,
+// so there's no single ASIN/naming to inherit from them; only dedicated (numbered) portfolios are selectable.
 function btPortfolioOptions(acc,selId){
   const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const all=A?A.portfolios:[];
-  const list=all.filter(p=>isDedicatedPortfolio(p.name));
-  let html=`<option value="">— select portfolio —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-  if(selId && !list.some(p=>String(p.id)===String(selId))){ const k=all.find(p=>String(p.id)===String(selId)); html+=`<option value="${esc(selId)}" selected>${esc(k?((k.name||k.id)+' (mixed)'):(selId+' (unlisted)'))}</option>`; }
-  return html;
+  const list=sortPortfolios(all.filter(p=>isDedicatedPortfolio(p.name)));
+  return `<option value="">— select portfolio —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
 }
 function rowPortfolioSelect(i, pid, ports){
-  const list = ports.filter(p=>isDedicatedPortfolio(p.name));
-  let opts = `<option value="">— none —</option>`;
-  opts += list.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-  if(pid && !list.some(p=>String(p.id)===String(pid))){ const k=ports.find(p=>String(p.id)===String(pid)); opts+=`<option value="${esc(pid)}" selected>${esc(k?((k.name||k.id)+' (mixed)'):(pid+' (unlisted)'))}</option>`; }
+  const list=sortPortfolios(ports.filter(p=>isDedicatedPortfolio(p.name)));
+  const opts = `<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
   return `<select data-i="${i}" data-pfsel="1" style="width:160px;">${opts}</select>`;
 }
 
@@ -303,7 +313,7 @@ function renderBrandTable(){
   S.btFilter = S.btFilter || {portfolio:'', search:''};
   if(A){ let ch=false; prods.forEach(p=>{ if(!(p.brand||'').trim()){ p.brand=acc; ch=true; } }); if(ch) btSave(); }
   const accSel = `<select id="bt-acc">${accNames.length?accNames.map(n=>`<option ${acc===n?'selected':''}>${esc(n)}</option>`).join(''):'<option value="">(no accounts)</option>'}</select>`;
-  const pfFilterOpts = ports.map(p=>`<option value="${esc(p.id)}" ${S.btFilter.portfolio===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
+  const pfFilterOpts = sortPortfolios(ports.filter(p=>isDedicatedPortfolio(p.name))).map(p=>`<option value="${esc(p.id)}" ${S.btFilter.portfolio===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
   const rowsHtml = prods.map((p,i)=>`<tr data-row="${i}">
     <td class="l">${i+1}</td>
     <td>${rowPortfolioSelect(i, p.portfolioId, ports)}</td>
@@ -315,8 +325,14 @@ function renderBrandTable(){
     <td><input data-i="${i}" data-f="skus" value="${esc((p.skus||[]).join(', '))}" style="width:280px;"></td>
     <td class="l"><button class="btn ghost bt-del" data-i="${i}" style="padding:4px 9px;">✕</button></td>
   </tr>`).join('');
-  const pfHtml = ports.map((p,i)=>`<tr>
-    <td class="l">${i+1}</td>
+  // sort for display, but keep each row's ORIGINAL array index for the edit/delete handlers (data-pi)
+  const portsWithIdx = ports.map((p,i)=>({p,i}));
+  const sortedPortIdx = [
+    ...portsWithIdx.filter(x=>isDedicatedPortfolio(x.p.name)).sort((a,b)=>parseInt(String(a.p.name||'').match(/^\s*(\d+)/)[1],10)-parseInt(String(b.p.name||'').match(/^\s*(\d+)/)[1],10)),
+    ...portsWithIdx.filter(x=>!isDedicatedPortfolio(x.p.name)).sort((a,b)=>String(a.p.name||a.p.id).localeCompare(String(b.p.name||b.p.id)))
+  ];
+  const pfHtml = sortedPortIdx.map(({p,i},row)=>`<tr>
+    <td class="l">${row+1}</td>
     <td><input data-pi="${i}" data-pf="name" value="${esc(p.name||'')}" placeholder="e.g. Bookends" style="width:200px;"></td>
     <td><input data-pi="${i}" data-pf="id" value="${esc(p.id||'')}" placeholder="numeric ID" style="width:180px;"></td>
     <td class="l"><button class="btn ghost bt-pdel" data-pi="${i}" style="padding:4px 9px;">✕</button></td>
@@ -460,7 +476,8 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{}}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true}; } return CFG; }
+const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_'); }
 function templateFor(cfg,match){
@@ -516,7 +533,9 @@ function buildCampaignRows(cfg){
       if(+cfg.tos>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Top','Percentage':cfg.tos}));
       out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
       (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
-      if(cfg.type!=='auto') grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase(),'Bid':cfg.bid})));
+      if(cfg.type==='auto'){
+        AUTO_GROUPS.forEach(g=>{ if(cfg[g.key]) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':g.expr})); });
+      } else grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase(),'Bid':cfg.bid})));
     });
   });
   return out;
@@ -527,6 +546,7 @@ function builderIssues(cfg){
   const hasTemplate=matches.some(m=>templateFor(cfg,m));
   if(!hasTemplate && !String(cfg.brand).trim() && !String(cfg.asin).trim()) iss.push('Enter a Brand/Niche or ASIN for the campaign name (or upload a Reference Bulk to copy naming from an existing campaign).');
   if(cfg.type!=='auto' && !linesOf(cfg.keywords).length) iss.push('Enter at least one keyword (manual campaigns).');
+  if(cfg.type==='auto' && !AUTO_GROUPS.some(g=>cfg[g.key])) iss.push('Select at least one auto targeting group (Close Match / Loose Match / Substitutes / Complements).');
   if(!linesOf(cfg.skus).length) iss.push('Select a portfolio (or add SKUs manually) — at least one SKU is required.');
   return iss;
 }
@@ -579,6 +599,13 @@ function renderCampaignCreate(){
         <div class="field"><label>Keywords / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
         <div class="field"><label>Start #</label><input type="number" id="cc-start" min="1" value="${esc(cfg.startNum)}" style="width:80px;"></div>
         <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all keywords in 1 campaign · 1 = single-keyword campaigns · N = N per campaign. Numbered from Start #.</div></div>
+      </div>
+      <div class="ctrls" id="cc-auto-groups" style="${cfg.type==='auto'?'':'display:none;'}">
+        <div class="field"><label>Auto targeting groups (Product Targeting rows, one per group, bid = Default Bid below)</label>
+          <div style="display:flex;gap:14px;height:32px;align-items:center;">
+            ${AUTO_GROUPS.map(g=>`<label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" class="cc-auto-g" data-g="${g.key}" ${cfg[g.key]?'checked':''}> ${esc(g.label)}</label>`).join('')}
+          </div>
+        </div>
       </div>
       <div class="banner" id="cc-naming-banner" style="margin:4px 0 12px;">${namingBannerHtml(cfg)}</div>
       <div class="ctrls" style="margin-top:12px;">
@@ -653,6 +680,7 @@ function renderCampaignCreate(){
   $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
+  document.querySelectorAll('.cc-auto-g').forEach(cb=>cb.onchange=()=>{ cfg[cb.dataset.g]=cb.checked; updateBuilderOutputs(); });
   $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{ cfg.type=b.dataset.t; renderCampaignCreate(); });
   $('#cc-export').onclick=exportCreatedCampaigns;
   updateBuilderOutputs();
@@ -670,8 +698,9 @@ function updateBuilderOutputs(){
   $('#cc-names').innerHTML = names.length? shown+(names.length>30?`<br><span class="muted">…+${names.length-30} more campaigns</span>`:'') : '<span class="muted">Select a match type to preview names.</span>';
   const bannerEl=$('#cc-naming-banner'); if(bannerEl) bannerEl.innerHTML=namingBannerHtml(cfg);
   const skus=linesOf(cfg.skus).length, kws=linesOf(cfg.keywords).length;
-  const nCamp=names.length, nAds=nCamp*Math.max(1,skus), nKw=cfg.type==='auto'?0:matches.length*kws;
-  $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${cfg.type==='auto'?' · auto targeting':` · ${nKw} keyword(s)`}`;
+  const nCamp=names.length, nAds=nCamp*Math.max(1,skus);
+  const nGroups=AUTO_GROUPS.filter(g=>cfg[g.key]).length, nKw=cfg.type==='auto'?0:matches.length*kws;
+  $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${cfg.type==='auto'?` · ${nCamp*nGroups} auto targeting row(s) (${nGroups} group(s)/campaign)`:` · ${nKw} keyword(s)`}`;
   const iss=builderIssues(cfg);
   $('#cc-issues').innerHTML = iss.length? `<span style="color:#dc2626;">⚠ ${esc(iss[0])}</span>`:'<span style="color:#15803d;">✓ Ready to export</span>';
   const exp=$('#cc-export'); if(exp) exp.disabled = iss.length>0;
