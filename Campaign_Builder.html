@@ -105,7 +105,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-04 12:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-04 12:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -233,20 +233,26 @@ function extractBrandDataFromBulk(wb){
     const cPortName=headers.find(h=>normH(h)==='portfolio name');
     const cSku=headers.find(h=>normH(h)==='sku');
     const cAsin=headers.find(h=>normH(h).indexOf('asin')!==-1);
+    const cState=headers.find(h=>normH(h)==='state');
     json.forEach(row=>{
       const ent=String(row[cEntity]||'').trim().toLowerCase();
       const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':'SP') : (/brand/i.test(sn)?'SB':'SP');
       const campaignId=String(cCampId?row[cCampId]:'').trim();
-      if(ent==='campaign') campaigns.push({campaignId, portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod});
-      else if(ent==='product ad') productAds.push({campaignId, asin:String(cAsin?row[cAsin]:'').trim(), sku:String(cSku?row[cSku]:'').trim()});
+      const state=String(cState?row[cState]:'').trim().toLowerCase();
+      if(ent==='campaign') campaigns.push({campaignId, portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod, state});
+      else if(ent==='product ad') productAds.push({campaignId, asin:String(cAsin?row[cAsin]:'').trim(), sku:String(cSku?row[cSku]:'').trim(), state});
     });
   });
-  const campToPortfolio={}; campaigns.forEach(c=>{ if(c.portfolioId) campToPortfolio[c.campaignId]=c.portfolioId; });
+  // Only campaigns actually running (State=enabled) count for portfolio mapping / product extraction —
+  // paused/archived campaigns can carry stale ASIN/SKU pairings the user no longer wants to see.
+  const campEnabled={}; campaigns.forEach(c=>{ campEnabled[c.campaignId] = c.state==='enabled'; });
+  const campToPortfolio={}; campaigns.forEach(c=>{ if(c.portfolioId && campEnabled[c.campaignId]) campToPortfolio[c.campaignId]=c.portfolioId; });
   const pfMap=new Map();
-  campaigns.forEach(c=>{ if(!c.portfolioId) return; if(!pfMap.has(c.portfolioId) || (!pfMap.get(c.portfolioId) && c.portfolioName)) pfMap.set(c.portfolioId, c.portfolioName); });
+  campaigns.forEach(c=>{ if(!c.portfolioId || !campEnabled[c.campaignId]) return; if(!pfMap.has(c.portfolioId) || (!pfMap.get(c.portfolioId) && c.portfolioName)) pfMap.set(c.portfolioId, c.portfolioName); });
   const portfolios=[...pfMap.entries()].map(([id,name])=>({id,name}));
   const byKey=new Map();
   productAds.forEach(a=>{
+    if(a.state!=='enabled' || !campEnabled[a.campaignId]) return;
     const key=(a.asin||a.sku||'').toLowerCase(); if(!key) return;
     if(!byKey.has(key)) byKey.set(key,{asin:a.asin,skus:new Set(),portfolioId:campToPortfolio[a.campaignId]||''});
     const e=byKey.get(key); if(a.sku) e.skus.add(a.sku); if(!e.asin && a.asin) e.asin=a.asin; if(!e.portfolioId && campToPortfolio[a.campaignId]) e.portfolioId=campToPortfolio[a.campaignId];
