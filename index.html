@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 10:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 10:26</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1216,9 +1216,11 @@ function renderLaunchPanel(st, selOpps){
   if(!st.launchCountTouched) st.launchCount=selOpps.length;
   else if(st.launchCount>selOpps.length) st.launchCount=selOpps.length;
   const numCampaigns=Math.max(1,Math.min(+st.launchCount||1, selOpps.length));
-  const template=detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix);
+  if(st.launchIgnoreNaming===undefined) st.launchIgnoreNaming=false;
+  if(st.launchManualSuffix===undefined) st.launchManualSuffix='';
+  const template=st.launchIgnoreNaming? null : detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix);
   const nextNum=template?template.num+1:1;
-  const suffix=template?refreshDateToken(template.suffix):'';
+  const suffix=template?refreshDateToken(template.suffix):st.launchManualSuffix;
   return `
   <div class="ctrls">
     <div class="field grow"><label>Portfolio (naming copied from here)</label><select id="hv-lport">${portOptions(st.launchPortfolio)}</select></div>
@@ -1227,11 +1229,17 @@ function renderLaunchPanel(st, selOpps){
     <div class="field"><label>Number of campaigns</label><input type="number" id="hv-lcount" min="1" max="${selOpps.length}" value="${numCampaigns}" style="width:90px;"></div>
     <div class="field"><label>Bid override ($, optional)</label><input type="number" id="hv-lbid" step="0.01" placeholder="auto (from CPC)" value="${esc(st.launchBid||'')}" style="width:130px;"></div>
   </div>
+  <div class="ctrls" style="margin-top:8px;">
+    <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-lignore" ${st.launchIgnoreNaming?'checked':''}> Ignore existing naming in this portfolio — type my own suffix</label>
+    ${st.launchIgnoreNaming? `<div class="field grow"><label>Custom suffix (appended after ${esc(st.launchPrefix)}_${esc(st.launchMatch)} ${nextNum}_)</label><input type="text" id="hv-lsuffix" value="${esc(st.launchManualSuffix)}" placeholder="e.g. MyBrand_B0XXXXXXX_Alex_JUL26_Insiders"></div>` : ''}
+  </div>
   <div class="hint" style="margin-top:8px;">${selOpps.length} keyword(s) selected → split into ${numCampaigns} campaign(s) (${numCampaigns===1?'all keywords together':numCampaigns===selOpps.length?'1 keyword each':'~'+Math.ceil(selOpps.length/numCampaigns)+' keywords each'}).</div>
   <div class="banner" style="margin-top:12px;">
-    ${template
-      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)}_${nextNum}_${esc(suffix)}</b> onward — month/year refreshed to the current one, no duplicates.`
-      : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)}_1, _2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
+    ${st.launchIgnoreNaming
+      ? `Ignoring existing naming — campaigns will be named <b>${esc(st.launchPrefix)}_${esc(st.launchMatch)} ${nextNum}_${esc(suffix)}</b> onward (your custom suffix, current month/year is not auto-inserted here — include it yourself if needed).`
+      : template
+      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)} ${nextNum}_${esc(suffix)}</b> onward — month/year refreshed to the current one, no duplicates.`
+      : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)} 1, 2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
   </div>
   <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">➕ Create ${numCampaigns} campaign(s)</button></div>`;
 }
@@ -1242,19 +1250,23 @@ function wireLaunchPanel(st, selOpps){
   $('#hv-lmatch').onchange=e=>{ st.launchMatch=e.target.value; renderHarvesting(); };
   $('#hv-lcount').oninput=debounce(()=>{ st.launchCount=+$('#hv-lcount').value||1; st.launchCountTouched=true; renderHarvesting(); },250);
   $('#hv-lbid').oninput=debounce(()=>{ st.launchBid=$('#hv-lbid').value; },300);
-  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, numCampaigns:st.launchCount, bidOverride: st.launchBid?+st.launchBid:null});
+  $('#hv-lignore').onchange=e=>{ st.launchIgnoreNaming=e.target.checked; renderHarvesting(); };
+  const suffixEl=$('#hv-lsuffix'); if(suffixEl) suffixEl.oninput=debounce(()=>{ st.launchManualSuffix=$('#hv-lsuffix').value; renderHarvesting(); },300);
+  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, numCampaigns:st.launchCount, bidOverride: st.launchBid?+st.launchBid:null, ignoreNaming:st.launchIgnoreNaming, manualSuffix:st.launchManualSuffix});
 }
 function exportNewCampaigns(opps, settings){
   if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
   settings=settings||{}; const matchType=(settings.matchType||'EXACT').toUpperCase();
   const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
-  const template=detectNamingTemplate(settings.portfolioName, matchType, 'SP', settings.prefix);
-  const suffix = template? refreshDateToken(template.suffix) : '';
+  const template=settings.ignoreNaming? null : detectNamingTemplate(settings.portfolioName, matchType, 'SP', settings.prefix);
+  const suffix = template? refreshDateToken(template.suffix) : (settings.manualSuffix||'');
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   let nextNum=template?template.num+1:1;
+  // Number gets a space before it ("BSQ_EXACT 1_...") rather than an underscore — matches the account's
+  // own convention better than "_1_" and keeps it visually distinct from the suffix that follows.
   function nextFreeName(){
-    let name = template? `${template.prefix}_${matchType}_${nextNum}_${suffix}` : `HARVEST_${matchType}_${nextNum}`;
-    while(existingNames.has(name)){ nextNum++; name = template? `${template.prefix}_${matchType}_${nextNum}_${suffix}` : `HARVEST_${matchType}_${nextNum}`; }
+    let name = (template||settings.ignoreNaming)? `${settings.prefix||(template&&template.prefix)}_${matchType} ${nextNum}_${suffix}` : `HARVEST_${matchType} ${nextNum}`;
+    while(existingNames.has(name)){ nextNum++; name = (template||settings.ignoreNaming)? `${settings.prefix||template.prefix}_${matchType} ${nextNum}_${suffix}` : `HARVEST_${matchType} ${nextNum}`; }
     existingNames.add(name); nextNum++;
     return name;
   }
