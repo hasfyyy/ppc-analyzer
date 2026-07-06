@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 12:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 12:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1311,20 +1311,32 @@ function renderOptimize(){
   $('#opt-seg').querySelectorAll('button').forEach(b=>b.onclick=()=>{ S.opt=b.dataset.o; renderOptimize(); });
   (S.opt==='bids'? renderOptBids : renderOptPlacements)();
 }
+// Three escalating ACoS tiers instead of one flat cut — a keyword at 140% ACoS gets hit much harder than
+// one that just crept past the first threshold. Tiers must be checked highest-first so the worst offenders
+// get the biggest cut, not the first (lowest) tier they happen to clear.
+function decreaseTierFor(acos, st){
+  if(acos===Infinity || acos>=st.hi3) return st.dec3;
+  if(acos>=st.hi2) return st.dec2;
+  if(acos>=st.hi1) return st.dec1;
+  return null;
+}
 function renderOptBids(){
   const st=stFor('optbids');
-  if(st.highAcos===undefined) st.highAcos=50; if(st.decPct===undefined) st.decPct=15;
+  if(st.hi1===undefined) st.hi1=50; if(st.dec1===undefined) st.dec1=10;
+  if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
+  if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0);
   let rows=src.map(t=>{
     const d=derive(agg([t]));
-    let action='none', newBid=t.bid;
+    let action='none', newBid=t.bid, pct=null;
     if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
-      if(t.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){ action='decrease'; newBid=Math.max(0.02, +(t.bid*(1-st.decPct/100)).toFixed(2)); }
-      else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); }
+      const decPct = t.orders>=1? decreaseTierFor(d.acos, st) : null;
+      if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
+      else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); }
     }
-    return action!=='none'? Object.assign({action,newBid},t,d) : null;
+    return action!=='none'? Object.assign({action,pct,newBid},t,d) : null;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
@@ -1332,7 +1344,7 @@ function renderOptBids(){
   const sel=selFor('optbids');
   const totals=agg(rows);
   const cols=[
-    {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decPct}%</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${st.incPct}%</span>`},
+    {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${r.pct}%</span>`},
     {key:'text',label:'Target',l:true,type:'text'},
     {key:'kind',label:'Type',l:true,type:'text',cell:r=>r.kind==='keyword'?'Keyword':'Product'},
     {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(targetDetailLabel(r))},
@@ -1349,9 +1361,16 @@ function renderOptBids(){
   $('#opt-body').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Bid rules</h3>
+      <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
       <div class="ctrls">
-        <div class="slider"><div class="top"><span>Decrease if ACoS &gt;</span><b>${st.highAcos}%</b></div><input type="range" id="ob-hi" min="10" max="150" step="5" value="${st.highAcos}"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec" value="${st.decPct}" style="width:80px;"></div>
+        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec1" value="${st.dec1}" style="width:80px;"></div>
+        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="ob-hi2" value="${st.hi2}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec2" value="${st.dec2}" style="width:80px;"></div>
+        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:80px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:12px;">
         <div class="slider"><div class="top"><span>Increase if ACoS &lt;</span><b>${st.lowAcos}%</b></div><input type="range" id="ob-lo" min="0" max="80" step="5" value="${st.lowAcos}"></div>
         <div class="field"><label>Increase by %</label><input type="number" id="ob-inc" value="${st.incPct}" style="width:80px;"></div>
         <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
@@ -1372,10 +1391,12 @@ function renderOptBids(){
     </div>`;
   tbl.wire($('#ob-table'));
   const upd=()=>renderOptBids();
-  $('#ob-hi').oninput=e=>{st.highAcos=+e.target.value; upd();};
   $('#ob-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
-  bind('ob-dec','decPct',v=>+v||0); bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
+  bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
+  bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
+  bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
+  bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
