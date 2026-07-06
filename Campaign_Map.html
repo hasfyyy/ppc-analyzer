@@ -91,15 +91,19 @@
   <div class="card pad">
     <div class="rowbar" style="margin:0;">
       <label class="btn grad" style="cursor:pointer;">⬆ Upload Bulk Operations export<input type="file" id="cm-file" accept=".xlsx,.xls,.csv" class="hidden"></label>
+      <label class="btn ghost" style="cursor:pointer;">⬆ Parent/Child ASIN map (optional)<input type="file" id="cm-parentmap" accept=".xlsx,.xls,.csv" class="hidden"></label>
       <div class="field"><label>Brand terms (comma-separated — used to tell BRND EXACT apart from generic EXACT)</label><input type="text" id="cm-brandterms" placeholder="e.g. odofit, odo fit" style="width:280px;"></div>
       <div class="spacer"></div>
       <span class="hint" id="cm-status">No file loaded yet — upload a bulk export to build the map. Only <b>enabled</b> campaigns are analyzed.</span>
+    </div>
+    <div class="rowbar" style="margin:6px 0 0;">
+      <span class="hint" id="cm-parentmap-status">No Parent/Child ASIN map loaded — a campaign is flagged <b>MIXED</b> if it advertises &gt;1 distinct ASIN, even if they're just variations of the same product. Upload a sheet with columns like "Portfolio name / (Parent) ASIN / Product ASIN" so variations of the same parent don't get flagged as mixed.</span>
     </div>
   </div>
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 10:26</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 10:31</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -130,7 +134,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 'use strict';
 function $(s){ return document.querySelector(s); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function normH(h){ h=String(h||'').toLowerCase(); h=h.replace(/\(.*?informational.*?\)/g,''); h=h.replace(/[^a-z0-9]+/g,' '); return h.trim(); }
+function normH(h){ h=String(h||'').toLowerCase(); h=h.replace(/\(.*?\)/g,''); h=h.replace(/[^a-z0-9]+/g,' '); return h.trim(); }
 function linesOf(s){ return String(s||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean); }
 
 let CAMPS=[]; // flat list of enabled campaign summaries
@@ -144,6 +148,35 @@ function asinInfoFromBrandTable(asin){
     if(p) return {account:accName, brand:p.brand||'', niche:p.niche||'', name:p.name||''};
   }
   return null;
+}
+
+/* ============================ PARENT/CHILD ASIN MAP (optional) ============================ */
+// Without this, every distinct ASIN on a campaign counts as a separate product, so a campaign
+// advertising 3 variations (colors/sizes) of the SAME parent gets wrongly flagged as "mixed".
+// With it, campaigns only get flagged mixed when their ASINs resolve to >1 distinct PARENT.
+let PARENT_MAP={}; // child ASIN (upper) -> parent ASIN (upper)
+function resolveParent(asin){
+  if(!asin) return asin;
+  const up=String(asin).toUpperCase();
+  return PARENT_MAP[up] || up; // unmapped ASINs are treated as their own parent (unchanged behavior)
+}
+function parseParentMap(wb){
+  const map={};
+  wb.SheetNames.forEach(sn=>{
+    const json=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:''});
+    if(!json.length) return;
+    const headers=Object.keys(json[0]);
+    const col={}; headers.forEach(h=>{ const n=normH(h); if(!(n in col)) col[n]=h; });
+    const cParent = col['parent asin']!=null? col['parent asin'] : (col['asin']!=null? col['asin'] : null);
+    const cChild = col['product asin']!=null? col['product asin'] : (col['child asin']!=null? col['child asin'] : null);
+    if(!cParent || !cChild || cParent===cChild) return; // needs two distinct ASIN-ish columns to be a parent/child map
+    json.forEach(row=>{
+      const parent=String(row[cParent]||'').trim().toUpperCase();
+      const child=String(row[cChild]||'').trim().toUpperCase();
+      if(parent && child) map[child]=parent;
+    });
+  });
+  return map;
 }
 
 /* ============================ NAMING TEMPLATE (optional — user's own convention, not forced) ============================ */
@@ -319,7 +352,11 @@ function processWorkbook(wb, brandTermsRaw){
   const brandTerms=linesOf(brandTermsRaw).map(x=>x.toLowerCase());
   const rows=Object.values(byCampaign).filter(c=>c.state==='enabled').map(c=>{
     const asins=[...c.asins];
-    const mixed=asins.length>1;
+    // Mixed means DIFFERENT PARENTS, not just multiple ASINs — several variations (colors/sizes) of the
+    // same parent are a normal dedicated campaign, not a mixed one. Without a Parent/Child map every ASIN
+    // is its own "parent" (unchanged old behavior); with one, variations correctly collapse together.
+    const parents=[...new Set(asins.map(resolveParent))];
+    const mixed=parents.length>1;
     const baseType=classify(c, brandTerms);
     // Flag mixed campaigns right in the Type text (not just a separate column) — this is the field
     // people scan first (in the UI and once exported/re-sorted in Excel), so the flag has to travel with it.
@@ -327,19 +364,19 @@ function processWorkbook(wb, brandTermsRaw){
     return {
       campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type,
       adGroupCount:c.adGroups?c.adGroups.size:0, portfolioId:c.portfolioId, portfolioName:c.portfolioName,
-      asins, mixed, primaryAsin: asins.length===1? asins[0] : null
+      asins, parents, mixed, primaryAsin: parents.length===1? parents[0] : null
     };
   });
   return rows;
 }
 
 function buildAsinGroups(rows){
-  const groups=new Map(); // asin -> {campaigns:[], portfolioIds:Set}
+  const groups=new Map(); // parent ASIN -> {campaigns:[], portfolioIds:Set}
   const mixedBucket=[]; const noAsinBucket=[];
   rows.forEach(r=>{
     if(r.mixed){ mixedBucket.push(r); return; }
     if(r.asins.length===0){ noAsinBucket.push(r); return; }
-    const asin=r.asins[0];
+    const asin=r.primaryAsin;
     if(!groups.has(asin)) groups.set(asin,{asin, campaigns:[], portfolioIds:new Set()});
     const g=groups.get(asin); g.campaigns.push(r); if(r.portfolioId) g.portfolioIds.add(r.portfolioId+'|||'+(r.portfolioName||''));
   });
@@ -401,10 +438,12 @@ function renderApp(rows){
     const bt=asinInfoFromBrandTable(g.asin);
     const inconsistentFlag = g.portfolioIds.size>1;
     const pfList=[...g.portfolioIds].map(x=>x.split('|||')[1]||x.split('|||')[0]||'(No Portfolio)');
+    const variations=[...new Set(g.campaigns.flatMap(c=>c.asins))];
     return `<tr class="grouphead">
       <td class="l" colspan="11">
         📦 <b>${esc(g.asin)}</b>${bt?` — ${esc([bt.brand,bt.niche,bt.name].filter(Boolean).join(' · '))}`:''}
         &nbsp;·&nbsp; ${camps.length} campaign(s)
+        ${variations.length>1?`&nbsp;·&nbsp; <span class="muted">${variations.length} variation(s): ${esc(variations.join(', '))}</span>`:''}
         &nbsp;·&nbsp; ${inconsistentFlag? `<span class="tag warn">⚠ spread across ${g.portfolioIds.size} portfolios: ${esc(pfList.join(', '))}</span>` : `<span class="tag ok">✓ consistent portfolio: ${esc(pfList[0]||'(No Portfolio)')}</span>`}
       </td>
     </tr>` + camps.map(rowHtml).join('');
@@ -420,7 +459,7 @@ function renderApp(rows){
       <td>${esc(r.campaignId)}</td>
       <td>${r.adGroupCount}</td>
       <td class="l">${esc(r.portfolioName||'(No Portfolio)')}</td>
-      <td class="l" colspan="3"><span class="muted">${r.asins.length} ASINs: </span>${esc(r.asins.join(', '))}</td>
+      <td class="l" colspan="3"><span class="muted">${r.parents.length} parent(s), ${r.asins.length} ASIN(s): </span>${esc(r.asins.join(', '))}</td>
     </tr>`).join('') : '';
 
   const noAsinFiltered=noAsinBucket.filter(matchesFilter);
@@ -465,7 +504,7 @@ function exportMap(rows, groups, mixedBucket, noAsinBucket){
       'Program':r.program,'Type':r.type,'Current Campaign Name':r.campaignName,'New Campaign Name':nameFor(r),'Campaign ID':r.campaignId,
       'Ad Groups':r.adGroupCount,'Current Portfolio ID':r.portfolioId,'Current Portfolio Name':r.portfolioName,
       'Brand':bt&&bt.brand?bt.brand:'','Niche/Code':bt&&bt.niche?bt.niche:'','Product Name':bt&&bt.name?bt.name:'',
-      'ASIN Cluster':clusterAsin||(r.mixed?'MIXED':''),'ASINs':r.asins.join(', '),
+      'Parent ASIN Cluster':clusterAsin||(r.mixed?'MIXED':''),'Distinct Parents':r.parents.length,'ASINs (all variations)':r.asins.join(', '),
       'Mixed?':r.mixed?'YES':'NO','Portfolio Consistency':portfolioConsistency||''
     });
   };
@@ -494,6 +533,22 @@ $('#cm-file').onchange=e=>{
       const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value);
       $('#cm-status').innerHTML = `<b>${esc(file.name)}</b> — ${rows.length} enabled campaign(s) found.`;
       renderApp(rows);
+    }catch(err){ console.error(err); alert('Import error: '+err.message); }
+  };
+  r.readAsArrayBuffer(file);
+};
+$('#cm-parentmap').onchange=e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    try{
+      const buf=new Uint8Array(ev.target.result);
+      const wb=XLSX.read(buf,{type:'array'});
+      PARENT_MAP=parseParentMap(wb);
+      const n=Object.keys(PARENT_MAP).length;
+      if(!n){ $('#cm-parentmap-status').innerHTML = `⚠ Could not find "(Parent) ASIN" / "Product ASIN"-style columns in <b>${esc(file.name)}</b> — mixed detection unchanged.`; return; }
+      $('#cm-parentmap-status').innerHTML = `<b>${esc(file.name)}</b> loaded — ${n} child→parent ASIN mapping(s). Same-parent variations will no longer be flagged as MIXED.`;
+      if(LAST_WB){ const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value); renderApp(rows); }
     }catch(err){ console.error(err); alert('Import error: '+err.message); }
   };
   r.readAsArrayBuffer(file);
