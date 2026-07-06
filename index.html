@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1331,7 +1331,7 @@ function renderOptBids(){
   if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   if(st.skipInflatedPl===undefined) st.skipInflatedPl=true;
-  const inflatedPl=campaignsWithInflatedPlacement(S.product);
+  const diag=placementDiagnosis(S.product);
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0);
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -1341,23 +1341,37 @@ function renderOptBids(){
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); }
     }
-    return action!=='none'? Object.assign({action,pct,newBid},t,d) : null;
+    if(action==='none') return null;
+    const row=Object.assign({action,pct,newBid},t,d);
+    if(action==='decrease'){
+      const dg=diag[t.campaignId];
+      row.placementFixable = dg? dg.fixableViaPlacement : false;
+      row.compensate = (dg && !dg.fixableViaPlacement)? compensationFor(dg, t.bid, newBid) : [];
+    }
+    return row;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   // Skipping these outright (instead of just flagging them) is what actually saves time — fix the placement
   // in the section below first, then re-check whether the keyword still needs a bid cut on top of that.
-  const skippedCount = rows.filter(r=>r.action==='decrease' && inflatedPl.has(r.campaignId)).length;
-  if(st.skipInflatedPl) rows = rows.filter(r=>!(r.action==='decrease' && inflatedPl.has(r.campaignId)));
+  // Rows where the bad placement is already at 0% (no room left to cut there) are NOT skipped — the bid cut
+  // is the only lever left, so they proceed, paired with a compensating raise on the campaign's good placements.
+  const skippedCount = rows.filter(r=>r.action==='decrease' && r.placementFixable).length;
+  if(st.skipInflatedPl) rows = rows.filter(r=>!(r.action==='decrease' && r.placementFixable));
   rows.forEach((r,i)=>r._uid='ob'+i);
   const sel=selFor('optbids');
   const totals=agg(rows);
+  const actionBadge=r=>{
+    if(r.action!=='decrease') return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${r.pct}%</span>`;
+    if(r.compensate && r.compensate.length) return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Placement is already at 0% — bid cut is the only fix left. Compensating ${r.compensate.length} good placement(s) so they don't lose competitiveness.">↓ -${r.pct}% (+comp.)</span>`;
+    return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
+  };
   const cols=[
-    {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${r.pct}%</span>`},
+    {key:'action',label:'Action',l:true,noSort:true,cell:actionBadge},
     {key:'text',label:'Target',l:true,type:'text'},
     {key:'kind',label:'Type',l:true,type:'text',cell:r=>r.kind==='keyword'?'Keyword':'Product'},
     {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(targetDetailLabel(r))},
-    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>esc(r.campaignName)+(inflatedPl.has(r.campaignId)?' <span class="badge" style="background:#fef3c7;color:#92400e;" title="This campaign also has an overspending placement below — the high ACoS here may be the placement\'s fault, not this bid.">⚠ check placement</span>':'')},
+    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>esc(r.campaignName)+(r.action==='decrease'&&r.placementFixable?' <span class="badge" style="background:#fef3c7;color:#92400e;" title="This campaign also has an overspending placement below — the high ACoS here may be the placement\'s fault, not this bid.">⚠ check placement</span>':'')},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
     {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
@@ -1365,6 +1379,7 @@ function renderOptBids(){
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
     {key:'bid',label:'Current Bid',type:'money'},
     {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
+    {key:'compensate',label:'Placement Compensation',l:true,noSort:true,cell:r=>r.compensate&&r.compensate.length? esc(r.compensate.map(c=>`${c.placementName} ${c.oldPct}%→${c.newPct}%`).join(', ')) : '<span class="muted">—</span>'},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#opt-bids').innerHTML=`
@@ -1418,8 +1433,16 @@ function exportBidOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+  // Bundle each compensation once per (campaign, placement) — several keywords in the same campaign can all
+  // trigger the same compensating raise, and it should only be written once, not once per keyword.
+  const compSeen=new Set(); let compCount=0;
+  rows.forEach(r=>{ (r.compensate||[]).forEach(c=>{
+    const k=r.campaignId+'|'+c.rawPlacement;
+    if(compSeen.has(k)) return; compSeen.add(k); compCount++;
+    out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':c.rawPlacement,'Percentage':c.newPct}));
+  }); });
   writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} bid update(s).`);
+  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s)${compCount?` + ${compCount} compensating placement update(s)`:''}.`);
 }
 // Shared by both halves of Optimize: bids are per-keyword but placement % is per-CAMPAIGN, so they can
 // never share a row — but a campaign flagged here for an inflated placement is exactly the kind of place
@@ -1438,23 +1461,54 @@ function computePlacementOptRows(product, filters){
     if(!byKey[k]) byKey[k]={campaignId:p.campaignId, campaignName:p.campaignName||p.campaignId, portfolioName:p.portfolioName||'(No Portfolio)', placementName:placeName(p.placement), rawPlacement:p.placement, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
     const e=byKey[k]; e.impressions+=p.impressions; e.clicks+=p.clicks; e.spend+=p.spend; e.sales+=p.sales; e.orders+=p.orders;
   });
-  let rows=Object.values(byKey).map(e=>{
+  let allRows=Object.values(byKey).map(e=>{
     const d=derive(e);
     let action='none', newPct=e.percentage;
     if(e.clicks>=st.minClicks){
       if(e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){ action='decrease'; newPct=Math.max(0, e.percentage-st.decStep); }
       else if(e.orders>=1 && d.acos<st.lowAcos){ action='increase'; newPct=Math.min(900, e.percentage+st.incStep); }
     }
-    return action!=='none'? Object.assign({action,newPct},e,d) : null;
-  }).filter(Boolean);
-  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  return {rows, st, rowsRaw};
+    return Object.assign({action,newPct},e,d);
+  });
+  if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  const rows=allRows.filter(r=>r.action!=='none');
+  return {rows, allRows, st, rowsRaw};
 }
 // Campaigns where at least one placement is overspending — surfaced as a warning on the Bid Optimizer so a
 // high-ACoS keyword doesn't get its base bid cut when the real problem is a placement multiplier.
 function campaignsWithInflatedPlacement(product){
   const {rows}=computePlacementOptRows(product, {});
   return new Set(rows.filter(r=>r.action==='decrease').map(r=>r.campaignId));
+}
+// Amazon can't go below 0% on a placement — if the worst-performing placement is already at the floor,
+// there's no more room to fix it there, so the bid cut genuinely is the only lever left. In that case
+// compensate the campaign's healthy placements (raise their % just enough to keep their effective bid —
+// bid×(1+pct%) — the same after the base bid drops), so the good placements don't lose competitiveness
+// as a side effect of fixing the bad one.
+function placementDiagnosis(product){
+  const {rows, allRows}=computePlacementOptRows(product, {});
+  const byCampBad={}, byCampAll={};
+  rows.forEach(r=>{ (byCampBad[r.campaignId]=byCampBad[r.campaignId]||[]).push(r); });
+  allRows.forEach(r=>{ (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
+  const diag={};
+  Object.keys(byCampBad).forEach(cid=>{
+    const bad=byCampBad[cid].filter(r=>r.action==='decrease').sort((a,b)=>b.acos-a.acos);
+    if(!bad.length) return;
+    // "good" = every OTHER placement on this campaign that had enough clicks to judge (not the bad one(s)) —
+    // not just ones that separately crossed the increase threshold, since a placement that's merely fine
+    // (not flagged either way) still deserves its effective bid preserved when the base bid drops.
+    const badTypes=new Set(bad.map(r=>r.rawPlacement));
+    const good=(byCampAll[cid]||[]).filter(r=>!badTypes.has(r.rawPlacement) && r.clicks>=1);
+    diag[cid]={ fixableViaPlacement: bad[0].percentage>0, worst: bad[0], bad, good };
+  });
+  return diag;
+}
+function compensationFor(diagEntry, oldBid, newBid){
+  if(!diagEntry || !diagEntry.good.length || newBid<=0) return [];
+  return diagEntry.good.map(g=>{
+    const newPct=Math.max(0, Math.min(900, Math.round(((1+g.percentage/100)*oldBid/newBid - 1)*100)));
+    return {rawPlacement:g.rawPlacement, placementName:g.placementName, oldPct:g.percentage, newPct};
+  }).filter(c=>c.newPct!==c.oldPct);
 }
 function renderOptPlacements(){
   const {rows: rowsAll, st, rowsRaw}=computePlacementOptRows(S.product, {});
