@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 11:40</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 11:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -528,6 +528,7 @@ const TABS=[
   {id:'harvesting',label:'Harvesting',ic:'🌱'},
   {id:'kwcheck',label:'Keyword Checker',ic:'🔍'},
   {id:'products',label:'Products',ic:'📦'},
+  {id:'optimize',label:'Optimize',ic:'🎚️'},
 ];
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
@@ -546,7 +547,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic">📁</div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optimize:renderOptimize}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1295,6 +1296,177 @@ function exportTargetsPause(product,rows){
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
   writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+}
+
+/* ============================ OPTIMIZE (bids + placements) ============================ */
+// Reads whatever date range is baked into the uploaded bulk file's performance columns (last 7 days,
+// last 30, custom — whatever the user picked when exporting from Amazon Ads console). We don't second-guess
+// the window; we just act on the numbers as given.
+function renderOptimize(){
+  if(S.opt===undefined) S.opt='bids';
+  $('#app').innerHTML = `<div class="navrow" style="margin:0 0 12px;"><div class="seg" id="opt-seg">
+      <button data-o="bids" class="${S.opt==='bids'?'active':''}">🎯 Bid Optimizer (Targets)</button>
+      <button data-o="placements" class="${S.opt==='placements'?'active':''}">📍 Placement Optimizer</button>
+    </div></div><div id="opt-body"></div>`;
+  $('#opt-seg').querySelectorAll('button').forEach(b=>b.onclick=()=>{ S.opt=b.dataset.o; renderOptimize(); });
+  (S.opt==='bids'? renderOptBids : renderOptPlacements)();
+}
+function renderOptBids(){
+  const st=stFor('optbids');
+  if(st.highAcos===undefined) st.highAcos=50; if(st.decPct===undefined) st.decPct=15;
+  if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
+  if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0);
+  let rows=src.map(t=>{
+    const d=derive(agg([t]));
+    let action='none', newBid=t.bid;
+    if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
+      if(t.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){ action='decrease'; newBid=Math.max(0.02, +(t.bid*(1-st.decPct/100)).toFixed(2)); }
+      else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); }
+    }
+    return action!=='none'? Object.assign({action,newBid},t,d) : null;
+  }).filter(Boolean);
+  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  rows.forEach((r,i)=>r._uid='ob'+i);
+  const sel=selFor('optbids');
+  const totals=agg(rows);
+  const cols=[
+    {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decPct}%</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${st.incPct}%</span>`},
+    {key:'text',label:'Target',l:true,type:'text'},
+    {key:'kind',label:'Type',l:true,type:'text',cell:r=>r.kind==='keyword'?'Keyword':'Product'},
+    {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(targetDetailLabel(r))},
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+    {key:'bid',label:'Current Bid',type:'money'},
+    {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
+  $('#opt-body').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Bid rules</h3>
+      <div class="ctrls">
+        <div class="slider"><div class="top"><span>Decrease if ACoS &gt;</span><b>${st.highAcos}%</b></div><input type="range" id="ob-hi" min="10" max="150" step="5" value="${st.highAcos}"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec" value="${st.decPct}" style="width:80px;"></div>
+        <div class="slider"><div class="top"><span>Increase if ACoS &lt;</span><b>${st.lowAcos}%</b></div><input type="range" id="ob-lo" min="0" max="80" step="5" value="${st.lowAcos}"></div>
+        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc" value="${st.incPct}" style="width:80px;"></div>
+        <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
+        <div class="field"><label>Min Clicks</label><input type="number" id="ob-mc" value="${st.minClicks}" style="width:80px;"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="ob-ms" value="${st.minSpend}" style="width:80px;"></div>
+        <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Selected to export',fInt(sel.size),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Changes (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn grad" id="ob-export" ${sel.size?'':'disabled'}>⬇ Export Bid Update (${sel.size})</button>
+      </div>
+      <div id="ob-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#ob-table'));
+  const upd=()=>renderOptBids();
+  $('#ob-hi').oninput=e=>{st.highAcos=+e.target.value; upd();};
+  $('#ob-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
+  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('ob-dec','decPct',v=>+v||0); bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
+  bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
+  $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
+  $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
+}
+function exportBidOptimization(product, rows){
+  if(!rows.length){ alert('No rows selected.'); return; }
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+  writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} bid update(s).`);
+}
+function renderOptPlacements(){
+  const st=stFor('optplace');
+  if(st.highAcos===undefined) st.highAcos=50; if(st.decStep===undefined) st.decStep=10;
+  if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
+  let rowsRaw=DATA.placements.filter(p=>p.product===S.product);
+  if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
+  // one row per (campaign, placement) — carries the exact raw placement string so the Update writes back cleanly
+  const byKey={};
+  rowsRaw.forEach(p=>{
+    const t=placeType(p.placement); if(!t) return;
+    const k=p.campaignId+'|'+t;
+    if(!byKey[k]) byKey[k]={campaignId:p.campaignId, campaignName:p.campaignName||p.campaignId, portfolioName:p.portfolioName||'(No Portfolio)', placementName:placeName(p.placement), rawPlacement:p.placement, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
+    const e=byKey[k]; e.impressions+=p.impressions; e.clicks+=p.clicks; e.spend+=p.spend; e.sales+=p.sales; e.orders+=p.orders;
+  });
+  let rows=Object.values(byKey).map(e=>{
+    const d=derive(e);
+    let action='none', newPct=e.percentage;
+    if(e.clicks>=st.minClicks){
+      if(e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){ action='decrease'; newPct=Math.max(0, e.percentage-st.decStep); }
+      else if(e.orders>=1 && d.acos<st.lowAcos){ action='increase'; newPct=Math.min(900, e.percentage+st.incStep); }
+    }
+    return action!=='none'? Object.assign({action,newPct},e,d) : null;
+  }).filter(Boolean);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  rows.forEach((r,i)=>r._uid='op'+i);
+  const sel=selFor('optplace');
+  const totals=agg(rows);
+  const cols=[
+    {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decStep}pp</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${st.incStep}pp</span>`},
+    {key:'placementName',label:'Placement',l:true,type:'text'},
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+    {key:'percentage',label:'Current %',type:'num',cell:r=>(r.percentage>0?'+':'')+r.percentage+'%'},
+    {key:'newPct',label:'New %',type:'num',cell:r=>(r.newPct>0?'+':'')+r.newPct+'%',cls:r=>r.newPct>r.percentage?'num-green':'num-red'},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'optplace',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptPlacements});
+  $('#opt-body').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Placement rules</h3>
+      <div class="ctrls">
+        <div class="slider"><div class="top"><span>Decrease if ACoS &gt;</span><b>${st.highAcos}%</b></div><input type="range" id="op-hi" min="10" max="150" step="5" value="${st.highAcos}"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec" value="${st.decStep}" style="width:90px;"></div>
+        <div class="slider"><div class="top"><span>Increase if ACoS &lt;</span><b>${st.lowAcos}%</b></div><input type="range" id="op-lo" min="0" max="80" step="5" value="${st.lowAcos}"></div>
+        <div class="field"><label>Increase by (points)</label><input type="number" id="op-inc" value="${st.incStep}" style="width:90px;"></div>
+        <div class="field"><label>Min Clicks</label><input type="number" id="op-mc" value="${st.minClicks}" style="width:80px;"></div>
+        <div class="field"><label>Portfolio</label><select id="op-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Campaign</label><input type="text" id="op-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
+      </div>
+      ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Selected to export',fInt(sel.size),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Placement Changes (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn grad" id="op-export" ${sel.size?'':'disabled'}>⬇ Export Placement Update (${sel.size})</button>
+      </div>
+      <div id="op-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#op-table'));
+  const upd=()=>renderOptPlacements();
+  $('#op-hi').oninput=e=>{st.highAcos=+e.target.value; upd();};
+  $('#op-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
+  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('op-dec','decStep',v=>+v||0); bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
+  $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#op-camp').oninput=debounce(()=>{st.camp=$('#op-camp').value; upd();},220);
+  $('#op-export').onclick=()=>exportPlacementOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
+}
+function exportPlacementOptimization(product, rows){
+  if(!rows.length){ alert('No rows selected.'); return; }
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':r.rawPlacement,'Percentage':r.newPct}));
+  writeBulk(out, (product==='SB'?'sb_':'')+'placement_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} placement bid adjustment update(s).`);
 }
 /* ---- naming pattern detection: reuse the convention of an existing campaign in the same portfolio ---- */
 // Only matches campaigns using the given PREFIX (default BSQ = multi-keyword "bulk search query" campaigns).
