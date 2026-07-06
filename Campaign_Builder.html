@@ -108,7 +108,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-06 16:45</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-06 16:54</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -485,9 +485,9 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
-function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
+function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_'); }
 // ignoreNaming lets the user force the manual fields even when an existing campaign's naming could be copied —
 // needed because the copied suffix can carry over stale/typo'd segments (e.g. a duplicated day code) from real data.
@@ -506,10 +506,11 @@ function buildName(cfg,match,num){
   return manualName(cfg,match,num);
 }
 function kwGroups(cfg){
-  const kws=linesOf(cfg.keywords); const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
   if(cfg.type==='auto') return [[]];
-  if(per<=0) return [kws];
-  const g=[]; for(let i=0;i<kws.length;i+=per) g.push(kws.slice(i,i+per));
+  const list = cfg.type==='pt'? linesOf(cfg.targetAsins) : linesOf(cfg.keywords);
+  const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
+  if(per<=0) return [list];
+  const g=[]; for(let i=0;i<list.length;i+=per) g.push(list.slice(i,i+per));
   return g.length?g:[[]];
 }
 function getPortfolioChildren(acc,pid){
@@ -547,6 +548,8 @@ function buildCampaignRows(cfg){
       (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
       if(cfg.type==='auto'){
         AUTO_GROUPS.forEach(g=>{ if(cfg[g.key]) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':g.expr})); });
+      } else if(cfg.type==='pt'){
+        grp.forEach(asin=>{ const a=String(asin).trim().toUpperCase(); if(!a) return; const expr=cfg.ptExpanded?`asin-expanded="${a}"`:`asin="${a}"`; out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':expr})); });
       } else grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase(),'Bid':cfg.bid})));
     });
   });
@@ -557,7 +560,8 @@ function builderIssues(cfg){
   if(!matches.length) iss.push('Select at least one match type.');
   const hasTemplate=matches.some(m=>templateFor(cfg,m));
   if(!hasTemplate && !String(cfg.brand).trim() && !String(cfg.asin).trim()) iss.push('Enter a Brand/Niche or ASIN for the campaign name (or upload a Reference Bulk to copy naming from an existing campaign).');
-  if(cfg.type!=='auto' && !linesOf(cfg.keywords).length) iss.push('Enter at least one keyword (manual campaigns).');
+  if(cfg.type==='manual' && !linesOf(cfg.keywords).length) iss.push('Enter at least one keyword (manual campaigns).');
+  if(cfg.type==='pt' && !linesOf(cfg.targetAsins).length) iss.push('Enter at least one ASIN to target.');
   if(cfg.type==='auto' && !AUTO_GROUPS.some(g=>cfg[g.key])) iss.push('Select at least one auto targeting group (Close Match / Loose Match / Substitutes / Complements).');
   if(!linesOf(cfg.skus).length) iss.push('Select a portfolio (or add SKUs manually) — at least one SKU is required.');
   return iss;
@@ -589,6 +593,7 @@ function renderCampaignCreate(){
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campaign Setup</h3>
         <div class="seg" id="cc-type">
           <button data-t="manual" class="${cfg.type==='manual'?'active':''}">Manual (keywords)</button>
+          <button data-t="pt" class="${cfg.type==='pt'?'active':''}">Product Targeting (ASINs)</button>
           <button data-t="auto" class="${cfg.type==='auto'?'active':''}">Auto targeting</button>
         </div>
       </div>
@@ -602,16 +607,17 @@ function renderCampaignCreate(){
         <div class="flist" id="cc-children">${childrenHtml}</div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
       <div class="ctrls" id="cc-matches" style="${cfg.type==='auto'?'display:none;':''}">
-        <div class="field"><label>Match types (one campaign each)</label>
+        <div class="field" id="cc-matchtypes-field" style="${cfg.type==='pt'?'display:none;':''}"><label>Match types (one campaign each)</label>
           <div style="display:flex;gap:14px;height:32px;align-items:center;">
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-exact" ${cfg.m_exact?'checked':''}> Exact</label>
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-phrase" ${cfg.m_phrase?'checked':''}> Phrase</label>
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-broad" ${cfg.m_broad?'checked':''}> Broad</label>
           </div>
         </div>
-        <div class="field"><label>Keywords / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
+        ${cfg.type==='pt'? `<label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;height:32px;align-items:center;"><input type="checkbox" id="cc-pt-expanded" ${cfg.ptExpanded?'checked':''}> Expanded (asin-expanded — also match variations of each ASIN)</label>` : ''}
+        <div class="field"><label>${cfg.type==='pt'?'ASINs':'Keywords'} / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
         <div class="field"><label>Start #</label><input type="number" id="cc-start" min="1" value="${esc(cfg.startNum)}" style="width:80px;"></div>
-        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all keywords in 1 campaign · 1 = single-keyword campaigns · N = N per campaign. Numbered from Start #.</div></div>
+        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all ${cfg.type==='pt'?'ASINs':'keywords'} in 1 campaign · 1 = single-target campaigns · N = N per campaign. Numbered from Start #.</div></div>
       </div>
       <div class="ctrls" id="cc-auto-groups" style="${cfg.type==='auto'?'':'display:none;'}">
         <div class="field"><label>Auto targeting groups (Product Targeting rows, one per group, bid = Default Bid below)</label>
@@ -643,7 +649,8 @@ function renderCampaignCreate(){
       </div>
       <div class="ctrls" style="margin-top:12px;align-items:stretch;">
         <div class="field grow"><label>SKUs to advertise (auto-filled from the portfolio above — still editable)</label><textarea class="kwbox" id="cc-skus" style="min-height:120px;" placeholder="SKU-001&#10;SKU-002">${esc(cfg.skus)}</textarea></div>
-        <div class="field grow" id="cc-kw-field" style="${cfg.type==='auto'?'display:none;':''}"><label>Keywords (one per line)</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="blue widget&#10;widget for desk">${esc(cfg.keywords)}</textarea></div>
+        <div class="field grow" id="cc-kw-field" style="${cfg.type==='manual'?'':'display:none;'}"><label>Keywords (one per line)</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="blue widget&#10;widget for desk">${esc(cfg.keywords)}</textarea></div>
+        <div class="field grow" id="cc-pt-field" style="${cfg.type==='pt'?'':'display:none;'}"><label>ASINs to target (one per line)</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
       </div>
     </div>
     <div class="card pad">
@@ -665,6 +672,8 @@ function renderCampaignCreate(){
   bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-sep','separator'); bindText('cc-bid','bid'); bindText('cc-tos','tos');
   bindText('cc-port','portfolioId'); bindText('cc-skus','skus'); bindText('cc-kw','keywords');
   bindText('cc-per','perCampaign');
+  const ptAsinsEl=$('#cc-pt-asins'); if(ptAsinsEl) ptAsinsEl.oninput=()=>{ cfg.targetAsins=ptAsinsEl.value; upd(); };
+  const ptExpEl=$('#cc-pt-expanded'); if(ptExpEl) ptExpEl.onchange=()=>{ cfg.ptExpanded=ptExpEl.checked; updateBuilderOutputs(); };
   $('#cc-start').oninput=()=>{ cfg.startNum=$('#cc-start').value; cfg.startNumTouched=true; upd(); };
   $('#cc-strat').onchange=e=>{ cfg.strategy=e.target.value; };
   $('#cc-acc').onchange=e=>{
@@ -715,16 +724,19 @@ function updateBuilderOutputs(){
   const shown=names.slice(0,30).map(n=>`📁 ${esc(n.name)}${n.kw?` <span style="color:#9aa3af;">→ ${esc(n.kw)}</span>`:''}<br><span style="color:#c3c3cc;">   └ Ad Group: ${esc(n.name)}</span>`).join('<br>');
   $('#cc-names').innerHTML = names.length? shown+(names.length>30?`<br><span class="muted">…+${names.length-30} more campaigns</span>`:'') : '<span class="muted">Select a match type to preview names.</span>';
   const bannerEl=$('#cc-naming-banner'); if(bannerEl) bannerEl.innerHTML=namingBannerHtml(cfg);
-  const skus=linesOf(cfg.skus).length, kws=linesOf(cfg.keywords).length;
+  const skus=linesOf(cfg.skus).length, kws=linesOf(cfg.keywords).length, asins=linesOf(cfg.targetAsins).length;
   const nCamp=names.length, nAds=nCamp*Math.max(1,skus);
-  const nGroups=AUTO_GROUPS.filter(g=>cfg[g.key]).length, nKw=cfg.type==='auto'?0:matches.length*kws;
-  $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${cfg.type==='auto'?` · ${nCamp*nGroups} auto targeting row(s) (${nGroups} group(s)/campaign)`:` · ${nKw} keyword(s)`}`;
+  const nGroups=AUTO_GROUPS.filter(g=>cfg[g.key]).length, nKw=matches.length*kws, nPt=matches.length*asins;
+  const targetSummary = cfg.type==='auto'? ` · ${nCamp*nGroups} auto targeting row(s) (${nGroups} group(s)/campaign)`
+    : cfg.type==='pt'? ` · ${nPt} product targeting row(s)`
+    : ` · ${nKw} keyword(s)`;
+  $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${targetSummary}`;
   const iss=builderIssues(cfg);
   $('#cc-issues').innerHTML = iss.length? `<span style="color:#dc2626;">⚠ ${esc(iss[0])}</span>`:'<span style="color:#15803d;">✓ Ready to export</span>';
   const exp=$('#cc-export'); if(exp) exp.disabled = iss.length>0;
   const rows=buildCampaignRows(cfg);
   const H=BULK_HEADERS, ix=n=>H.indexOf(n);
-  const pr=rows.map(r=>({entity:r[ix('Entity')],campaign:r[ix('Campaign Name')]||r[ix('Campaign ID')],ag:r[ix('Ad Group ID')],detail:r[ix('Keyword Text')]||r[ix('SKU')]||r[ix('Placement')]||'',match:r[ix('Match Type')]||'',bid:r[ix('Bid')]||r[ix('Ad Group Default Bid')]||r[ix('Daily Budget')]||r[ix('Percentage')]||''}));
+  const pr=rows.map(r=>({entity:r[ix('Entity')],campaign:r[ix('Campaign Name')]||r[ix('Campaign ID')],ag:r[ix('Ad Group ID')],detail:r[ix('Keyword Text')]||r[ix('SKU')]||r[ix('Placement')]||r[ix('Product Targeting Expression')]||'',match:r[ix('Match Type')]||'',bid:r[ix('Bid')]||r[ix('Ad Group Default Bid')]||r[ix('Daily Budget')]||r[ix('Percentage')]||''}));
   let h='<div class="tablewrap"><table><thead><tr><th class="l">Entity</th><th class="l">Campaign</th><th class="l">Ad Group</th><th class="l">Keyword / SKU / Placement</th><th class="l">Match</th><th>Bid / Budget</th></tr></thead><tbody>';
   pr.slice(0,300).forEach(r=>{ h+=`<tr><td class="l"><b>${esc(r.entity)}</b></td><td class="l">${esc(r.campaign)}</td><td class="l">${esc(r.ag)}</td><td class="l">${esc(r.detail)}</td><td class="l">${esc(r.match)}</td><td>${esc(r.bid)}</td></tr>`; });
   if(!pr.length) h+='<tr><td colspan="6" class="l" style="padding:22px;color:#9aa3af;text-align:center;">Fill in the setup above to see the rows that will be generated.</td></tr>';
