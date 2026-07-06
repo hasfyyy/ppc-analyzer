@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:54</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -887,10 +887,17 @@ function wireSidebar(){
 }
 
 /* ============================ TARGETS (SP + SB) ============================ */
+// A keyword/target can be individually "enabled" while the campaign around it is paused — DATA.targets only
+// carries the target's own state, so anything that reads it needs this too or a paused campaign's leftovers
+// show up as if they were still running (wrong "underperforming", wrong "duplicate", wrong bid suggestion).
+function enabledCampaignIds(product){
+  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled').map(c=>c.campaignId));
+}
 function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
   const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
-  const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled');
+  const enabledCamps=enabledCampaignIds(product);
+  const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{ const d=derive(agg([t])); let reason=null;
     if(t.clicks>=st.clicks && t.orders<=st.maxOrders) reason='No Sales';
     else if(t.orders>=1 && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
@@ -1306,7 +1313,8 @@ function exportTargetsPause(product,rows){
 // so it's obvious which copy to keep and which to pause.
 function renderDuplicates(){
   const st=stFor('duplicates'); if(st.minSpend===undefined) st.minSpend=0;
-  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled');
+  const enabledCampIds=enabledCampaignIds(S.product);
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && enabledCampIds.has(t.campaignId));
   const byKey=new Map();
   src.forEach(t=>{
     const key = t.kind==='keyword'? (String(t.text||'').toLowerCase().trim()+'|'+String(t.matchType||'').toLowerCase()) : ('pt|'+String(t.text||'').toLowerCase().trim());
@@ -1406,8 +1414,9 @@ function decreaseTierFor(acos, st){
 // campaigns share their placements across many keywords — compensating one keyword's cut on a shared
 // placement made no sense there, so that cross-linked logic only applies here, to single-target campaigns.
 function singleKwCampaigns(product){
+  const enabledCamps=enabledCampaignIds(product);
   const counts={};
-  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled') counts[t.campaignId]=(counts[t.campaignId]||0)+1; });
+  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId)) counts[t.campaignId]=(counts[t.campaignId]||0)+1; });
   const set=new Set(); Object.keys(counts).forEach(cid=>{ if(counts[cid]===1) set.add(cid); });
   return set;
 }
@@ -1427,7 +1436,8 @@ function renderOptBids(){
   if(st.marginPct===undefined) st.marginPct=10;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
-  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0);
+  const enabledCamps=enabledCampaignIds(S.product);
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
     let action='none', newBid=t.bid, pct=null, reason=null;
@@ -1570,7 +1580,8 @@ function computePlacementOptRows(product, filters){
   if(st.highAcos===undefined) st.highAcos=50; if(st.decStep===undefined) st.decStep=10;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
-  let rowsRaw=DATA.placements.filter(p=>p.product===product);
+  const enabledCamps=enabledCampaignIds(product);
+  let rowsRaw=DATA.placements.filter(p=>p.product===product && enabledCamps.has(p.campaignId));
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
   rowsRaw.forEach(p=>{
