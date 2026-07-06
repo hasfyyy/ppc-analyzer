@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:25</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:37</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -529,6 +529,7 @@ const TABS=[
   {id:'kwcheck',label:'Keyword Checker',ic:'🔍'},
   {id:'products',label:'Products',ic:'📦'},
   {id:'optimize',label:'Optimize',ic:'🎚️'},
+  {id:'duplicates',label:'Duplicates',ic:'🧬'},
 ];
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
@@ -547,7 +548,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic">📁</div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optimize:renderOptimize}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optimize:renderOptimize, duplicates:renderDuplicates}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1296,6 +1297,79 @@ function exportTargetsPause(product,rows){
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
   writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+}
+
+/* ============================ DUPLICATES (same target, competing across campaigns) ============================ */
+// The same keyword/PT running in two enabled campaigns means you're bidding against yourself — whichever
+// wins the auction, the OTHER copy's impressions were wasted. Groups by exact target text (+ match type for
+// keywords), keeps only groups spread across ≥2 distinct campaigns, and flags the best performer per group
+// so it's obvious which copy to keep and which to pause.
+function renderDuplicates(){
+  const st=stFor('duplicates'); if(st.minSpend===undefined) st.minSpend=0;
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled');
+  const byKey=new Map();
+  src.forEach(t=>{
+    const key = t.kind==='keyword'? (String(t.text||'').toLowerCase().trim()+'|'+String(t.matchType||'').toLowerCase()) : ('pt|'+String(t.text||'').toLowerCase().trim());
+    if(!byKey.has(key)) byKey.set(key,[]);
+    byKey.get(key).push(t);
+  });
+  let groups=[...byKey.entries()].map(([key,list])=>{
+    const campIds=new Set(list.map(t=>t.campaignId));
+    return {key, list, campCount:campIds.size};
+  }).filter(g=>g.campCount>=2);
+  if(st.port) groups=groups.filter(g=>g.list.some(t=>(t.portfolioName||'(No Portfolio)')===st.port));
+  if(st.term) groups=groups.filter(g=>g.list[0].text.toLowerCase().includes(st.term.toLowerCase()));
+  groups.forEach(g=>{
+    g.list.forEach(t=>{ const d=derive(agg([t])); Object.assign(t,d); });
+    // best performer = has orders, lowest ACoS among those; tie-break by spend desc (more signal)
+    const withOrders=g.list.filter(t=>t.orders>0);
+    const pool=withOrders.length? withOrders : g.list;
+    g.best = pool.slice().sort((a,b)=> (a.acos===b.acos? b.spend-a.spend : (a.acos===Infinity?1:a.acos) - (b.acos===Infinity?1:b.acos)))[0];
+    g.totals = agg(g.list);
+    g.list.forEach(t=>t._uid='dup'+t.campaignId+'|'+t.adGroupId+'|'+t.id);
+  });
+  groups = groups.filter(g=>g.totals.spend>=st.minSpend);
+  groups.sort((a,b)=>b.totals.spend-a.totals.spend);
+  const sel=selFor('duplicates');
+  const rowsFlat = groups.flatMap(g=>g.list);
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Filter</h3>
+      <div class="ctrls">
+        <div class="field"><label>Portfolio</label><select id="dup-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Search term text</label><input type="text" id="dup-term" placeholder="Filter by keyword/target text…" value="${esc(st.term||'')}"></div>
+        <div class="field"><label>Min combined spend</label><input type="number" id="dup-ms" value="${st.minSpend}" style="width:100px;"></div>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
+      ${kpi('Duplicate groups',fInt(groups.length),'pink')}${kpi('Copies total',fInt(rowsFlat.length))}${kpi('Combined spend',fMoney(groups.reduce((s,g)=>s+g.totals.spend,0)))}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Duplicate targets (${groups.length})</h3><div class="spacer"></div>
+        <span class="countnote">Selected to pause: ${sel.size}</span>
+        <button class="btn grad" id="dup-pause" ${sel.size?'':'disabled'}>⏸ Export Pause (${sel.size})</button>
+      </div>
+      ${groups.length? `<div class="tablewrap"><table>
+        <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Bid</th></tr></thead>
+        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9">🧬 <b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
+          g.list.map(t=>`<tr>
+            <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'disabled title="Best performer — pausing this one is disabled by default; uncheck a worse copy instead"':''}></td>
+            <td class="l">${t===g.best?'<span class="badge tg">KEEP (best)</span>':''}</td>
+            <td class="l">${esc(t.campaignName||t.campaignId)}</td>
+            <td>${fInt(t.clicks)}</td><td>${fMoney(t.spend)}</td><td>${fMoney(t.sales)}</td><td>${fInt(t.orders)}</td>
+            <td class="${acosClass(t.acos)}">${fAcos(t.acos)}</td><td>${fMoney(t.bid)}</td>
+          </tr>`).join('')
+        ).join('')}</tbody>
+      </table></div>` : '<div class="empty"><div class="ic">🧬</div><p>No target is currently running in 2+ enabled campaigns at once — nothing to consolidate.</p></div>'}
+    </div>`;
+  $('#dup-port').onchange=e=>{st.port=e.target.value; renderDuplicates();};
+  $('#dup-term').oninput=debounce(()=>{st.term=$('#dup-term').value; renderDuplicates();},220);
+  $('#dup-ms').oninput=debounce(()=>{st.minSpend=+$('#dup-ms').value||0; renderDuplicates();},250);
+  document.querySelectorAll('#app input[data-id]').forEach(cb=>{ if(cb.disabled) return; cb.onchange=()=>{ cb.checked? sel.add(cb.dataset.id): sel.delete(cb.dataset.id); renderDuplicates(); }; });
+  $('#dup-pause').onclick=()=>{
+    const chosen=rowsFlat.filter(t=>sel.has(t._uid));
+    exportTargetsPause(S.product, chosen);
+  };
 }
 
 /* ============================ OPTIMIZE (bids + placements) ============================ */
