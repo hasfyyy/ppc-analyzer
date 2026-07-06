@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:25</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1453,14 +1453,18 @@ function renderOptBids(){
     }
     // Single-keyword campaigns only: a "good" keyword sitting right at (or under) the CPC it's actually
     // paying on its main placement is one lost auction away from going dark — nudge the bid to clear that
-    // CPC with a margin instead of leaving it exactly on the edge.
+    // CPC with a margin instead of leaving it exactly on the edge. Capped at the same "Increase by %" used
+    // for healthy-ACoS increases — the math behind clearing the CPC can call for a huge jump (bid was way
+    // under), but a flat step per pass is safer than lurching the bid straight to wherever that number lands;
+    // run the optimizer again next time and it'll step up again if it's still short.
     if(action!=='decrease' && action!=='wake' && singleKw.has(t.campaignId)){
       const dp=dominantPlacement(t.campaignId);
       if(dp && dp.cpc>0){
         const effectiveBid=t.bid*(1+dp.percentage/100);
         if(effectiveBid<=dp.cpc*(1+st.marginPct/100)){
           const targetBid=+((dp.cpc*(1+st.marginPct/100))/(1+dp.percentage/100)).toFixed(2);
-          if(targetBid>t.bid){ newBid=targetBid; pct=Math.round((newBid/t.bid-1)*100); action='increase'; reason=`margin over ${dp.placementName} CPC`; }
+          const cappedBid=Math.min(targetBid, +(t.bid*(1+st.incPct/100)).toFixed(2));
+          if(cappedBid>t.bid){ newBid=cappedBid; pct=Math.round((newBid/t.bid-1)*100); action='increase'; reason=`margin over ${dp.placementName} CPC`; }
         }
       }
     }
