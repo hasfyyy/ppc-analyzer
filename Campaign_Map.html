@@ -103,7 +103,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 10:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -182,20 +182,24 @@ function parseParentMap(wb){
 /* ============================ NAMING TEMPLATE (optional — user's own convention, not forced) ============================ */
 // {placeholders} get swapped for real values; anything else the user types (extra words, separators, prefixes)
 // is left as-is. Per-row edits always win over the template — the template is just a fast starting point.
-const NAME_PLACEHOLDERS=['program','type','portfolio','brand','niche','product','asin','campaignid','adgroups'];
+const NAME_PLACEHOLDERS=['program','matchtype','type','portfolio','brand','niche','product','asin','campaignid','adgroups'];
 let NAME_TEMPLATE='';
 let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides template)
 function renderNameTemplate(tmpl, r){
   if(!tmpl) return '';
   const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
+  const type=String(r.type||'').replace(' · MIXED','');
   const map={
-    program:r.program, type:String(r.type||'').replace(' · MIXED',''), portfolio:r.portfolioName||'',
+    program:r.program, type, matchtype:type.replace(/^(SP|SB|SD)\s+/,''), portfolio:r.portfolioName||'',
     brand:bt&&bt.brand||'', niche:bt&&bt.niche||'', product:bt&&bt.name||'',
     asin:r.primaryAsin||(r.asins[0]||''), campaignid:r.campaignId, adgroups:r.adGroupCount
   };
   return tmpl.replace(/\{(\w+)\}/g,(m,k)=>{ const v=map[k.toLowerCase()]; return v!=null&&v!==''? v : ''; }).replace(/_{2,}/g,'_').replace(/^_|_$/g,'');
 }
 function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameTemplate(NAME_TEMPLATE, r); }
+// A template with no {placeholder} at all produces the SAME literal name for every row — the #1 mistake
+// when someone pastes a real campaign name as a "template" instead of parameterizing it.
+function templateHasNoPlaceholders(tmpl){ return !!tmpl && !/\{[a-zA-Z]+\}/.test(tmpl); }
 
 /* ============================ PARSING ============================ */
 function sheetRows(wb, name){
@@ -466,14 +470,18 @@ function renderApp(rows){
   const noAsinHtml = noAsinFiltered.length? `<tr class="grouphead"><td class="l" colspan="11">❔ No ASIN detected &nbsp;${noAsinFiltered.length} campaign(s)</td></tr>` +
     noAsinFiltered.map(rowHtml).join('') : '';
 
+  const noPlaceholderWarning = templateHasNoPlaceholders(NAME_TEMPLATE)
+    ? `<div class="banner" style="margin-top:8px;background:#fef3c7;border-color:#fde68a;color:#92400e;">This template has no {placeholder} in it, so every row will get the exact same literal name. Add at least one varying token, e.g. {matchtype} or {asin}, so campaigns don't collide.</div>`
+    : '';
   $('#app').innerHTML = statsHtml + `
     <div class="card pad">
       <div class="rowbar" style="margin:0;">
-        <div class="field grow"><label>Naming template (optional) — {program} {type} {portfolio} {brand} {niche} {product} {asin} {campaignid} {adgroups}, plus any free text/underscores you want</label>
-          <input type="text" id="cm-template" placeholder="e.g. {brand}_{type}_{asin}_JUL26" value="${esc(NAME_TEMPLATE)}"></div>
+        <div class="field grow"><label>Naming template (optional) — {program} {matchtype} {type} {portfolio} {brand} {niche} {product} {asin} {campaignid} {adgroups}, plus any free text/underscores you want</label>
+          <input type="text" id="cm-template" placeholder="e.g. BSQ_{matchtype}_{niche}_{asin}_20_JUL26_Insiders" value="${esc(NAME_TEMPLATE)}"></div>
         <button class="btn ghost" id="cm-apply-template">Apply to all (clears manual edits)</button>
       </div>
-      <div class="hint" style="margin-top:4px;">Editing a "New Name" cell directly always overrides the template for that row — nothing here is forced, it's just a faster starting point.</div>
+      <div class="hint" style="margin-top:4px;">Editing a "New Name" cell directly always overrides the template for that row — nothing here is forced, it's just a faster starting point. {matchtype} is the type without the SP/SB/SD prefix (e.g. EXACT, BROAD, AUTO).</div>
+      ${noPlaceholderWarning}
     </div>
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
