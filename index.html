@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:07</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1330,6 +1330,8 @@ function renderOptBids(){
   if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
+  if(st.skipInflatedPl===undefined) st.skipInflatedPl=true;
+  const inflatedPl=campaignsWithInflatedPlacement(S.product);
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0);
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -1343,10 +1345,13 @@ function renderOptBids(){
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  // Skipping these outright (instead of just flagging them) is what actually saves time — fix the placement
+  // in the section below first, then re-check whether the keyword still needs a bid cut on top of that.
+  const skippedCount = rows.filter(r=>r.action==='decrease' && inflatedPl.has(r.campaignId)).length;
+  if(st.skipInflatedPl) rows = rows.filter(r=>!(r.action==='decrease' && inflatedPl.has(r.campaignId)));
   rows.forEach((r,i)=>r._uid='ob'+i);
   const sel=selFor('optbids');
   const totals=agg(rows);
-  const inflatedPl=campaignsWithInflatedPlacement(S.product);
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${r.pct}%</span>`},
     {key:'text',label:'Target',l:true,type:'text'},
@@ -1383,6 +1388,8 @@ function renderOptBids(){
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
+      <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;margin-top:10px;"><input type="checkbox" id="ob-skippl" ${st.skipInflatedPl?'checked':''}> Skip bid decreases for campaigns with an overspending placement (fix placement first, then re-check)</label>
+      ${skippedCount? `<div class="hint" style="margin-top:4px;">${skippedCount} decrease(s) hidden right now for that reason${st.skipInflatedPl?'':' (shown below, marked ⚠ check placement)'} — see Placement Optimizer below.</div>` : ''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Selected to export',fInt(sel.size),'pink')}
@@ -1405,6 +1412,7 @@ function renderOptBids(){
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
+  $('#ob-skippl').onchange=e=>{ st.skipInflatedPl=e.target.checked; upd(); };
 }
 function exportBidOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
