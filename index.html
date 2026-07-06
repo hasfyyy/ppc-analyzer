@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:06</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1470,6 +1470,9 @@ function renderOptBids(){
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   rows.forEach((r,i)=>r._uid='ob'+i);
+  const allRows=rows;
+  if(st.actionFilter===undefined) st.actionFilter='all';
+  if(st.actionFilter!=='all') rows=rows.filter(r=>r.action===st.actionFilter);
   const sel=selFor('optbids');
   const totals=agg(rows);
   const actionBadge=r=>{
@@ -1526,10 +1529,17 @@ function renderOptBids(){
       </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
-      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(rows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(sel.size),'pink')}
+      ${kpi('Suggested changes',fInt(allRows.length))}${kpi('Decreases',fInt(allRows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(allRows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(allRows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(sel.size),'pink')}
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Changes (${rows.length})</h3><div class="spacer"></div>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Changes (${rows.length})</h3>
+        <div class="field"><label>Show</label><select id="ob-actionf">
+          <option value="all" ${st.actionFilter==='all'?'selected':''}>All (${allRows.length})</option>
+          <option value="decrease" ${st.actionFilter==='decrease'?'selected':''}>Decreases only (${allRows.filter(r=>r.action==='decrease').length})</option>
+          <option value="increase" ${st.actionFilter==='increase'?'selected':''}>Increases only (${allRows.filter(r=>r.action==='increase').length})</option>
+          <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
+        </select></div>
+        <div class="spacer"></div>
         <button class="btn grad" id="ob-export" ${sel.size?'':'disabled'}>⬇ Export Bid Update (${sel.size})</button>
       </div>
       <div id="ob-table">${tbl.html}</div>
@@ -1548,6 +1558,7 @@ function renderOptBids(){
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
+  $('#ob-actionf').onchange=e=>{ st.actionFilter=e.target.value; upd(); };
 }
 // Guardrail: raising a bid on a campaign that's already spending its whole daily budget just burns through
 // that same budget faster — it won't buy more conversions unless the budget goes up too. Warn once, with
