@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 10:31</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 10:50</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1069,6 +1069,9 @@ function renderKwCheck(){
 /* ============================ PRODUCTS ============================ */
 function renderProducts(){
   const st=stFor('products');
+  if(st.pauseMode===undefined) st.pauseMode='all';
+  if(st.pAcos===undefined) st.pAcos=50; if(st.pClicks===undefined) st.pClicks=15;
+  if(st.pMaxOrders===undefined) st.pMaxOrders=0; if(st.pMinSpend===undefined) st.pMinSpend=0;
   let ads=adsByToggle();
   if(st.port) ads=ads.filter(a=>(a.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) ads=ads.filter(a=>a.campaignName===st.camp);
@@ -1078,7 +1081,12 @@ function renderProducts(){
   const totals=agg(ads); const tot=derive(totals);
   rows.forEach(r=>{ r.spendPct=tot.spend?r.spend/tot.spend*100:0; r.salesPct=tot.sales?r.sales/tot.sales*100:0; });
   rows.forEach((r,i)=>r._uid='pr'+i);
+  const sel=selFor('products');
+  const selRows=rows.filter(r=>sel.has(r._uid));
+  const pauseRows = selRows.length? computeProductPauseRows(selRows.map(r=>r.asin), S.product, st.pauseMode, {acos:st.pAcos,clicks:st.pClicks,maxOrders:st.pMaxOrders,minSpend:st.pMinSpend}) : [];
+  const pauseCampCount = new Set(pauseRows.map(r=>r.campaignId)).size;
   const cols=[
+    {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
     {key:'asin',label:'Product',l:true,type:'text',cell:r=>`<span class="link">📦 ${esc(r.asin||'—')}</span>`,totalLabel:'Totals'},
     {key:'impressions',label:'Impressions',type:'int',fmtTotal:t=>fInt(t.impressions)},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
@@ -1107,11 +1115,58 @@ function renderProducts(){
         <div class="spacer"></div><button class="btn ghost" id="pr-dl">⬇ Download</button>
       </div>
       <div id="pr-table">${tbl.html}</div>
-    </div>`;
+    </div>
+    ${sel.size? `<div class="card pad">
+      <h3 class="sectitle">⏸ Pause ${sel.size} selected product(s)</h3>
+      <div class="ctrls">
+        <div class="seg" id="pr-mode">
+          <button data-m="all" class="${st.pauseMode==='all'?'active':''}">Pause everywhere</button>
+          <button data-m="threshold" class="${st.pauseMode==='threshold'?'active':''}">Only where threshold exceeded</button>
+        </div>
+      </div>
+      ${st.pauseMode==='threshold'? `<div class="ctrls" style="margin-top:12px;">
+        <div class="slider"><div class="top"><span>Min Clicks (0 sales)</span><b>≥ ${st.pClicks}</b></div><input type="range" id="pr-clicks" min="0" max="40" value="${st.pClicks}"></div>
+        <div class="slider"><div class="top"><span>ACoS Threshold (has sales)</span><b>&gt; ${st.pAcos}%</b></div><input type="range" id="pr-acos" min="0" max="150" step="5" value="${st.pAcos}"></div>
+        <div class="field"><label>Max Orders</label><input type="number" id="pr-mo" value="${st.pMaxOrders}"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="pr-ms" value="${st.pMinSpend}"></div>
+      </div>
+      <div class="hint" style="margin-top:6px;">Evaluated per campaign occurrence (not the aggregated totals above) — a selected product is only paused in the specific campaign(s) where it's underperforming, not everywhere it runs.</div>`:
+        `<div class="hint" style="margin-top:6px;">Pauses this product's ad in every enabled campaign it currently runs in, regardless of performance.</div>`}
+      <div class="rowbar"><span class="countnote">Will pause <b>${pauseRows.length}</b> product ad placement(s) across <b>${pauseCampCount}</b> campaign(s).</span><div class="spacer"></div>
+        <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>⏸ Export Pause (${pauseRows.length})</button>
+      </div>
+    </div>` : ''}`;
   tbl.wire($('#pr-table'));
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderProducts(); });
   $('#pr-port').onchange=e=>{st.port=e.target.value; renderProducts();};
   $('#pr-camp').onchange=e=>{st.camp=e.target.value; renderProducts();};
-  $('#pr-dl').onclick=()=>exportCSV(cols,rows,'products');
+  $('#pr-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),rows,'products');
+  const modeSeg=$('#pr-mode'); if(modeSeg) modeSeg.querySelectorAll('button').forEach(b=>b.onclick=()=>{ st.pauseMode=b.dataset.m; renderProducts(); });
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); renderProducts(); },200); };
+  bind('pr-clicks','pClicks',v=>+v); bind('pr-acos','pAcos',v=>+v); bind('pr-mo','pMaxOrders',v=>+v||0); bind('pr-ms','pMinSpend',v=>+v||0);
+  const pauseBtn=$('#pr-pause'); if(pauseBtn) pauseBtn.onclick=()=>exportProductsPause(pauseRows, S.product);
+}
+// Evaluated per (ASIN, campaign) occurrence, not the aggregated ASIN totals — a product can be fine overall
+// but wasting spend in one specific campaign, so pausing has to target that occurrence, not the whole ASIN.
+function computeProductPauseRows(asinList, product, mode, thresholds){
+  const selSet=new Set(asinList.map(a=>String(a||'').toLowerCase()));
+  const candidates=DATA.productAds.filter(p=>p.product===product && p.state==='enabled' && selSet.has(String(p.asin||p.sku||'').toLowerCase()));
+  if(mode==='all') return candidates;
+  const {acos,clicks,maxOrders,minSpend}=thresholds;
+  return candidates.filter(p=>{
+    if(p.spend<minSpend) return false;
+    const d=derive(agg([p]));
+    if(p.clicks>=clicks && p.orders<=maxOrders) return true;
+    if(p.orders>=1 && (d.acos===Infinity||d.acos>acos)) return true;
+    return false;
+  });
+}
+function exportProductsPause(pauseRows, product){
+  if(!pauseRows.length){ alert('Nothing to pause with the current selection/thresholds.'); return; }
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=pauseRows.map(r=>bulkRow({'Product':prod,'Entity':'Product ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'SKU':r.sku,'State':'paused'}));
+  writeBulk(out, (product==='SB'?'sb_':'')+'products_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} product ad pause row(s) across ${new Set(pauseRows.map(r=>r.campaignId)).size} campaign(s).`);
 }
 
 /* ============================ exports ============================ */
