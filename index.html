@@ -123,6 +123,8 @@
   .badge.tg{background:#e7f7ee; color:#15803d;}
   .badge.neg{border:1px solid var(--pink); color:var(--pink-dark); background:#fff; cursor:pointer; padding:4px 10px; border-radius:8px;}
   .badge.negd{background:#fdf2f8; border-color:#f0abcc; color:#9d174d;}
+  .badge.clickable{cursor:pointer;}
+  .badge.sel{background:var(--grad); color:#fff;}
   .link{color:var(--pink-dark); cursor:pointer;}
   .sort-ind{opacity:.4; font-size:10px;}
   .th-active .sort-ind{opacity:1; color:var(--pink-dark);}
@@ -166,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 11:28</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 11:40</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1028,8 +1030,17 @@ function renderHarvesting(){
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
 
 /* ============================ KEYWORD CHECKER ============================ */
+// Which campaigns already exist in this portfolio determines which SKUs a new campaign there should
+// advertise — there's no other signal for a keyword that's never appeared as a search term at all.
+function skusForPortfolio(portfolioName){
+  const campIds=DATA.campaigns.filter(c=>(c.portfolioName||'(No Portfolio)')===portfolioName).map(c=>c.campaignId);
+  const skuSet=new Set();
+  campIds.forEach(cid=>(DATA.skuByCampaign[cid]||[]).forEach(s=>{ if(s.sku) skuSet.add(s.sku); }));
+  return [...skuSet];
+}
 function renderKwCheck(){
   const st=stFor('kwcheck');
+  if(st.lPrefix===undefined) st.lPrefix='BSQ'; if(st.lCount===undefined) st.lCount=1; if(st.lBid===undefined) st.lBid='';
   const src=stByToggle().filter(s=>!st.port || (s.portfolioName||'(No Portfolio)')===st.port);
   const kws=(st.text||'').split('\n').map(x=>x.trim()).filter(Boolean);
   let results=[];
@@ -1038,12 +1049,18 @@ function renderKwCheck(){
       return Object.assign({keyword:kw, found:matches.length>0, count:matches.length, inExact:SETS.exact.has(low), inPhrase:SETS.phrase.has(low), inBroad:SETS.broad.has(low)}, d); });
   }
   results.forEach((r,i)=>r._uid='kw'+i);
+  const sel=selFor('kwcheck'); // keys are "keyword|MATCHTYPE" — only missing (NO) combos are selectable
+  const missBadge=(r, key, matchType)=>{
+    if(r[key]) return '<span class="badge tg">YES</span>';
+    const k=r.keyword+'|'+matchType; const isSel=sel.has(k);
+    return `<span class="badge nt clickable ${isSel?'sel':''}" data-tog="${esc(k)}">${isSel?'SELECTED':'NO'}</span>`;
+  };
   const cols=[
     {key:'keyword',label:'Keyword',l:true,type:'text'},
     {key:'found',label:'In Search Terms',l:true,noSort:true,cell:r=>r.found?`<span class="badge tg">FOUND (${r.count})</span>`:'<span class="badge nt">NOT FOUND</span>'},
-    {key:'inExact',label:'Exact',l:true,noSort:true,cell:r=>r.inExact?'<span class="badge tg">YES</span>':'<span class="badge nt">NO</span>'},
-    {key:'inPhrase',label:'Phrase',l:true,noSort:true,cell:r=>r.inPhrase?'<span class="badge tg">YES</span>':'<span class="badge nt">NO</span>'},
-    {key:'inBroad',label:'Broad',l:true,noSort:true,cell:r=>r.inBroad?'<span class="badge tg">YES</span>':'<span class="badge nt">NO</span>'},
+    {key:'inExact',label:'Exact',l:true,noSort:true,cell:r=>missBadge(r,'inExact','EXACT')},
+    {key:'inPhrase',label:'Phrase',l:true,noSort:true,cell:r=>missBadge(r,'inPhrase','PHRASE')},
+    {key:'inBroad',label:'Broad',l:true,noSort:true,cell:r=>missBadge(r,'inBroad','BROAD')},
     {key:'impressions',label:'Impr.',type:'int'},
     {key:'clicks',label:'Clicks',type:'int'},
     {key:'spend',label:'Spend',type:'money'},
@@ -1052,6 +1069,9 @@ function renderKwCheck(){
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
   ];
   const tbl=results.length?buildTable({columns:cols,rows:results,tab:'kwcheck',sortDef:{key:'count',dir:-1},onChange:renderKwCheck}):null;
+  const byMatch={}; sel.forEach(k=>{ const i=k.lastIndexOf('|'); const mt=k.slice(i+1); (byMatch[mt]=byMatch[mt]||[]).push(k.slice(0,i)); });
+  const matchTypesSel=Object.keys(byMatch);
+  const skuPreview = st.port? skusForPortfolio(st.port) : [];
   $('#app').innerHTML=`
     <div class="card pad">
       <div class="rowbar"><div class="field"><label>Portfolio</label><select id="kw-port">${portOptions(st.port)}</select></div><div class="spacer"></div><button class="btn ghost" id="kw-clear">🗑 Clear</button></div>
@@ -1059,11 +1079,64 @@ function renderKwCheck(){
       <textarea class="kwbox" id="kw-text" placeholder="Enter keywords to check (one per line)&#10;&#10;Example:&#10;wireless headphones&#10;bluetooth speaker&#10;phone charger">${esc(st.text||'')}</textarea></div>
       <div class="countnote" style="margin-top:6px;">${kws.length} keyword(s) entered · Searching across ${fInt(src.length)} ${S.product} search term records</div>
     </div>
-    ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div><button class="btn ghost" id="kw-dl">⬇ Download</button></div><div id="kw-table">${tbl.html}</div></div>`:''}`;
+    ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div><button class="btn ghost" id="kw-dl">⬇ Download</button></div>
+      <div class="hint" style="margin:0 0 8px;">Click a red "NO" badge (Exact/Phrase/Broad) to select that keyword for launch in that match type — click again to deselect.</div>
+      <div id="kw-table">${tbl.html}</div></div>`:''}
+    ${sel.size?`<div class="card pad">
+      <h3 class="sectitle">🚀 Launch ${sel.size} selected keyword/match-type combo(s)</h3>
+      <div class="countnote" style="margin-bottom:8px;">${matchTypesSel.map(mt=>`${mt}: ${byMatch[mt].length}`).join(' · ')}</div>
+      ${!st.port? `<div class="banner">Pick a specific Portfolio above first — new campaigns need to know which SKUs to advertise, and that's read from the other campaigns already in that portfolio.</div>` : `
+      <div class="ctrls">
+        <div class="field"><label>Prefix (used only if no existing campaign found)</label><input type="text" id="kw-lprefix" value="${esc(st.lPrefix)}" style="width:110px;"></div>
+        <div class="field"><label>Keywords / campaign</label><input type="number" id="kw-lcount" min="1" value="${st.lCount}" style="width:110px;"></div>
+        <div class="field"><label>Bid override ($, optional)</label><input type="number" id="kw-lbid" step="0.01" placeholder="auto" value="${esc(st.lBid)}" style="width:120px;"></div>
+      </div>
+      <div class="hint" style="margin-top:8px;">SKUs pulled from campaigns already in "${esc(st.port)}": ${skuPreview.length? esc(skuPreview.slice(0,6).join(', '))+(skuPreview.length>6?` +${skuPreview.length-6} more`:'') : '<span style="color:#dc2626;">none found — add products to this portfolio first.</span>'}</div>
+      <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="kw-launch" ${skuPreview.length?'':'disabled'}>➕ Create campaigns</button></div>`}
+    </div>`:''}`;
   $('#kw-text').oninput=debounce(()=>{st.text=$('#kw-text').value; renderKwCheck();},350);
   $('#kw-port').onchange=e=>{st.port=e.target.value; renderKwCheck();};
   $('#kw-clear').onclick=()=>{st.text=''; renderKwCheck();};
   if(tbl){ tbl.wire($('#kw-table')); $('#kw-dl').onclick=()=>exportCSV(cols,results,'keyword_check'); }
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const k=t.dataset.tog; sel.has(k)?sel.delete(k):sel.add(k); renderKwCheck(); });
+  const lp=$('#kw-lprefix'); if(lp) lp.oninput=debounce(()=>{ st.lPrefix=lp.value; renderKwCheck(); },300);
+  const lc=$('#kw-lcount'); if(lc) lc.oninput=debounce(()=>{ st.lCount=+lc.value||1; renderKwCheck(); },250);
+  const lb=$('#kw-lbid'); if(lb) lb.oninput=debounce(()=>{ st.lBid=lb.value; },300);
+  const launchBtn=$('#kw-launch'); if(launchBtn) launchBtn.onclick=()=>exportKwCheckCampaigns(byMatch, st.port, {prefix:st.lPrefix, numPerGroup:st.lCount, bidOverride: st.lBid?+st.lBid:null});
+}
+function exportKwCheckCampaigns(byMatch, portfolioName, settings){
+  const skus=skusForPortfolio(portfolioName);
+  if(!skus.length){ alert('No SKUs found for this portfolio — add products to it first.'); return; }
+  const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
+  const out=[]; let totalCamps=0;
+  const perKwBid = ()=> settings.bidOverride || 0.75;
+  Object.keys(byMatch).forEach(matchType=>{
+    const kws=[...new Set(byMatch[matchType])];
+    const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
+    const template=detectNamingTemplate(portfolioName, matchType, 'SP', settings.prefix);
+    const suffix=template? refreshDateToken(template.suffix) : '';
+    let nextNum=template?template.num+1:1;
+    function nextFreeName(){
+      let name = template? `${template.prefix}_${matchType} ${nextNum}_${suffix}` : `KWCHK_${matchType} ${nextNum}`;
+      while(existingNames.has(name)){ nextNum++; name = template? `${template.prefix}_${matchType} ${nextNum}_${suffix}` : `KWCHK_${matchType} ${nextNum}`; }
+      existingNames.add(name); nextNum++;
+      return name;
+    }
+    // numPerGroup is "keywords per campaign" (not a group count), so chunk directly rather than reusing splitIntoGroups.
+    const perCampaign=Math.max(1,settings.numPerGroup||1);
+    const realGroups=[]; for(let i=0;i<kws.length;i+=perCampaign) realGroups.push(kws.slice(i,i+perCampaign));
+    realGroups.forEach(g=>{
+      const cname=nextFreeName(); const agname=cname;
+      out.push(bulkRow({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'}));
+      out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':perKwBid()}));
+      skus.forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
+      g.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':matchTypeCap,'Bid':perKwBid()})));
+      totalCamps++;
+    });
+  });
+  if(!out.length){ alert('Nothing to export.'); return; }
+  writeBulk(out,'kwcheck_new_campaigns_bulk.xlsx');
+  alert(`Created ${totalCamps} campaign(s) across ${Object.keys(byMatch).length} match type(s). SKUs pulled from existing campaigns in "${portfolioName}".`);
 }
 
 /* ============================ PRODUCTS ============================ */
