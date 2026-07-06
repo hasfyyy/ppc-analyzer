@@ -166,7 +166,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 11:22</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 11:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1182,23 +1182,24 @@ function exportCSV(columns,rows,name){
 }
 function isExactCampaign(name){ return /(^|[^a-z])exact([^a-z]|$)/i.test(String(name||'')); }
 function exportNgramNegatives(entries, matchType, excludeExact){
-  const out=[]; const seen=new Set(); const campsAll=new Set();
+  const out=[]; const seen=new Set(); const campsAll=new Set(); const agsAll=new Set();
   const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
   entries.forEach(e=>{
-    // only the campaign(s) that actually generated this root's search terms — NOT the whole portfolio
-    const campIds=new Set((e.terms||[]).map(c=>c.campaignId).filter(Boolean));
-    campIds.forEach(cid=>{
+    // only the AD GROUP(s) that actually generated this root's search terms — not campaign-wide, not portfolio-wide.
+    const pairs=new Map(); // "campId|adGroupId" -> {campaignId, adGroupId, campaignName}
+    (e.terms||[]).forEach(t=>{ if(!t.campaignId||!t.adGroupId) return; pairs.set(t.campaignId+'|'+t.adGroupId, {campaignId:t.campaignId, adGroupId:t.adGroupId, campaignName:t.campaignName}); });
+    pairs.forEach(({campaignId:cid, adGroupId:agid, campaignName})=>{
       const cm=DATA.campById[cid];
-      const cname = cm? cm.name : ((e.terms.find(t=>t.campaignId===cid)||{}).campaignName||'');
+      const cname = cm? cm.name : (campaignName||'');
       if(excludeExact && isExactCampaign(cname)) return;
-      const dk=cid+'|'+String(e.root).toLowerCase();
-      if(seen.has(dk)) return; seen.add(dk); campsAll.add(cid);
-      out.push(bulkRow({'Product':prod,'Entity':'Campaign negative keyword','Operation':'Create','Campaign ID':cid,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
+      const dk=cid+'|'+agid+'|'+String(e.root).toLowerCase();
+      if(seen.has(dk)) return; seen.add(dk); campsAll.add(cid); agsAll.add(cid+'|'+agid);
+      out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':cid,'Ad Group ID':agid,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
     });
   });
-  if(!out.length){ alert('Nothing to export — the campaign(s) these roots come from are all Exact Match (excluded). Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
+  if(!out.length){ alert('Nothing to export — the campaign(s) these roots come from are all Exact Match (excluded), or their search terms have no Ad Group ID. Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
   writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated only in the campaign(s) that generated them — not portfolio-wide.`);
+  alert(`Exported ${out.length} ${matchType} row(s) across ${agsAll.size} ad group(s) in ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated only at the ad group level where each root's search terms actually appeared — not campaign-wide, not portfolio-wide.`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 function exportNegatives(product,rows){
