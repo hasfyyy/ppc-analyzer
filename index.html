@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 12:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:07</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1346,12 +1346,13 @@ function renderOptBids(){
   rows.forEach((r,i)=>r._uid='ob'+i);
   const sel=selFor('optbids');
   const totals=agg(rows);
+  const inflatedPl=campaignsWithInflatedPlacement(S.product);
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${r.pct}%</span>`},
     {key:'text',label:'Target',l:true,type:'text'},
     {key:'kind',label:'Type',l:true,type:'text',cell:r=>r.kind==='keyword'?'Keyword':'Product'},
     {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(targetDetailLabel(r))},
-    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>esc(r.campaignName)+(inflatedPl.has(r.campaignId)?' <span class="badge" style="background:#fef3c7;color:#92400e;" title="This campaign also has an overspending placement below — the high ACoS here may be the placement\'s fault, not this bid.">⚠ check placement</span>':'')},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
     {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
@@ -1412,13 +1413,16 @@ function exportBidOptimization(product, rows){
   writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} bid update(s).`);
 }
-function renderOptPlacements(){
+// Shared by both halves of Optimize: bids are per-keyword but placement % is per-CAMPAIGN, so they can
+// never share a row — but a campaign flagged here for an inflated placement is exactly the kind of place
+// where a keyword's high ACoS might be the placement's fault, not the base bid's. Factored out so the Bid
+// Optimizer can cross-reference it without duplicating (and drifting from) this threshold logic.
+function computePlacementOptRows(product, filters){
   const st=stFor('optplace');
   if(st.highAcos===undefined) st.highAcos=50; if(st.decStep===undefined) st.decStep=10;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
-  let rowsRaw=DATA.placements.filter(p=>p.product===S.product);
+  let rowsRaw=DATA.placements.filter(p=>p.product===product);
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
-  // one row per (campaign, placement) — carries the exact raw placement string so the Update writes back cleanly
   const byKey={};
   rowsRaw.forEach(p=>{
     const t=placeType(p.placement); if(!t) return;
@@ -1436,6 +1440,17 @@ function renderOptPlacements(){
     return action!=='none'? Object.assign({action,newPct},e,d) : null;
   }).filter(Boolean);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  return {rows, st, rowsRaw};
+}
+// Campaigns where at least one placement is overspending — surfaced as a warning on the Bid Optimizer so a
+// high-ACoS keyword doesn't get its base bid cut when the real problem is a placement multiplier.
+function campaignsWithInflatedPlacement(product){
+  const {rows}=computePlacementOptRows(product, {});
+  return new Set(rows.filter(r=>r.action==='decrease').map(r=>r.campaignId));
+}
+function renderOptPlacements(){
+  const {rows: rowsAll, st, rowsRaw}=computePlacementOptRows(S.product, {});
+  let rows=rowsAll;
   rows.forEach((r,i)=>r._uid='op'+i);
   const sel=selFor('optplace');
   const totals=agg(rows);
