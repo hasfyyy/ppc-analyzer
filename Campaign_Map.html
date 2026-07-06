@@ -106,7 +106,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:19</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -188,7 +188,7 @@ function parseParentMap(wb){
 // bits (Type/Niche/ASIN) that come straight from what was already detected above. No free-text template
 // syntax to get wrong — every field is its own box, exactly like Campaign Builder.
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
-let NAME_FIELDS={prefix:'BSQ', includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), agency:'Insiders®'};
+let NAME_FIELDS={prefix:'BSQ', includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), useCreationDate:false, agency:'Insiders®'};
 let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured fields)
 function renderNameFromFields(fields, r){
   const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
@@ -197,7 +197,10 @@ function renderNameFromFields(fields, r){
   if(fields.includeType) parts.push(matchtype);
   if(fields.includeNiche) parts.push(bt&&bt.niche||'');
   if(fields.includeAsin) parts.push(r.primaryAsin||(r.asins[0]||''));
-  parts.push(fields.agent, fields.monthyear, fields.agency);
+  // When ticked, each row gets ITS OWN campaign's actual creation month (from Start Date) instead of the
+  // one static Month+Year text everyone shares — falls back to the static field if Start Date wasn't found.
+  const monthyear = fields.useCreationDate && r.createdMonthYear ? r.createdMonthYear : fields.monthyear;
+  parts.push(fields.agent, monthyear, fields.agency);
   return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_');
 }
 function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameFromFields(NAME_FIELDS, r); }
@@ -219,13 +222,14 @@ function parseSPSheet(wb, byCampaign){
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
     const cid=String(s.get(row,['campaign id'])||'').trim();
     if(!cid) return;
-    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,asins:new Set(),keywordTexts:[]});
+    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,asins:new Set(),keywordTexts:[]});
     if(ent==='campaign'){
       c.campaignName=String(s.get(row,['campaign name'])||c.campaignName);
       c.state=String(s.get(row,['state'])||c.state).trim().toLowerCase();
       c.portfolioId=String(s.get(row,['portfolio id'])||c.portfolioId).trim();
       c.portfolioName=String(s.get(row,['portfolio name'])||c.portfolioName).trim();
       c.targetingType=String(s.get(row,['targeting type'])||c.targetingType).trim();
+      c.startDate=String(s.get(row,['start date'])||c.startDate).trim();
     } else if(ent==='ad group'){
       const agid=String(s.get(row,['ad group id'])||''); if(agid) c.adGroups.add(agid);
     } else if(ent==='product ad'){
@@ -246,12 +250,13 @@ function parseSDSheet(wb, byCampaign){
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
     const cid=String(s.get(row,['campaign id'])||'').trim();
     if(!cid) return;
-    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SD',campaignName:'',state:'',portfolioId:'',portfolioName:'',adGroups:new Set(),asins:new Set(),hasAudience:false,hasContextual:false});
+    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SD',campaignName:'',state:'',portfolioId:'',portfolioName:'',startDate:'',adGroups:new Set(),asins:new Set(),hasAudience:false,hasContextual:false});
     if(ent==='campaign'){
       c.campaignName=String(s.get(row,['campaign name'])||c.campaignName);
       c.state=String(s.get(row,['state'])||c.state).trim().toLowerCase();
       c.portfolioId=String(s.get(row,['portfolio id'])||c.portfolioId).trim();
       c.portfolioName=String(s.get(row,['portfolio name'])||c.portfolioName).trim();
+      c.startDate=String(s.get(row,['start date'])||c.startDate).trim();
     } else if(ent==='ad group'){
       const agid=String(s.get(row,['ad group id'])||''); if(agid) c.adGroups.add(agid);
       const asin=String(s.get(row,['asin'])||'').trim(); if(asin) c.asins.add(asin);
@@ -277,12 +282,13 @@ function parseSBSheets(wb, byCampaign){
       const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
       const cid=String(s.get(row,['campaign id'])||'').trim();
       if(!cid) return;
-      const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SB',campaignName:'',state:'',portfolioId:'',portfolioName:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,isVideo:false,isAwarenessOnly:false,asins:new Set(),keywordTexts:[]});
+      const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SB',campaignName:'',state:'',portfolioId:'',portfolioName:'',startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,isVideo:false,isAwarenessOnly:false,asins:new Set(),keywordTexts:[]});
       if(ent==='campaign'){
         c.campaignName=String(s.get(row,['campaign name'])||c.campaignName);
         c.state=String(s.get(row,['state'])||c.state).trim().toLowerCase();
         c.portfolioId=String(s.get(row,['portfolio id'])||c.portfolioId).trim();
         c.portfolioName=String(s.get(row,['portfolio name'])||c.portfolioName).trim();
+        c.startDate=String(s.get(row,['start date'])||c.startDate).trim();
         const fmt=String(s.get(row,['ad format'])||'').trim().toLowerCase();
         if(fmt==='video') c.isVideo=true;
       } else if(ent==='ad group'){
@@ -348,6 +354,20 @@ function classify(c, brandTerms){
 
 function programTag(p){ return `<span class="tag ${p.toLowerCase()}">${p}</span>`; }
 
+// Amazon bulk exports the campaign's actual creation/start date as "Start Date" — usually "YYYYMMDD",
+// sometimes an Excel serial number if the cell got reformatted as a date. Either way, this is the real
+// per-campaign month, unlike the Name+Year fields elsewhere which are just today's date.
+const MONTH_ABBR3=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+function monthYearFromStartDate(sd){
+  if(!sd) return '';
+  let y,m;
+  if(/^\d{8}$/.test(sd)){ y=+sd.slice(0,4); m=+sd.slice(4,6); }
+  else if(/^\d+(\.\d+)?$/.test(sd) && +sd>20000){ const d=XLSX.SSF.parse_date_code(+sd); if(d){ y=d.y; m=d.m; } }
+  else { const d=new Date(sd); if(!isNaN(d)){ y=d.getFullYear(); m=d.getMonth()+1; } }
+  if(!y||!m||m<1||m>12) return '';
+  return MONTH_ABBR3[m-1]+String(y).slice(2);
+}
+
 /* ============================ BUILD / RENDER ============================ */
 function processWorkbook(wb, brandTermsRaw){
   const byCampaign={};
@@ -369,7 +389,8 @@ function processWorkbook(wb, brandTermsRaw){
     return {
       campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type,
       adGroupCount:c.adGroups?c.adGroups.size:0, portfolioId:c.portfolioId, portfolioName:c.portfolioName,
-      asins, parents, mixed, primaryAsin: parents.length===1? parents[0] : null
+      asins, parents, mixed, primaryAsin: parents.length===1? parents[0] : null,
+      createdMonthYear: monthYearFromStartDate(c.startDate)
     };
   });
   return rows;
@@ -480,11 +501,12 @@ function renderApp(rows){
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-niche" ${NAME_FIELDS.includeNiche?'checked':''}> Niche/Code (from Brand Table)</label>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-asin" ${NAME_FIELDS.includeAsin?'checked':''}> ASIN (parent)</label>
         <div class="field"><label>Agent</label><input type="text" id="cm-agent" value="${esc(NAME_FIELDS.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
-        <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(NAME_FIELDS.monthyear)}" style="width:80px;"></div>
+        <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(NAME_FIELDS.monthyear)}" style="width:80px;" ${NAME_FIELDS.useCreationDate?'disabled':''}></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-created" ${NAME_FIELDS.useCreationDate?'checked':''}> Use each campaign's own creation month (Start Date)</label>
         <div class="field"><label>Agency suffix</label><input type="text" id="cm-agency" value="${esc(NAME_FIELDS.agency)}" style="width:110px;"></div>
         <button class="btn ghost" id="cm-apply-template">Apply to all (clears manual edits)</button>
       </div>
-      <div class="hint" style="margin-top:8px;">Builds each name as Prefix_Type_Niche_ASIN_Agent_MonthYear_Agency (unchecked/blank parts are skipped). Editing a "New Name" cell directly always overrides this for that one row.</div>
+      <div class="hint" style="margin-top:8px;">Builds each name as Prefix_Type_Niche_ASIN_Agent_MonthYear_Agency (unchecked/blank parts are skipped). Editing a "New Name" cell directly always overrides this for that one row. "Use each campaign's own creation month" reads the real Start Date per campaign instead of one shared Month+Year — falls back to the text field if a campaign has no Start Date.</div>
     </div>
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
@@ -505,7 +527,7 @@ function renderApp(rows){
   const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ NAME_FIELDS[key]=e.value; renderApp(LAST_ROWS); }; };
   bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency');
   const bindCheck=(id,key)=>{ const e=$('#'+id); if(e) e.onchange=()=>{ NAME_FIELDS[key]=e.checked; renderApp(LAST_ROWS); }; };
-  bindCheck('cm-inc-type','includeType'); bindCheck('cm-inc-niche','includeNiche'); bindCheck('cm-inc-asin','includeAsin');
+  bindCheck('cm-inc-type','includeType'); bindCheck('cm-inc-niche','includeNiche'); bindCheck('cm-inc-asin','includeAsin'); bindCheck('cm-inc-created','useCreationDate');
   $('#cm-apply-template').onclick=()=>{ CUSTOM_NAMES={}; renderApp(LAST_ROWS); };
   document.querySelectorAll('.cm-name').forEach(inp=>inp.onchange=()=>{ CUSTOM_NAMES[inp.dataset.cid]=inp.value; });
 }
