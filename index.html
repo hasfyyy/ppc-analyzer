@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:21</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:25</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1457,6 +1457,7 @@ function computePlacementOptRows(product, filters){
   const st=stFor('optplace');
   if(st.highAcos===undefined) st.highAcos=50; if(st.decStep===undefined) st.decStep=10;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
+  if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
   let rowsRaw=DATA.placements.filter(p=>p.product===product);
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
@@ -1469,9 +1470,15 @@ function computePlacementOptRows(product, filters){
   let allRows=Object.values(byKey).map(e=>{
     const d=derive(e);
     let action='none', newPct=e.percentage;
-    if(e.clicks>=st.minClicks){
-      if(e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){ action='decrease'; newPct=Math.max(0, e.percentage-st.decStep); }
-      else if(e.orders>=1 && d.acos<st.lowAcos){ action='increase'; newPct=Math.min(900, e.percentage+st.incStep); }
+    if(e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){
+      action='decrease'; newPct=Math.max(0, e.percentage-st.decStep);
+    } else if(st.pushEnabled && e.percentage<st.pushBelow){
+      // Below the floor % on a multi-keyword campaign, a placement rarely gets enough auctions to even
+      // build up the clicks needed to judge its ACoS — so this doesn't wait for minClicks/orders like the
+      // others. Push it up first; the ACoS-based rules above/below take over once it's actually competing.
+      action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
+    } else if(e.clicks>=st.minClicks && e.orders>=1 && d.acos<st.lowAcos){
+      action='increase'; newPct=Math.min(900, e.percentage+st.incStep);
     }
     return Object.assign({action,newPct},e,d);
   });
@@ -1485,8 +1492,13 @@ function renderOptPlacements(){
   rows.forEach((r,i)=>r._uid='op'+i);
   const sel=selFor('optplace');
   const totals=agg(rows);
+  const actionBadgePl=r=>{
+    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decStep}pp</span>`;
+    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Below the ${st.pushBelow}% floor — pushed up regardless of ACoS, so it can actually start winning auctions there.">↑ +${st.pushStep}pp (push)</span>`;
+    return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${st.incStep}pp</span>`;
+  };
   const cols=[
-    {key:'action',label:'Action',l:true,noSort:true,cell:r=>r.action==='decrease'?`<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decStep}pp</span>`:`<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${st.incStep}pp</span>`},
+    {key:'action',label:'Action',l:true,noSort:true,cell:actionBadgePl},
     {key:'placementName',label:'Placement',l:true,type:'text'},
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
@@ -1510,10 +1522,16 @@ function renderOptPlacements(){
         <div class="field"><label>Portfolio</label><select id="op-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="op-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-pushen" ${st.pushEnabled?'checked':''}> Push placements below</label>
+        <div class="field"><input type="number" id="op-pushbelow" value="${st.pushBelow}" style="width:80px;">%</div>
+        <div class="field"><label>Push by (points)</label><input type="number" id="op-pushstep" value="${st.pushStep}" style="width:90px;"></div>
+        <div class="hint" style="align-self:center;">Multi-keyword campaigns especially — a placement stuck below this % rarely gets enough auctions to ever build up the clicks/ACoS that would trigger the increase rule above, so this pushes it regardless of performance.</div>
+      </div>
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
-    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Selected to export',fInt(sel.size),'pink')}
+    <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
+      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Pushed',fInt(rows.filter(r=>r.action==='push').length))}${kpi('Selected to export',fInt(sel.size),'pink')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Placement Changes (${rows.length})</h3><div class="spacer"></div>
@@ -1527,6 +1545,8 @@ function renderOptPlacements(){
   $('#op-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-dec','decStep',v=>+v||0); bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
+  bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
+  $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#op-camp').oninput=debounce(()=>{st.camp=$('#op-camp').value; upd();},220);
   $('#op-export').onclick=()=>exportPlacementOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
