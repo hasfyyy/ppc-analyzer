@@ -106,7 +106,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:19</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:22</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -188,7 +188,7 @@ function parseParentMap(wb){
 // bits (Type/Niche/ASIN) that come straight from what was already detected above. No free-text template
 // syntax to get wrong — every field is its own box, exactly like Campaign Builder.
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
-let NAME_FIELDS={prefix:'BSQ', includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), useCreationDate:false, agency:'Insiders®'};
+let NAME_FIELDS={prefix:'BSQ', includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), useCreationDate:false, agency:'Insiders®', separator:'_'};
 let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured fields)
 function renderNameFromFields(fields, r){
   const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
@@ -201,7 +201,8 @@ function renderNameFromFields(fields, r){
   // one static Month+Year text everyone shares — falls back to the static field if Start Date wasn't found.
   const monthyear = fields.useCreationDate && r.createdMonthYear ? r.createdMonthYear : fields.monthyear;
   parts.push(fields.agent, monthyear, fields.agency);
-  return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_');
+  const sep = fields.separator!=null && fields.separator!==''? fields.separator : '_';
+  return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(sep);
 }
 function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameFromFields(NAME_FIELDS, r); }
 
@@ -504,9 +505,10 @@ function renderApp(rows){
         <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(NAME_FIELDS.monthyear)}" style="width:80px;" ${NAME_FIELDS.useCreationDate?'disabled':''}></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-created" ${NAME_FIELDS.useCreationDate?'checked':''}> Use each campaign's own creation month (Start Date)</label>
         <div class="field"><label>Agency suffix</label><input type="text" id="cm-agency" value="${esc(NAME_FIELDS.agency)}" style="width:110px;"></div>
+        <div class="field"><label>Separator</label><input type="text" id="cm-sep" value="${esc(NAME_FIELDS.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
         <button class="btn ghost" id="cm-apply-template">Apply to all (clears manual edits)</button>
       </div>
-      <div class="hint" style="margin-top:8px;">Builds each name as Prefix_Type_Niche_ASIN_Agent_MonthYear_Agency (unchecked/blank parts are skipped). Editing a "New Name" cell directly always overrides this for that one row. "Use each campaign's own creation month" reads the real Start Date per campaign instead of one shared Month+Year — falls back to the text field if a campaign has no Start Date.</div>
+      <div class="hint" style="margin-top:8px;">Builds each name as Prefix[sep]Type[sep]Niche[sep]ASIN[sep]Agent[sep]MonthYear[sep]Agency (unchecked/blank parts are skipped). Separator defaults to "_" but can be "|" or anything else you type. Editing a "New Name" cell directly always overrides this for that one row. "Use each campaign's own creation month" reads the real Start Date per campaign instead of one shared Month+Year — falls back to the text field if a campaign has no Start Date.</div>
     </div>
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
@@ -525,7 +527,7 @@ function renderApp(rows){
   $('#cm-fprogram').onchange=()=>renderApp(LAST_ROWS);
   $('#cm-export').onclick=()=>exportMap(rows, groups, mixedBucket, noAsinBucket);
   const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ NAME_FIELDS[key]=e.value; renderApp(LAST_ROWS); }; };
-  bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency');
+  bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency'); bindField('cm-sep','separator');
   const bindCheck=(id,key)=>{ const e=$('#'+id); if(e) e.onchange=()=>{ NAME_FIELDS[key]=e.checked; renderApp(LAST_ROWS); }; };
   bindCheck('cm-inc-type','includeType'); bindCheck('cm-inc-niche','includeNiche'); bindCheck('cm-inc-asin','includeAsin'); bindCheck('cm-inc-created','useCreationDate');
   $('#cm-apply-template').onclick=()=>{ CUSTOM_NAMES={}; renderApp(LAST_ROWS); };
