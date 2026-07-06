@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 12:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 12:53</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1303,13 +1303,16 @@ function exportTargetsPause(product,rows){
 // last 30, custom — whatever the user picked when exporting from Amazon Ads console). We don't second-guess
 // the window; we just act on the numbers as given.
 function renderOptimize(){
-  if(S.opt===undefined) S.opt='bids';
-  $('#app').innerHTML = `<div class="navrow" style="margin:0 0 12px;"><div class="seg" id="opt-seg">
-      <button data-o="bids" class="${S.opt==='bids'?'active':''}">🎯 Bid Optimizer (Targets)</button>
-      <button data-o="placements" class="${S.opt==='placements'?'active':''}">📍 Placement Optimizer</button>
-    </div></div><div id="opt-body"></div>`;
-  $('#opt-seg').querySelectorAll('button').forEach(b=>b.onclick=()=>{ S.opt=b.dataset.o; renderOptimize(); });
-  (S.opt==='bids'? renderOptBids : renderOptPlacements)();
+  // Both sections live on the same page now — bids and placements are usually reviewed together in one
+  // optimization pass, so switching tabs back and forth just to compare them was friction, not a feature.
+  $('#app').innerHTML = `
+    <h3 class="sectitle" style="margin:0 0 4px;">🎯 Bid Optimizer (Targets)</h3>
+    <div id="opt-bids"></div>
+    <div style="height:22px;"></div>
+    <h3 class="sectitle" style="margin:0 0 4px;">📍 Placement Optimizer</h3>
+    <div id="opt-placements"></div>`;
+  renderOptBids();
+  renderOptPlacements();
 }
 // Three escalating ACoS tiers instead of one flat cut — a keyword at 140% ACoS gets hit much harder than
 // one that just crept past the first threshold. Tiers must be checked highest-first so the worst offenders
@@ -1358,7 +1361,7 @@ function renderOptBids(){
     {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
-  $('#opt-body').innerHTML=`
+  $('#opt-bids').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Bid rules</h3>
       <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
@@ -1449,7 +1452,7 @@ function renderOptPlacements(){
     {key:'newPct',label:'New %',type:'num',cell:r=>(r.newPct>0?'+':'')+r.newPct+'%',cls:r=>r.newPct>r.percentage?'num-green':'num-red'},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optplace',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptPlacements});
-  $('#opt-body').innerHTML=`
+  $('#opt-placements').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placement rules</h3>
       <div class="ctrls">
