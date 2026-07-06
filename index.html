@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:37</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 16:45</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1384,9 +1384,13 @@ function renderOptimize(){
     <div id="opt-bids"></div>
     <div style="height:22px;"></div>
     <h3 class="sectitle" style="margin:0 0 4px;">📍 Placement Optimizer</h3>
-    <div id="opt-placements"></div>`;
+    <div id="opt-placements"></div>
+    <div style="height:22px;"></div>
+    <h3 class="sectitle" style="margin:0 0 4px;">💰 Budget Rebalancing</h3>
+    <div id="opt-budget"></div>`;
   renderOptBids();
   renderOptPlacements();
+  renderOptBudget();
 }
 // Three escalating ACoS tiers instead of one flat cut — a keyword at 140% ACoS gets hit much harder than
 // one that just crept past the first threshold. Tiers must be checked highest-first so the worst offenders
@@ -1421,6 +1425,7 @@ function renderOptBids(){
   if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   if(st.marginPct===undefined) st.marginPct=10;
+  if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0);
   let rows=src.map(t=>{
@@ -1431,10 +1436,15 @@ function renderOptBids(){
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); reason='healthy ACoS'; }
     }
+    // Plenty of impressions but ZERO clicks means the bid is losing every auction it's even entered —
+    // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates.
+    if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=st.wakeMinImpr){
+      action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
+    }
     // Single-keyword campaigns only: a "good" keyword sitting right at (or under) the CPC it's actually
     // paying on its main placement is one lost auction away from going dark — nudge the bid to clear that
     // CPC with a margin instead of leaving it exactly on the edge.
-    if(action!=='decrease' && singleKw.has(t.campaignId)){
+    if(action!=='decrease' && action!=='wake' && singleKw.has(t.campaignId)){
       const dp=dominantPlacement(t.campaignId);
       if(dp && dp.cpc>0){
         const effectiveBid=t.bid*(1+dp.percentage/100);
@@ -1452,9 +1462,11 @@ function renderOptBids(){
   rows.forEach((r,i)=>r._uid='ob'+i);
   const sel=selFor('optbids');
   const totals=agg(rows);
-  const actionBadge=r=>r.action==='decrease'
-    ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`
-    : `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
+  const actionBadge=r=>{
+    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
+    if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
+    return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
+  };
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:actionBadge},
     {key:'text',label:'Target',l:true,type:'text'},
@@ -1496,9 +1508,15 @@ function renderOptBids(){
         <div class="field"><label>Single-KW margin over CPC %</label><input type="number" id="ob-margin" value="${st.marginPct}" style="width:90px;"></div>
         <div class="hint" style="align-self:center;">For single-keyword (SUP) campaigns only: if the bid barely covers what it's actually paying on its main placement, bump it to clear that CPC by this margin — so a good keyword doesn't sit right on the edge of losing auctions.</div>
       </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
+        <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;"></div>
+        <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
+        <div class="hint" style="align-self:center;">Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.</div>
+      </div>
     </div>
-    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Selected to export',fInt(sel.size),'pink')}
+    <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
+      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(rows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(sel.size),'pink')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Changes (${rows.length})</h3><div class="spacer"></div>
@@ -1515,12 +1533,32 @@ function renderOptBids(){
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
   bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0); bind('ob-margin','marginPct',v=>+v||0);
+  bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
+  $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
 }
+// Guardrail: raising a bid on a campaign that's already spending its whole daily budget just burns through
+// that same budget faster — it won't buy more conversions unless the budget goes up too. Warn once, with
+// which campaigns and why, rather than silently letting a well-intentioned increase go nowhere.
+function cappedCampaignsIn(rows, product){
+  const days=Math.max(1, stFor('optbudget').periodDays||30);
+  const names=new Set();
+  rows.forEach(r=>{
+    if(r.action==='decrease') return;
+    const c=DATA.campaigns.find(x=>x.campaignId===r.campaignId && x.product===product);
+    if(c && campaignBudgetUtil(c,days)>=0.8) names.add(c.campaignName||r.campaignId);
+  });
+  return [...names];
+}
 function exportBidOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
+  const capped=cappedCampaignsIn(rows, product);
+  if(capped.length){
+    const proceed=confirm(`⚠ ${capped.length} campanie(i) din selecție sunt deja la ≥80% din bugetul zilnic:\n${capped.slice(0,6).join('\n')}${capped.length>6?`\n…+${capped.length-6} more`:''}\n\nCreșterea bidului acolo n-are efect complet fără să crești și bugetul (vezi Optimize → Budget Rebalancing).\n\nContinui exportul oricum?`);
+    if(!proceed) return;
+  }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
   writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
@@ -1631,6 +1669,97 @@ function exportPlacementOptimization(product, rows){
   const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':r.rawPlacement,'Percentage':r.newPct}));
   writeBulk(out, (product==='SB'?'sb_':'')+'placement_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} placement bid adjustment update(s).`);
+}
+
+/* ============================ BUDGET REBALANCING ============================ */
+// "Capped" is a heuristic, not something Amazon states outright in bulk data: spend sitting close to the
+// daily budget for the whole period is the closest signal we have that impression share was left on the
+// table. Paired with ACoS, it turns into two mirror-image suggestions — fund what's working and capped,
+// trim what's failing and isn't even capped (so the low budget isn't the excuse for its own bad ACoS).
+function campaignBudgetUtil(c, periodDays){
+  const denom=c.dailyBudget*(periodDays||1);
+  return denom>0? c.spend/denom : 0;
+}
+function renderOptBudget(){
+  const st=stFor('optbudget');
+  if(st.capUtil===undefined) st.capUtil=80; if(st.goodAcos===undefined) st.goodAcos=30; if(st.incBudgetPct===undefined) st.incBudgetPct=20;
+  if(st.lowUtil===undefined) st.lowUtil=50; if(st.badAcos===undefined) st.badAcos=60; if(st.decBudgetPct===undefined) st.decBudgetPct=20;
+  if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=30;
+  const days=Math.max(1, st.periodDays);
+  const camps=DATA.campaigns.filter(c=>c.product===S.product && c.state==='enabled' && c.dailyBudget>0 && c.spend>=st.minSpend);
+  let rows=camps.map(c=>{
+    const d=derive(c);
+    const util=campaignBudgetUtil(c,days)*100;
+    let action='none', newBudget=c.dailyBudget, reason=null;
+    if(util>=st.capUtil && c.orders>=1 && d.acos<=st.goodAcos){
+      action='increase'; newBudget=+(c.dailyBudget*(1+st.incBudgetPct/100)).toFixed(2); reason=`${fInt(util)}% utilizat, ACoS bun`;
+    } else if(util<st.lowUtil && (c.orders===0 || d.acos>st.badAcos)){
+      action='decrease'; newBudget=Math.max(1, +(c.dailyBudget*(1-st.decBudgetPct/100)).toFixed(2)); reason=`doar ${fInt(util)}% utilizat, ACoS slab`;
+    }
+    return action!=='none'? Object.assign({action,newBudget,util,reason},c,d) : null;
+  }).filter(Boolean);
+  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  rows.forEach((r,i)=>r._uid='obg'+i);
+  const sel=selFor('optbudget');
+  const totals=agg(rows);
+  const actionBadge=r=>r.action==='increase'
+    ? `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason)}">↑ +${st.incBudgetPct}%</span>`
+    : `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.reason)}">↓ -${st.decBudgetPct}%</span>`;
+  const cols=[
+    {key:'action',label:'Action',l:true,noSort:true,cell:actionBadge},
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'util',label:'Budget Used',type:'pct',cell:r=>fPct(r.util)},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+    {key:'dailyBudget',label:'Current Budget',type:'money'},
+    {key:'newBudget',label:'New Budget',type:'money',cls:r=>r.newBudget>r.dailyBudget?'num-green':'num-red'},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'optbudget',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBudget});
+  $('#opt-budget').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Budget rules</h3>
+      <div class="ctrls">
+        <div class="field"><label>Increase if Budget Used &gt;</label><input type="number" id="obg-cap" value="${st.capUtil}" style="width:90px;">%</div>
+        <div class="field"><label>and ACoS ≤</label><input type="number" id="obg-goodacos" value="${st.goodAcos}" style="width:80px;">%</div>
+        <div class="field"><label>Increase by %</label><input type="number" id="obg-incpct" value="${st.incBudgetPct}" style="width:80px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Decrease if Budget Used &lt;</label><input type="number" id="obg-lowutil" value="${st.lowUtil}" style="width:90px;">%</div>
+        <div class="field"><label>and ACoS &gt;</label><input type="number" id="obg-badacos" value="${st.badAcos}" style="width:80px;">%</div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="obg-decpct" value="${st.decBudgetPct}" style="width:80px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Reporting period (days)</label><input type="number" id="obg-days" value="${st.periodDays}" style="width:90px;"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="obg-ms" value="${st.minSpend}" style="width:90px;"></div>
+        <div class="field"><label>Portfolio</label><select id="obg-port">${portOptions(st.port)}</select></div>
+      </div>
+      <div class="hint" style="margin-top:8px;">"Budget Used" = spend ÷ (daily budget × zile din perioadă) — Amazon nu spune direct câte zile cuprinde bulk-ul, așa că pune aici exact ce interval ai ales la export (ex. 7, 30). Greșit aici = "Budget Used" fals.</div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
+      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Increase budget',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Decrease budget',fInt(rows.filter(r=>r.action==='decrease').length),'red')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Budget Changes (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn grad" id="obg-export" ${sel.size?'':'disabled'}>⬇ Export Budget Update (${sel.size})</button>
+      </div>
+      <div id="obg-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#obg-table'));
+  const upd=()=>renderOptBudget();
+  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('obg-cap','capUtil',v=>+v||0); bind('obg-goodacos','goodAcos',v=>+v||0); bind('obg-incpct','incBudgetPct',v=>+v||0);
+  bind('obg-lowutil','lowUtil',v=>+v||0); bind('obg-badacos','badAcos',v=>+v||0); bind('obg-decpct','decBudgetPct',v=>+v||0);
+  bind('obg-ms','minSpend',v=>+v||0); bind('obg-days','periodDays',v=>+v||1);
+  $('#obg-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#obg-export').onclick=()=>exportBudgetOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
+}
+function exportBudgetOptimization(product, rows){
+  if(!rows.length){ alert('No rows selected.'); return; }
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Daily Budget':r.newBudget}));
+  writeBulk(out, (product==='SB'?'sb_':'')+'budget_rebalancing_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} budget update(s).`);
 }
 /* ---- naming pattern detection: reuse the convention of an existing campaign in the same portfolio ---- */
 // Only matches campaigns using the given PREFIX (default BSQ = multi-keyword "bulk search query" campaigns).
