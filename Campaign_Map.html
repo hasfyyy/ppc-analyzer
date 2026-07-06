@@ -33,6 +33,9 @@
   .card + .card{margin-top:14px;}
 
   .ctrls{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end;}
+  .fitem{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12.5px; cursor:pointer; border-radius:7px;}
+  .fitem:hover{background:#faf6fe;}
+  .fitem input{accent-color:var(--pink); width:14px; height:14px;}
   .field{display:flex; flex-direction:column; gap:4px;}
   .field label{font-size:11px; color:var(--muted2); font-weight:500;}
   .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:12.5px; background:#fff;}
@@ -103,7 +106,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 11:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -179,27 +182,25 @@ function parseParentMap(wb){
   return map;
 }
 
-/* ============================ NAMING TEMPLATE (optional — user's own convention, not forced) ============================ */
-// {placeholders} get swapped for real values; anything else the user types (extra words, separators, prefixes)
-// is left as-is. Per-row edits always win over the template — the template is just a fast starting point.
-const NAME_PLACEHOLDERS=['program','matchtype','type','portfolio','brand','niche','product','asin','campaignid','adgroups'];
-let NAME_TEMPLATE='';
-let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides template)
-function renderNameTemplate(tmpl, r){
-  if(!tmpl) return '';
+/* ============================ NAMING STRUCTURE (optional — user's own convention, not forced) ============================ */
+// Same shape as Campaign Builder's manual naming fields (Prefix/Tip/Brand/ASIN/Agent/MonthYear/Agency) —
+// static fields you type once (Prefix, Agent, Month+Year, Agency) plus toggles for the per-row structural
+// bits (Type/Niche/ASIN) that come straight from what was already detected above. No free-text template
+// syntax to get wrong — every field is its own box, exactly like Campaign Builder.
+function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
+let NAME_FIELDS={prefix:'BSQ', includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), agency:'Insiders®'};
+let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured fields)
+function renderNameFromFields(fields, r){
   const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
-  const type=String(r.type||'').replace(' · MIXED','');
-  const map={
-    program:r.program, type, matchtype:type.replace(/^(SP|SB|SD)\s+/,''), portfolio:r.portfolioName||'',
-    brand:bt&&bt.brand||'', niche:bt&&bt.niche||'', product:bt&&bt.name||'',
-    asin:r.primaryAsin||(r.asins[0]||''), campaignid:r.campaignId, adgroups:r.adGroupCount
-  };
-  return tmpl.replace(/\{(\w+)\}/g,(m,k)=>{ const v=map[k.toLowerCase()]; return v!=null&&v!==''? v : ''; }).replace(/_{2,}/g,'_').replace(/^_|_$/g,'');
+  const matchtype=String(r.type||'').replace(' · MIXED','').replace(/^(SP|SB|SD)\s+/,'');
+  const parts=[fields.prefix];
+  if(fields.includeType) parts.push(matchtype);
+  if(fields.includeNiche) parts.push(bt&&bt.niche||'');
+  if(fields.includeAsin) parts.push(r.primaryAsin||(r.asins[0]||''));
+  parts.push(fields.agent, fields.monthyear, fields.agency);
+  return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_');
 }
-function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameTemplate(NAME_TEMPLATE, r); }
-// A template with no {placeholder} at all produces the SAME literal name for every row — the #1 mistake
-// when someone pastes a real campaign name as a "template" instead of parameterizing it.
-function templateHasNoPlaceholders(tmpl){ return !!tmpl && !/\{[a-zA-Z]+\}/.test(tmpl); }
+function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameFromFields(NAME_FIELDS, r); }
 
 /* ============================ PARSING ============================ */
 function sheetRows(wb, name){
@@ -470,18 +471,20 @@ function renderApp(rows){
   const noAsinHtml = noAsinFiltered.length? `<tr class="grouphead"><td class="l" colspan="11">❔ No ASIN detected &nbsp;${noAsinFiltered.length} campaign(s)</td></tr>` +
     noAsinFiltered.map(rowHtml).join('') : '';
 
-  const noPlaceholderWarning = templateHasNoPlaceholders(NAME_TEMPLATE)
-    ? `<div class="banner" style="margin-top:8px;background:#fef3c7;border-color:#fde68a;color:#92400e;">This template has no {placeholder} in it, so every row will get the exact same literal name. Add at least one varying token, e.g. {matchtype} or {asin}, so campaigns don't collide.</div>`
-    : '';
   $('#app').innerHTML = statsHtml + `
     <div class="card pad">
-      <div class="rowbar" style="margin:0;">
-        <div class="field grow"><label>Naming template (optional) — {program} {matchtype} {type} {portfolio} {brand} {niche} {product} {asin} {campaignid} {adgroups}, plus any free text/underscores you want</label>
-          <input type="text" id="cm-template" placeholder="e.g. BSQ_{matchtype}_{niche}_{asin}_20_JUL26_Insiders" value="${esc(NAME_TEMPLATE)}"></div>
+      <h3 class="sectitle">New naming structure (optional) — same fields as Campaign Builder</h3>
+      <div class="ctrls">
+        <div class="field"><label>Prefix</label><input type="text" id="cm-prefix" value="${esc(NAME_FIELDS.prefix)}" style="width:80px;"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-type" ${NAME_FIELDS.includeType?'checked':''}> Type (EXACT/BROAD/AUTO…)</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-niche" ${NAME_FIELDS.includeNiche?'checked':''}> Niche/Code (from Brand Table)</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-asin" ${NAME_FIELDS.includeAsin?'checked':''}> ASIN (parent)</label>
+        <div class="field"><label>Agent</label><input type="text" id="cm-agent" value="${esc(NAME_FIELDS.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
+        <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(NAME_FIELDS.monthyear)}" style="width:80px;"></div>
+        <div class="field"><label>Agency suffix</label><input type="text" id="cm-agency" value="${esc(NAME_FIELDS.agency)}" style="width:110px;"></div>
         <button class="btn ghost" id="cm-apply-template">Apply to all (clears manual edits)</button>
       </div>
-      <div class="hint" style="margin-top:4px;">Editing a "New Name" cell directly always overrides the template for that row — nothing here is forced, it's just a faster starting point. {matchtype} is the type without the SP/SB/SD prefix (e.g. EXACT, BROAD, AUTO).</div>
-      ${noPlaceholderWarning}
+      <div class="hint" style="margin-top:8px;">Builds each name as Prefix_Type_Niche_ASIN_Agent_MonthYear_Agency (unchecked/blank parts are skipped). Editing a "New Name" cell directly always overrides this for that one row.</div>
     </div>
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
@@ -499,7 +502,10 @@ function renderApp(rows){
   $('#cm-search').oninput=()=>renderApp(LAST_ROWS);
   $('#cm-fprogram').onchange=()=>renderApp(LAST_ROWS);
   $('#cm-export').onclick=()=>exportMap(rows, groups, mixedBucket, noAsinBucket);
-  $('#cm-template').oninput=e=>{ NAME_TEMPLATE=e.target.value; renderApp(LAST_ROWS); };
+  const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ NAME_FIELDS[key]=e.value; renderApp(LAST_ROWS); }; };
+  bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency');
+  const bindCheck=(id,key)=>{ const e=$('#'+id); if(e) e.onchange=()=>{ NAME_FIELDS[key]=e.checked; renderApp(LAST_ROWS); }; };
+  bindCheck('cm-inc-type','includeType'); bindCheck('cm-inc-niche','includeNiche'); bindCheck('cm-inc-asin','includeAsin');
   $('#cm-apply-template').onclick=()=>{ CUSTOM_NAMES={}; renderApp(LAST_ROWS); };
   document.querySelectorAll('.cm-name').forEach(inp=>inp.onchange=()=>{ CUSTOM_NAMES[inp.dataset.cid]=inp.value; });
 }
