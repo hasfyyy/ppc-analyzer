@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1592,6 +1592,12 @@ function computePlacementOptRows(product, filters){
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
   const enabledCamps=enabledCampaignIds(product);
+  // Multiple keywords share one campaign's placement %, so pushing/increasing it based on one campaign-wide
+  // signal is exactly the ambiguity that made the earlier bid↔placement cross-linking unreliable for
+  // multi-keyword campaigns. Restricting the positive actions (push/increase) to single-keyword campaigns
+  // keeps the 1:1 correlation the logic actually needs — multi-keyword campaigns still get bid-only fixes
+  // from the Bid Optimizer, and DEcreasing an overspending placement stays safe everywhere either way.
+  const singleKw=singleKwCampaigns(product);
   let rowsRaw=DATA.placements.filter(p=>p.product===product && enabledCamps.has(p.campaignId));
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
@@ -1603,18 +1609,19 @@ function computePlacementOptRows(product, filters){
   });
   let allRows=Object.values(byKey).map(e=>{
     const d=derive(e);
+    const isSingle=singleKw.has(e.campaignId);
     let action='none', newPct=e.percentage;
     if(e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){
       action='decrease'; newPct=Math.max(0, e.percentage-st.decStep);
-    } else if(st.pushEnabled && e.percentage<st.pushBelow){
+    } else if(isSingle && st.pushEnabled && e.percentage<st.pushBelow){
       // Below the floor % on a multi-keyword campaign, a placement rarely gets enough auctions to even
       // build up the clicks needed to judge its ACoS — so this doesn't wait for minClicks/orders like the
       // others. Push it up first; the ACoS-based rules above/below take over once it's actually competing.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
-    } else if(e.clicks>=st.minClicks && e.orders>=1 && d.acos<st.lowAcos){
+    } else if(isSingle && e.clicks>=st.minClicks && e.orders>=1 && d.acos<st.lowAcos){
       action='increase'; newPct=Math.min(900, e.percentage+st.incStep);
     }
-    return Object.assign({action,newPct},e,d);
+    return Object.assign({action,newPct,isSingle},e,d);
   });
   if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const rows=allRows.filter(r=>r.action!=='none');
@@ -1647,6 +1654,7 @@ function renderOptPlacements(){
   $('#opt-placements').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placement rules</h3>
+      <div class="hint" style="margin-bottom:10px;">Decrease applies everywhere. Increase and Push only apply to single-keyword (SUP) campaigns — a multi-keyword campaign's placement % is shared across every keyword in it, so raising it based on one campaign-wide signal is ambiguous; those campaigns get bid-only fixes from the Bid Optimizer above instead.</div>
       <div class="ctrls">
         <div class="slider"><div class="top"><span>Decrease if ACoS &gt;</span><b>${st.highAcos}%</b></div><input type="range" id="op-hi" min="10" max="150" step="5" value="${st.highAcos}"></div>
         <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec" value="${st.decStep}" style="width:90px;"></div>
@@ -1660,7 +1668,7 @@ function renderOptPlacements(){
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-pushen" ${st.pushEnabled?'checked':''}> Push placements below</label>
         <div class="field"><input type="number" id="op-pushbelow" value="${st.pushBelow}" style="width:80px;">%</div>
         <div class="field"><label>Push by (points)</label><input type="number" id="op-pushstep" value="${st.pushStep}" style="width:90px;"></div>
-        <div class="hint" style="align-self:center;">Multi-keyword campaigns especially — a placement stuck below this % rarely gets enough auctions to ever build up the clicks/ACoS that would trigger the increase rule above, so this pushes it regardless of performance.</div>
+        <div class="hint" style="align-self:center;">Single-keyword campaigns only (see below) — a placement stuck below this % rarely gets enough auctions to ever build up the clicks/ACoS that would trigger the increase rule above, so this pushes it regardless of performance.</div>
       </div>
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
