@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 14:26</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1342,7 +1342,19 @@ function renderOptBids(){
       else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); }
     }
     if(action==='none') return null;
-    const row=Object.assign({action,pct,newBid},t,d);
+    let cpcCapped=false;
+    if(action==='decrease'){
+      const dg=diag[t.campaignId];
+      const fixable=dg? dg.fixableViaPlacement : false;
+      if(dg && !fixable && dg.worst.cpc>0){
+        // Placement's stuck at 0% — the only way to actually stop winning THAT placement is to bid below
+        // what it costs there. Take whichever cut is more aggressive: the tier % or "just under that CPC".
+        const cpcCap=+(dg.worst.cpc*0.95).toFixed(2);
+        if(cpcCap<newBid){ newBid=Math.max(0.02, cpcCap); cpcCapped=true; }
+      }
+      pct=Math.round((1-newBid/t.bid)*100);
+    }
+    const row=Object.assign({action,pct,newBid,cpcCapped},t,d);
     if(action==='decrease'){
       const dg=diag[t.campaignId];
       row.placementFixable = dg? dg.fixableViaPlacement : false;
@@ -1363,6 +1375,7 @@ function renderOptBids(){
   const totals=agg(rows);
   const actionBadge=r=>{
     if(r.action!=='decrease') return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${r.pct}%</span>`;
+    if(r.cpcCapped) return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Placement is already at 0% — bid cut alone won't stop it winning there, so this bid was pushed below that placement's own CPC instead of just the tier %. Compensating ${r.compensate.length} good placement(s) so they don't lose competitiveness.">↓ -${r.pct}% (below CPC)</span>`;
     if(r.compensate && r.compensate.length) return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Placement is already at 0% — bid cut is the only fix left. Compensating ${r.compensate.length} good placement(s) so they don't lose competitiveness.">↓ -${r.pct}% (+comp.)</span>`;
     return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
   };
