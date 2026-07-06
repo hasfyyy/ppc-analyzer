@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:25</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1315,9 +1315,13 @@ function renderDuplicates(){
   const st=stFor('duplicates'); if(st.minSpend===undefined) st.minSpend=0;
   const enabledCampIds=enabledCampaignIds(S.product);
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && enabledCampIds.has(t.campaignId));
+  // Scoped to portfolio — the same literal text (especially the 4 generic Auto expressions: close-match,
+  // loose-match, substitutes, complements, which exist identically on EVERY auto campaign for EVERY product)
+  // isn't a real duplicate/cannibalization unless it's competing within the same product/portfolio.
   const byKey=new Map();
   src.forEach(t=>{
-    const key = t.kind==='keyword'? (String(t.text||'').toLowerCase().trim()+'|'+String(t.matchType||'').toLowerCase()) : ('pt|'+String(t.text||'').toLowerCase().trim());
+    const pf=String(t.portfolioName||'(No Portfolio)');
+    const key = pf+'|'+(t.kind==='keyword'? (String(t.text||'').toLowerCase().trim()+'|'+String(t.matchType||'').toLowerCase()) : ('pt|'+String(t.text||'').toLowerCase().trim()));
     if(!byKey.has(key)) byKey.set(key,[]);
     byKey.get(key).push(t);
   });
@@ -1359,7 +1363,7 @@ function renderDuplicates(){
       </div>
       ${groups.length? `<div class="tablewrap"><table>
         <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Bid</th></tr></thead>
-        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9">🧬 <b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
+        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9">🧬 <b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
           g.list.map(t=>`<tr>
             <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'disabled title="Best performer — pausing this one is disabled by default; uncheck a worse copy instead"':''}></td>
             <td class="l">${t===g.best?'<span class="badge tg">KEEP (best)</span>':''}</td>
