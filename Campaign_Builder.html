@@ -108,7 +108,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-06 11:58</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-06 12:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -485,10 +485,10 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
-function manualName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_'); }
+function manualName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_'); }
 // ignoreNaming lets the user force the manual fields even when an existing campaign's naming could be copied —
 // needed because the copied suffix can carry over stale/typo'd segments (e.g. a duplicated day code) from real data.
 function templateFor(cfg,match){
@@ -502,7 +502,7 @@ function templateFor(cfg,match){
 // suffix (with the month/year refreshed) instead of the manual fields — same principle as Harvesting.
 function buildName(cfg,match,num){
   const tmpl=templateFor(cfg,match);
-  if(tmpl){ const suffix=refreshDateToken(tmpl.suffix); const parts=[tmpl.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(suffix); return parts.filter(x=>x!=='').join('_'); }
+  if(tmpl){ const suffix=refreshDateToken(tmpl.suffix); const parts=[tmpl.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(suffix); return parts.filter(x=>x!=='').join(cfg.separator||'_'); }
   return manualName(cfg,match,num);
 }
 function kwGroups(cfg){
@@ -632,6 +632,7 @@ function renderCampaignCreate(){
         <div class="field"><label>Agent</label><input type="text" id="cc-agent" value="${esc(cfg.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
         <div class="field"><label>Month+Year</label><input type="text" id="cc-my" value="${esc(cfg.monthyear)}" style="width:80px;"></div>
         <div class="field"><label>Agency suffix</label><input type="text" id="cc-agency" value="${esc(cfg.agency)}" style="width:100px;"></div>
+        <div class="field"><label>Separator</label><input type="text" id="cc-sep" value="${esc(cfg.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Daily Budget ($)</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
@@ -661,7 +662,7 @@ function renderCampaignCreate(){
   const bindText=(id,key)=>{ const e=$('#'+id); e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
   bindText('cc-prefix','prefix'); bindText('cc-tip','tip'); bindText('cc-brand','brand'); bindText('cc-asin','asin');
   bindText('cc-agent','agent'); bindText('cc-budget','budget');
-  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-bid','bid'); bindText('cc-tos','tos');
+  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-sep','separator'); bindText('cc-bid','bid'); bindText('cc-tos','tos');
   bindText('cc-port','portfolioId'); bindText('cc-skus','skus'); bindText('cc-kw','keywords');
   bindText('cc-per','perCampaign');
   $('#cc-start').oninput=()=>{ cfg.startNum=$('#cc-start').value; cfg.startNumTouched=true; upd(); };
@@ -734,7 +735,7 @@ function updateBuilderOutputs(){
 
 /* ============================ SINGLE KW CAMPAIGNS ============================ */
 let SKW=null;
-function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{}}; } return SKW; }
+function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',separator:'_',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{}}; } return SKW; }
 function slugifyKeyword(kw){ return String(kw||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||'keyword'; }
 // Unlike the multi-keyword tab (where a clean numeric token reliably marks "here's the number, rest is static
 // suffix"), single-keyword campaign names conflate the keyword text and the static suffix with no delimiter.
@@ -765,8 +766,9 @@ function skwTemplate(cfg){
 // or, failing that, with the manual fields — either way the keyword itself is never optional.
 function buildSkwName(cfg, keyword, template){
   const slug=slugifyKeyword(keyword);
-  if(template){ const suffix=refreshDateToken(template.suffix); return [cfg.prefix, cfg.matchType, slug, suffix].filter(x=>x!=='').join('_'); }
-  return [cfg.prefix, cfg.matchType, slug, cfg.tip, cfg.brand, cfg.asin, cfg.agent, cfg.monthyear, cfg.agency].map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join('_');
+  const sep=cfg.separator||'_';
+  if(template){ const suffix=refreshDateToken(template.suffix); return [cfg.prefix, cfg.matchType, slug, suffix].filter(x=>x!=='').join(sep); }
+  return [cfg.prefix, cfg.matchType, slug, cfg.tip, cfg.brand, cfg.asin, cfg.agent, cfg.monthyear, cfg.agency].map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(sep);
 }
 function skwIssues(cfg){
   const iss=[];
@@ -831,6 +833,7 @@ function renderSingleKw(){
         <div class="field"><label>Agent</label><input type="text" id="skw-agent" value="${esc(cfg.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
         <div class="field"><label>Month+Year</label><input type="text" id="skw-my" value="${esc(cfg.monthyear)}" style="width:80px;"></div>
         <div class="field"><label>Agency suffix</label><input type="text" id="skw-agency" value="${esc(cfg.agency)}" style="width:100px;"></div>
+        <div class="field"><label>Separator</label><input type="text" id="skw-sep" value="${esc(cfg.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Daily Budget ($)</label><input type="number" id="skw-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
@@ -859,7 +862,7 @@ function renderSingleKw(){
   const upd=debounce(updateSkwOutputs,180);
   const bindText=(id,key)=>{ const e=$('#'+id); e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
   bindText('skw-prefix','prefix'); bindText('skw-tip','tip'); bindText('skw-brand','brand'); bindText('skw-asin','asin');
-  bindText('skw-agent','agent'); bindText('skw-my','monthyear'); bindText('skw-agency','agency');
+  bindText('skw-agent','agent'); bindText('skw-my','monthyear'); bindText('skw-agency','agency'); bindText('skw-sep','separator');
   bindText('skw-budget','budget'); bindText('skw-bid','bid'); bindText('skw-tos','tos');
   bindText('skw-port','portfolioId'); bindText('skw-skus','skus'); bindText('skw-kw','keywords');
   $('#skw-match').onchange=e=>{ cfg.matchType=e.target.value; upd(); };
