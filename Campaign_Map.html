@@ -99,7 +99,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 08:41</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-06 08:47</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -301,11 +301,15 @@ function processWorkbook(wb, brandTermsRaw){
   const brandTerms=linesOf(brandTermsRaw).map(x=>x.toLowerCase());
   const rows=Object.values(byCampaign).filter(c=>c.state==='enabled').map(c=>{
     const asins=[...c.asins];
-    const type=classify(c, brandTerms);
+    const mixed=asins.length>1;
+    const baseType=classify(c, brandTerms);
+    // Flag mixed campaigns right in the Type text (not just a separate column) — this is the field
+    // people scan first (in the UI and once exported/re-sorted in Excel), so the flag has to travel with it.
+    const type=mixed? baseType+' · MIXED' : baseType;
     return {
       campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type,
       adGroupCount:c.adGroups?c.adGroups.size:0, portfolioId:c.portfolioId, portfolioName:c.portfolioName,
-      asins, mixed: asins.length>1, primaryAsin: asins.length===1? asins[0] : (asins.length>1? null : null)
+      asins, mixed, primaryAsin: asins.length===1? asins[0] : null
     };
   });
   return rows;
@@ -352,6 +356,9 @@ function renderApp(rows){
     <div class="stat"><b>${noAsinBucket.length}</b><span>no ASIN found (SB awareness etc.)</span></div>
   </div>`;
 
+  // Deliberately no "proposed new name" column — renaming stays the user's/colleagues' call. What this
+  // exports is the raw structure (program, type, portfolio, brand/niche/product, ad groups) so anyone can
+  // build whatever naming convention they want on top of it.
   const rowHtml=r=>{
     const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
     return `<tr>
@@ -361,7 +368,10 @@ function renderApp(rows){
       <td>${esc(r.campaignId)}</td>
       <td>${r.adGroupCount}</td>
       <td class="l">${esc(r.portfolioName||'(No Portfolio)')}${r.portfolioId?` <span class="muted">#${esc(r.portfolioId)}</span>`:''}</td>
-      <td class="l">${bt? esc([bt.brand,bt.niche,bt.name].filter(Boolean).join(' · ')) : '<span class="muted">—</span>'}</td>
+      <td class="l">${bt&&bt.brand? esc(bt.brand) : '<span class="muted">—</span>'}</td>
+      <td class="l">${bt&&bt.niche? esc(bt.niche) : '<span class="muted">—</span>'}</td>
+      <td class="l">${bt&&bt.name? esc(bt.name) : '<span class="muted">—</span>'}</td>
+      <td class="l">${esc(r.asins.join(', '))}</td>
     </tr>`;
   };
 
@@ -372,7 +382,7 @@ function renderApp(rows){
     const inconsistentFlag = g.portfolioIds.size>1;
     const pfList=[...g.portfolioIds].map(x=>x.split('|||')[1]||x.split('|||')[0]||'(No Portfolio)');
     return `<tr class="grouphead">
-      <td class="l" colspan="7">
+      <td class="l" colspan="10">
         📦 <b>${esc(g.asin)}</b>${bt?` — ${esc([bt.brand,bt.niche,bt.name].filter(Boolean).join(' · '))}`:''}
         &nbsp;·&nbsp; ${camps.length} campaign(s)
         &nbsp;·&nbsp; ${inconsistentFlag? `<span class="tag warn">⚠ spread across ${g.portfolioIds.size} portfolios: ${esc(pfList.join(', '))}</span>` : `<span class="tag ok">✓ consistent portfolio: ${esc(pfList[0]||'(No Portfolio)')}</span>`}
@@ -381,7 +391,7 @@ function renderApp(rows){
   }).join('');
 
   const mixedFiltered=mixedBucket.filter(matchesFilter);
-  const mixedHtml = mixedFiltered.length? `<tr class="grouphead"><td class="l" colspan="7"><span class="tag mixed">⚠ MIXED — multiple ASINs, not auto-groupable</span> &nbsp;${mixedFiltered.length} campaign(s)</td></tr>` +
+  const mixedHtml = mixedFiltered.length? `<tr class="grouphead"><td class="l" colspan="10"><span class="tag mixed">⚠ MIXED — multiple ASINs, not auto-groupable</span> &nbsp;${mixedFiltered.length} campaign(s)</td></tr>` +
     mixedFiltered.map(r=>`<tr>
       <td class="l">${programTag(r.program)}</td>
       <td class="l">${esc(r.type)}</td>
@@ -389,11 +399,11 @@ function renderApp(rows){
       <td>${esc(r.campaignId)}</td>
       <td>${r.adGroupCount}</td>
       <td class="l">${esc(r.portfolioName||'(No Portfolio)')}</td>
-      <td class="l"><span class="muted">${r.asins.length} ASINs: </span>${esc(r.asins.join(', '))}</td>
+      <td class="l" colspan="3"><span class="muted">${r.asins.length} ASINs: </span>${esc(r.asins.join(', '))}</td>
     </tr>`).join('') : '';
 
   const noAsinFiltered=noAsinBucket.filter(matchesFilter);
-  const noAsinHtml = noAsinFiltered.length? `<tr class="grouphead"><td class="l" colspan="7">❔ No ASIN detected &nbsp;${noAsinFiltered.length} campaign(s)</td></tr>` +
+  const noAsinHtml = noAsinFiltered.length? `<tr class="grouphead"><td class="l" colspan="10">❔ No ASIN detected &nbsp;${noAsinFiltered.length} campaign(s)</td></tr>` +
     noAsinFiltered.map(rowHtml).join('') : '';
 
   $('#app').innerHTML = statsHtml + `
@@ -402,10 +412,11 @@ function renderApp(rows){
         <div class="field grow"><label>Search (name · ID · type · portfolio · ASIN)</label><input type="text" id="cm-search" placeholder="type to filter…" value="${esc(bySearch)}"></div>
         <div class="field"><label>Program</label><select id="cm-fprogram"><option value="">All</option><option ${byProgram==='SP'?'selected':''}>SP</option><option ${byProgram==='SB'?'selected':''}>SB</option><option ${byProgram==='SD'?'selected':''}>SD</option></select></div>
         <div class="spacer"></div>
+        <span class="hint">Structure only — no proposed rename. Pick a Brand Table account first if you want the Brand/Niche/Product columns filled in.</span>
         <button class="btn grad" id="cm-export">⬇ Export Map (.xlsx)</button>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th class="l">Program</th><th class="l">Type</th><th class="l">Campaign Name</th><th>Campaign ID</th><th>Ad Groups</th><th class="l">Current Portfolio</th><th class="l">Product (Brand Table) / ASINs</th></tr></thead>
+        <thead><tr><th class="l">Program</th><th class="l">Type</th><th class="l">Current Campaign Name</th><th>Campaign ID</th><th>Ad Groups</th><th class="l">Current Portfolio</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASINs</th></tr></thead>
         <tbody>${groupHtml}${mixedHtml}${noAsinHtml}</tbody>
       </table></div>
     </div>`;
@@ -420,11 +431,11 @@ function exportMap(rows, groups, mixedBucket, noAsinBucket){
   const push=(r,clusterAsin,portfolioConsistency)=>{
     const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : (clusterAsin? asinInfoFromBrandTable(clusterAsin) : null);
     out.push({
-      'Program':r.program,'Type':r.type,'Campaign Name':r.campaignName,'Campaign ID':r.campaignId,
+      'Program':r.program,'Type':r.type,'Current Campaign Name':r.campaignName,'Campaign ID':r.campaignId,
       'Ad Groups':r.adGroupCount,'Current Portfolio ID':r.portfolioId,'Current Portfolio Name':r.portfolioName,
+      'Brand':bt&&bt.brand?bt.brand:'','Niche/Code':bt&&bt.niche?bt.niche:'','Product Name':bt&&bt.name?bt.name:'',
       'ASIN Cluster':clusterAsin||(r.mixed?'MIXED':''),'ASINs':r.asins.join(', '),
-      'Mixed?':r.mixed?'YES':'NO','Portfolio Consistency':portfolioConsistency||'',
-      'Brand Table Match':bt? [bt.brand,bt.niche,bt.name].filter(Boolean).join(' · ') : ''
+      'Mixed?':r.mixed?'YES':'NO','Portfolio Consistency':portfolioConsistency||''
     });
   };
   groups.forEach(g=>{
