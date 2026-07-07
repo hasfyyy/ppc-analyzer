@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-06 17:28</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-07 09:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -404,20 +404,15 @@ function mergeIntoAccount(accName, data){
   btSave(); return A;
 }
 function renderBtSaveBar(bar, bd, fileName){
-  const names=Object.keys(BT.accounts);
-  const opts=names.map(n=>`<option ${n===BT.current?'selected':''}>${esc(n)}</option>`).join('');
+  // Intentionally does NOT list previously-saved accounts here — each file load should feel fresh,
+  // not surface unrelated accounts from earlier uploads. Full multi-account management still lives
+  // in Campaign Builder's Brand Table tab.
   bar.classList.remove('hidden');
-  bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's ASINs, SKUs &amp; portfolios for use in the <a href="Campaign_Builder.html" style="font-weight:700;">🏗️ Campaign Builder</a> tool: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). &nbsp;Account: <select id="btbar-acc" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;">${opts}<option value="__new">➕ New account…</option></select> <button class="btn ghost" id="btbar-delacc" title="Delete selected account" ${names.length?'':'disabled'} style="padding:6px 9px;">🗑</button> <button class="btn grad" id="btbar-save">Save</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
+  bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's ASINs, SKUs &amp; portfolios for use in the <a href="Campaign_Builder.html" style="font-weight:700;">🏗️ Campaign Builder</a> tool: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). <button class="btn grad" id="btbar-save">Save</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
   $('#btbar-save').onclick=()=>{
-    let acc=$('#btbar-acc').value; if(acc==='__new'||!acc){ acc=(prompt('New account name:', (fileName||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return; }
+    const acc=(prompt('Account name:', (fileName||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return;
     mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc);
     bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;">✓ Saved to <b>"${esc(acc)}"</b> (${A.products.length} products, ${A.portfolios.length} portfolios). <a href="Campaign_Builder.html">Open Campaign Builder →</a></div>`;
-  };
-  $('#btbar-delacc').onclick=()=>{
-    const acc=$('#btbar-acc').value; if(!acc||acc==='__new') return;
-    if(!confirm(`Delete account "${acc}" from the Brand Table? This removes its products and portfolios permanently.`)) return;
-    delete BT.accounts[acc]; if(BT.current===acc) BT.current=Object.keys(BT.accounts)[0]||''; btSave();
-    renderBtSaveBar(bar, bd, fileName);
   };
 }
 function stFor(tab){ return S.filt[tab] = S.filt[tab] || {}; }
@@ -1441,6 +1436,13 @@ function renderOptBids(){
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=enabledCampaignIds(S.product);
+  // Single-keyword campaigns get their placement suggestions folded right into this same table — one bid
+  // change is the campaign's only lever besides placement %, so seeing them apart (in a separate section
+  // below) meant changing a bid without knowing what was happening on its placements at the same time.
+  // Multi-keyword campaigns don't get this column — their placement % is shared across many keywords, so it
+  // stays exclusive to the Placement Optimizer section below.
+  const placementsByCamp={};
+  computePlacementOptRows(S.product, {}).rows.forEach(pr=>{ (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -1473,7 +1475,9 @@ function renderOptBids(){
       }
     }
     if(action==='none') return null;
-    return Object.assign({action,pct,newBid,reason},t,d);
+    const row=Object.assign({action,pct,newBid,reason},t,d);
+    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]) : null;
+    return row;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
@@ -1502,6 +1506,11 @@ function renderOptBids(){
     {key:'bid',label:'Current Bid',type:'money'},
     {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
     {key:'reason',label:'Why',l:true,noSort:true,cell:r=>r.reason? esc(r.reason) : '<span class="muted">—</span>'},
+    {key:'placementChanges',label:'Placement (this campaign)',l:true,noSort:true,cell:r=>{
+      if(r.placementChanges===null) return '<span class="muted">multi-kw — see below</span>';
+      if(!r.placementChanges.length) return '<span class="muted">no change suggested</span>';
+      return r.placementChanges.map(p=>`${esc(p.placementName)} ${p.action==='decrease'?'↓':'↑'} ${p.percentage}%→${p.newPct}%`).join(', ');
+    }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#opt-bids').innerHTML=`
@@ -1590,8 +1599,16 @@ function exportBidOptimization(product, rows){
   }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+  // Bundle each single-keyword campaign's placement suggestions once per (campaign, placement) — shown
+  // alongside the bid in the table, but only written once even if somehow selected more than once.
+  const plSeen=new Set(); let plCount=0;
+  rows.forEach(r=>{ (r.placementChanges||[]).forEach(p=>{
+    const k=r.campaignId+'|'+p.rawPlacement;
+    if(plSeen.has(k)) return; plSeen.add(k); plCount++;
+    out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
+  }); });
   writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} bid update(s).`);
+  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s)${plCount?` + ${plCount} placement update(s)`:''}.`);
 }
 // Used by the Placement Optimizer below.
 function computePlacementOptRows(product, filters){
