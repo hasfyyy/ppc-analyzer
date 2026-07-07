@@ -108,7 +108,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-07 10:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-07 11:01</div>
 </div>
 <script>
 'use strict';
@@ -463,7 +463,14 @@ let CFG=null;
 function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
-function manualName(cfg,match,num){ const parts=[cfg.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency); return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_'); }
+function manualName(cfg,match,num){
+  // Product Targeting campaigns use "PAT 1", "PAT 2" (prefix + space + number, no duplicate match segment)
+  // instead of the usual "PREFIX_MATCH_NUM" pattern.
+  const first = cfg.type==='pt'? (num!=null? `${cfg.prefix} ${num}` : String(cfg.prefix)) : null;
+  const parts = first!=null? [first] : (()=>{ const p=[cfg.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
+  parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency);
+  return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_');
+}
 // ignoreNaming lets the user force the manual fields even when an existing campaign's naming could be copied —
 // needed because the copied suffix can carry over stale/typo'd segments (e.g. a duplicated day code) from real data.
 function templateFor(cfg,match){
@@ -477,7 +484,13 @@ function templateFor(cfg,match){
 // suffix (with the month/year refreshed) instead of the manual fields — same principle as Harvesting.
 function buildName(cfg,match,num){
   const tmpl=templateFor(cfg,match);
-  if(tmpl){ const suffix=refreshDateToken(tmpl.suffix); const parts=[tmpl.prefix,match]; if(num!=null) parts.push(String(num)); parts.push(suffix); return parts.filter(x=>x!=='').join(cfg.separator||'_'); }
+  if(tmpl){
+    const suffix=refreshDateToken(tmpl.suffix);
+    const first = cfg.type==='pt'? (num!=null? `${tmpl.prefix} ${num}` : String(tmpl.prefix)) : null;
+    const parts = first!=null? [first] : (()=>{ const p=[tmpl.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
+    parts.push(suffix);
+    return parts.filter(x=>x!=='').join(cfg.separator||'_');
+  }
   return manualName(cfg,match,num);
 }
 function kwGroups(cfg){
