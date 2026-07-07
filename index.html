@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-07 14:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-07 15:56</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1824,7 +1824,9 @@ function renderOptBudget(){
 function exportBudgetOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
-  const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Daily Budget':r.newBudget}));
+  // Leaving Portfolio ID blank on a Campaign "Update" row makes Amazon's bulk import strip the
+  // campaign out of its portfolio, so it must be re-sent on every budget-only update too.
+  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Daily Budget':r.newBudget}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
   writeBulk(out, (product==='SB'?'sb_':'')+'budget_rebalancing_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} budget update(s).`);
 }
