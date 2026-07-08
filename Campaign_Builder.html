@@ -108,7 +108,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-07 15:56</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-08 17:01</div>
 </div>
 <script>
 'use strict';
@@ -736,7 +736,9 @@ function updateBuilderOutputs(){
 /* ============================ SINGLE KW CAMPAIGNS ============================ */
 let SKW=null;
 function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',separator:'_',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{}}; } return SKW; }
-function slugifyKeyword(kw){ return String(kw||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||'keyword'; }
+// Keeps the keyword's own spaces (instead of joining its words with "_") so it reads naturally in the
+// campaign name — only the segment separators around it (prefix/match/suffix) stay "_"-joined.
+function slugifyKeyword(kw){ return String(kw||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,40)||'keyword'; }
 // Unlike the multi-keyword tab (where a clean numeric token reliably marks "here's the number, rest is static
 // suffix"), single-keyword campaign names conflate the keyword text and the static suffix with no delimiter.
 // So this REQUIRES an explicit number right after the match type (e.g. "SUP_EXACT_1_…") to anchor where the
