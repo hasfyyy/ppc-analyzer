@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-13 18:07</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-13 18:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1444,9 +1444,7 @@ function renderOptBids(){
   if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
-  if(st.marginPct===undefined) st.marginPct=10;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
-  const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=enabledCampaignIds(S.product);
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
@@ -1461,23 +1459,6 @@ function renderOptBids(){
     // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates.
     if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=st.wakeMinImpr){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
-    }
-    // Single-keyword campaigns only: a "good" keyword sitting right at (or under) the CPC it's actually
-    // paying on its main placement is one lost auction away from going dark — nudge the bid to clear that
-    // CPC with a margin instead of leaving it exactly on the edge. Capped at the same "Increase by %" used
-    // for healthy-ACoS increases — the math behind clearing the CPC can call for a huge jump (bid was way
-    // under), but a flat step per pass is safer than lurching the bid straight to wherever that number lands;
-    // run the optimizer again next time and it'll step up again if it's still short.
-    if(action!=='decrease' && action!=='wake' && singleKw.has(t.campaignId)){
-      const dp=dominantPlacement(t.campaignId);
-      if(dp && dp.cpc>0){
-        const effectiveBid=t.bid*(1+dp.percentage/100);
-        if(effectiveBid<=dp.cpc*(1+st.marginPct/100)){
-          const targetBid=+((dp.cpc*(1+st.marginPct/100))/(1+dp.percentage/100)).toFixed(2);
-          const cappedBid=Math.min(targetBid, +(t.bid*(1+st.incPct/100)).toFixed(2));
-          if(cappedBid>t.bid){ newBid=cappedBid; pct=Math.round((newBid/t.bid-1)*100); action='increase'; reason=`margin over ${dp.placementName} CPC`; }
-        }
-      }
     }
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason},t,d);
@@ -1534,10 +1515,6 @@ function renderOptBids(){
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
-        <div class="field"><label>Single-KW margin over CPC %</label><input type="number" id="ob-margin" value="${st.marginPct}" style="width:90px;"></div>
-        <div class="hint" style="align-self:center;">For single-keyword (SUP) campaigns only: if the bid barely covers what it's actually paying on its main placement, bump it to clear that CPC by this margin — so a good keyword doesn't sit right on the edge of losing auctions.</div>
-      </div>
-      <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
         <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;"></div>
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
@@ -1568,7 +1545,7 @@ function renderOptBids(){
   bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
   bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
-  bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0); bind('ob-margin','marginPct',v=>+v||0);
+  bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
