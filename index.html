@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-08 17:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-13 18:07</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1448,13 +1448,6 @@ function renderOptBids(){
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=enabledCampaignIds(S.product);
-  // Single-keyword campaigns get their placement suggestions folded right into this same table — one bid
-  // change is the campaign's only lever besides placement %, so seeing them apart (in a separate section
-  // below) meant changing a bid without knowing what was happening on its placements at the same time.
-  // Multi-keyword campaigns don't get this column — their placement % is shared across many keywords, so it
-  // stays exclusive to the Placement Optimizer section below.
-  const placementsByCamp={};
-  computePlacementOptRows(S.product, {}).rows.forEach(pr=>{ (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -1488,7 +1481,6 @@ function renderOptBids(){
     }
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason},t,d);
-    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]) : null;
     return row;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
@@ -1518,11 +1510,6 @@ function renderOptBids(){
     {key:'bid',label:'Current Bid',type:'money'},
     {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
     {key:'reason',label:'Why',l:true,noSort:true,cell:r=>r.reason? esc(r.reason) : '<span class="muted">—</span>'},
-    {key:'placementChanges',label:'Placement (this campaign)',l:true,noSort:true,cell:r=>{
-      if(r.placementChanges===null) return '<span class="muted">multi-kw — see below</span>';
-      if(!r.placementChanges.length) return '<span class="muted">no change suggested</span>';
-      return r.placementChanges.map(p=>`${esc(p.placementName)} ${p.action==='decrease'?'↓':'↑'} ${p.percentage}%→${p.newPct}%`).join(', ');
-    }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#opt-bids').innerHTML=`
@@ -1611,16 +1598,8 @@ function exportBidOptimization(product, rows){
   }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
-  // Bundle each single-keyword campaign's placement suggestions once per (campaign, placement) — shown
-  // alongside the bid in the table, but only written once even if somehow selected more than once.
-  const plSeen=new Set(); let plCount=0;
-  rows.forEach(r=>{ (r.placementChanges||[]).forEach(p=>{
-    const k=r.campaignId+'|'+p.rawPlacement;
-    if(plSeen.has(k)) return; plSeen.add(k); plCount++;
-    out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
-  }); });
   writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s)${plCount?` + ${plCount} placement update(s)`:''}.`);
+  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s).`);
 }
 // Used by the Placement Optimizer below.
 function computePlacementOptRows(product, filters){
