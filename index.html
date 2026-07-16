@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-14 14:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-16 18:20</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1158,7 +1158,6 @@ function exportKwCheckCampaigns(byMatch, portfolioName, settings){
 /* ============================ PRODUCTS ============================ */
 function renderProducts(){
   const st=stFor('products');
-  if(st.pauseMode===undefined) st.pauseMode='all';
   if(st.pAcos===undefined) st.pAcos=50; if(st.pClicks===undefined) st.pClicks=15;
   if(st.pMaxOrders===undefined) st.pMaxOrders=0; if(st.pMinSpend===undefined) st.pMinSpend=0;
   let ads=adsByToggle();
@@ -1170,12 +1169,7 @@ function renderProducts(){
   const totals=agg(ads); const tot=derive(totals);
   rows.forEach(r=>{ r.spendPct=tot.spend?r.spend/tot.spend*100:0; r.salesPct=tot.sales?r.sales/tot.sales*100:0; });
   rows.forEach((r,i)=>r._uid='pr'+i);
-  const sel=selFor('products');
-  const selRows=rows.filter(r=>sel.has(r._uid));
-  const pauseRows = selRows.length? computeProductPauseRows(selRows.map(r=>r.asin), S.product, st.pauseMode, {acos:st.pAcos,clicks:st.pClicks,maxOrders:st.pMaxOrders,minSpend:st.pMinSpend}) : [];
-  const pauseCampCount = new Set(pauseRows.map(r=>r.campaignId)).size;
   const cols=[
-    {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
     {key:'asin',label:'Product',l:true,type:'text',cell:r=>`<span class="link">📦 ${esc(r.asin||'—')}</span>`,totalLabel:'Totals'},
     {key:'impressions',label:'Impressions',type:'int',fmtTotal:t=>fInt(t.impressions)},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
@@ -1191,6 +1185,39 @@ function renderProducts(){
     {key:'salesPct',label:'Sales %',type:'pct',fmtTotal:()=>'100%'},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'products',totals,sortDef:{key:'spend',dir:-1},onChange:renderProducts});
+
+  // ---- auto-detected underperformers: no manual pre-selection — thresholds flag candidates directly ----
+  // Evaluated per (ASIN, campaign) occurrence, not the aggregated ASIN totals above — a product can be fine
+  // overall but bleeding money in one specific campaign, so pausing happens at that occurrence, not everywhere.
+  const enabledCamps=enabledCampaignIds(S.product);
+  const candidates=ads.filter(p=>p.state==='enabled' && enabledCamps.has(p.campaignId)).filter(p=>{
+    if(p.spend<st.pMinSpend) return false;
+    const d=derive(agg([p]));
+    if(p.clicks>=st.pClicks && p.orders<=st.pMaxOrders) return true;
+    if(p.orders>=1 && (d.acos===Infinity||d.acos>st.pAcos)) return true;
+    return false;
+  }).map(p=>{
+    const d=derive(agg([p]));
+    const key=p.campaignId+'|'+p.adGroupId+'|'+(p.sku||p.asin||'');
+    const reason=(p.clicks>=st.pClicks && p.orders<=st.pMaxOrders)? `${fInt(p.clicks)} clicks, ${p.orders} order(s)` : `ACoS ${fAcos(d.acos)}`;
+    return Object.assign({_puid:key, reason},p,d);
+  });
+  // A manual uncheck must survive a slider tweak, so persistence is keyed on the stable (campaign+adgroup+sku)
+  // identity above, not on array position — thresholds add/remove rows but never reorder an existing occurrence.
+  const known=st.pauseKnown=st.pauseKnown||{};
+  candidates.forEach(c=>{ if(known[c._puid]===undefined) known[c._puid]=true; });
+  const pauseRows=candidates.filter(c=>known[c._puid]);
+  const pauseCampCount=new Set(pauseRows.map(r=>r.campaignId)).size;
+  const allChecked=candidates.length && candidates.every(c=>known[c._puid]);
+  const candRowsHtml=candidates.map(c=>`<tr>
+      <td class="cellchk"><input type="checkbox" data-ptog="${esc(c._puid)}" ${known[c._puid]?'checked':''}></td>
+      <td class="l"><span class="link">📦 ${esc(c.asin||c.sku||'—')}</span></td>
+      <td class="l">${esc(c.campaignName||c.campaignId)}</td>
+      <td>${fInt(c.clicks)}</td><td>${fMoney(c.spend)}</td><td class="num-green">${fMoney(c.sales)}</td><td>${fInt(c.orders)}</td>
+      <td class="${acosClass(c.acos)}">${fAcos(c.acos)}</td>
+      <td class="l">${esc(c.reason)}</td>
+    </tr>`).join('');
+
   $('#app').innerHTML=`
     <div class="kpis">
       ${kpi('Total Products',fInt(rows.length),'pink')}${kpi('Total Spend',fMoney(tot.spend))}${kpi('Total Sales',fMoney(tot.sales),'green')}
@@ -1205,50 +1232,32 @@ function renderProducts(){
       </div>
       <div id="pr-table">${tbl.html}</div>
     </div>
-    ${sel.size? `<div class="card pad">
-      <h3 class="sectitle">⏸ Pause ${sel.size} selected product(s)</h3>
-      <div class="ctrls">
-        <div class="seg" id="pr-mode">
-          <button data-m="all" class="${st.pauseMode==='all'?'active':''}">Pause everywhere</button>
-          <button data-m="threshold" class="${st.pauseMode==='threshold'?'active':''}">Only where threshold exceeded</button>
-        </div>
-      </div>
-      ${st.pauseMode==='threshold'? `<div class="ctrls" style="margin-top:12px;">
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">⏸ Underperforming Products (${candidates.length})</h3></div>
+      <div class="ctrls" style="margin-top:10px;">
         <div class="slider"><div class="top"><span>Min Clicks (0 sales)</span><b>≥ ${st.pClicks}</b></div><input type="range" id="pr-clicks" min="0" max="40" value="${st.pClicks}"></div>
         <div class="slider"><div class="top"><span>ACoS Threshold (has sales)</span><b>&gt; ${st.pAcos}%</b></div><input type="range" id="pr-acos" min="0" max="150" step="5" value="${st.pAcos}"></div>
         <div class="field"><label>Max Orders</label><input type="number" id="pr-mo" value="${st.pMaxOrders}"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="pr-ms" value="${st.pMinSpend}"></div>
       </div>
-      <div class="hint" style="margin-top:6px;">Evaluated per campaign occurrence (not the aggregated totals above) — a selected product is only paused in the specific campaign(s) where it's underperforming, not everywhere it runs.</div>`:
-        `<div class="hint" style="margin-top:6px;">Pauses this product's ad in every enabled campaign it currently runs in, regardless of performance.</div>`}
-      <div class="rowbar"><span class="countnote">Will pause <b>${pauseRows.length}</b> product ad placement(s) across <b>${pauseCampCount}</b> campaign(s).</span><div class="spacer"></div>
+      <div class="hint" style="margin-top:6px;">Flags any product ad matching a rule below, per campaign it runs in — not the aggregated totals above. Uncheck any you don't want paused.</div>
+      <div class="tablewrap" style="margin-top:10px;"><table><thead><tr>
+        <th class="cellchk"><input type="checkbox" id="pr-selall" ${allChecked?'checked':''}></th>
+        <th class="l">Product</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th class="l">Why</th>
+      </tr></thead><tbody>${candRowsHtml || `<tr><td colspan="9" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No products match the current thresholds.</td></tr>`}</tbody></table></div>
+      <div class="rowbar" style="margin-top:10px;"><span class="countnote">Will pause <b>${pauseRows.length}</b> product ad placement(s) across <b>${pauseCampCount}</b> campaign(s).</span><div class="spacer"></div>
         <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>⏸ Export Pause (${pauseRows.length})</button>
       </div>
-    </div>` : ''}`;
+    </div>`;
   tbl.wire($('#pr-table'));
-  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderProducts(); });
   $('#pr-port').onchange=e=>{st.port=e.target.value; renderProducts();};
   $('#pr-camp').onchange=e=>{st.camp=e.target.value; renderProducts();};
-  $('#pr-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),rows,'products');
-  const modeSeg=$('#pr-mode'); if(modeSeg) modeSeg.querySelectorAll('button').forEach(b=>b.onclick=()=>{ st.pauseMode=b.dataset.m; renderProducts(); });
+  $('#pr-dl').onclick=()=>exportCSV(cols,rows,'products');
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); renderProducts(); },200); };
   bind('pr-clicks','pClicks',v=>+v); bind('pr-acos','pAcos',v=>+v); bind('pr-mo','pMaxOrders',v=>+v||0); bind('pr-ms','pMinSpend',v=>+v||0);
+  document.querySelectorAll('[data-ptog]').forEach(cb=>cb.onchange=()=>{ known[cb.dataset.ptog]=cb.checked; renderProducts(); });
+  const selAll=$('#pr-selall'); if(selAll) selAll.onchange=()=>{ candidates.forEach(c=>known[c._puid]=selAll.checked); renderProducts(); };
   const pauseBtn=$('#pr-pause'); if(pauseBtn) pauseBtn.onclick=()=>exportProductsPause(pauseRows, S.product);
-}
-// Evaluated per (ASIN, campaign) occurrence, not the aggregated ASIN totals — a product can be fine overall
-// but wasting spend in one specific campaign, so pausing has to target that occurrence, not the whole ASIN.
-function computeProductPauseRows(asinList, product, mode, thresholds){
-  const selSet=new Set(asinList.map(a=>String(a||'').toLowerCase()));
-  const candidates=DATA.productAds.filter(p=>p.product===product && p.state==='enabled' && selSet.has(String(p.asin||p.sku||'').toLowerCase()));
-  if(mode==='all') return candidates;
-  const {acos,clicks,maxOrders,minSpend}=thresholds;
-  return candidates.filter(p=>{
-    if(p.spend<minSpend) return false;
-    const d=derive(agg([p]));
-    if(p.clicks>=clicks && p.orders<=maxOrders) return true;
-    if(p.orders>=1 && (d.acos===Infinity||d.acos>acos)) return true;
-    return false;
-  });
 }
 function exportProductsPause(pauseRows, product){
   if(!pauseRows.length){ alert('Nothing to pause with the current selection/thresholds.'); return; }
@@ -1444,8 +1453,17 @@ function renderOptBids(){
   if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
+  if(st.marginPct===undefined) st.marginPct=10;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
+  const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=enabledCampaignIds(S.product);
+  // Single-keyword campaigns get their placement suggestions folded right into this same table — one bid
+  // change is the campaign's only lever besides placement %, so seeing them apart (in a separate section
+  // below) meant changing a bid without knowing what was happening on its placements at the same time.
+  // Multi-keyword campaigns don't get this column — their placement % is shared across many keywords, so it
+  // stays exclusive to the Placement Optimizer section below.
+  const placementsByCamp={};
+  computePlacementOptRows(S.product, {}).rows.forEach(pr=>{ (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -1460,8 +1478,26 @@ function renderOptBids(){
     if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=st.wakeMinImpr){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
     }
+    // Single-keyword campaigns only: a "good" keyword sitting right at (or under) the CPC it's actually
+    // paying on its main placement is one lost auction away from going dark — nudge the bid to clear that
+    // CPC with a margin instead of leaving it exactly on the edge. Capped at the same "Increase by %" used
+    // for healthy-ACoS increases — the math behind clearing the CPC can call for a huge jump (bid was way
+    // under), but a flat step per pass is safer than lurching the bid straight to wherever that number lands;
+    // run the optimizer again next time and it'll step up again if it's still short.
+    if(action!=='decrease' && action!=='wake' && singleKw.has(t.campaignId)){
+      const dp=dominantPlacement(t.campaignId);
+      if(dp && dp.cpc>0){
+        const effectiveBid=t.bid*(1+dp.percentage/100);
+        if(effectiveBid<=dp.cpc*(1+st.marginPct/100)){
+          const targetBid=+((dp.cpc*(1+st.marginPct/100))/(1+dp.percentage/100)).toFixed(2);
+          const cappedBid=Math.min(targetBid, +(t.bid*(1+st.incPct/100)).toFixed(2));
+          if(cappedBid>t.bid){ newBid=cappedBid; pct=Math.round((newBid/t.bid-1)*100); action='increase'; reason=`margin over ${dp.placementName} CPC`; }
+        }
+      }
+    }
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason},t,d);
+    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]) : null;
     return row;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
@@ -1491,6 +1527,11 @@ function renderOptBids(){
     {key:'bid',label:'Current Bid',type:'money'},
     {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
     {key:'reason',label:'Why',l:true,noSort:true,cell:r=>r.reason? esc(r.reason) : '<span class="muted">—</span>'},
+    {key:'placementChanges',label:'Placement (this campaign)',l:true,noSort:true,cell:r=>{
+      if(r.placementChanges===null) return '<span class="muted">multi-kw — see below</span>';
+      if(!r.placementChanges.length) return '<span class="muted">no change suggested</span>';
+      return r.placementChanges.map(p=>`${esc(p.placementName)} ${p.action==='decrease'?'↓':'↑'} ${p.percentage}%→${p.newPct}%`).join(', ');
+    }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#opt-bids').innerHTML=`
@@ -1513,6 +1554,10 @@ function renderOptBids(){
         <div class="field"><label>Min Spend</label><input type="number" id="ob-ms" value="${st.minSpend}" style="width:80px;"></div>
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
+      </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <div class="field"><label>Single-KW margin over CPC %</label><input type="number" id="ob-margin" value="${st.marginPct}" style="width:90px;"></div>
+        <div class="hint" style="align-self:center;">For single-keyword (SUP) campaigns only: if the bid barely covers what it's actually paying on its main placement, bump it to clear that CPC by this margin — so a good keyword doesn't sit right on the edge of losing auctions.</div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
@@ -1545,7 +1590,7 @@ function renderOptBids(){
   bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
   bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
-  bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
+  bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0); bind('ob-margin','marginPct',v=>+v||0);
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
@@ -1575,8 +1620,16 @@ function exportBidOptimization(product, rows){
   }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
   const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+  // Bundle each single-keyword campaign's placement suggestions once per (campaign, placement) — shown
+  // alongside the bid in the table, but only written once even if somehow selected more than once.
+  const plSeen=new Set(); let plCount=0;
+  rows.forEach(r=>{ (r.placementChanges||[]).forEach(p=>{
+    const k=r.campaignId+'|'+p.rawPlacement;
+    if(plSeen.has(k)) return; plSeen.add(k); plCount++;
+    out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
+  }); });
   writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s).`);
+  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s)${plCount?` + ${plCount} placement update(s)`:''}.`);
 }
 // Used by the Placement Optimizer below.
 function computePlacementOptRows(product, filters){
