@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-16 18:20</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-16 19:11</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1163,28 +1163,8 @@ function renderProducts(){
   let ads=adsByToggle();
   if(st.port) ads=ads.filter(a=>(a.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) ads=ads.filter(a=>a.campaignName===st.camp);
-  const byAsin=new Map();
-  ads.forEach(a=>{ const k=a.asin||a.sku||'—'; if(!byAsin.has(k)) byAsin.set(k,{asin:a.asin||a.sku,impressions:0,clicks:0,spend:0,sales:0,orders:0}); const e=byAsin.get(k); e.impressions+=a.impressions;e.clicks+=a.clicks;e.spend+=a.spend;e.sales+=a.sales;e.orders+=a.orders; });
-  let rows=[...byAsin.values()].map(e=>{ const d=derive(e); return Object.assign(e,d,{spendPct:0,salesPct:0}); });
   const totals=agg(ads); const tot=derive(totals);
-  rows.forEach(r=>{ r.spendPct=tot.spend?r.spend/tot.spend*100:0; r.salesPct=tot.sales?r.sales/tot.sales*100:0; });
-  rows.forEach((r,i)=>r._uid='pr'+i);
-  const cols=[
-    {key:'asin',label:'Product',l:true,type:'text',cell:r=>`<span class="link">📦 ${esc(r.asin||'—')}</span>`,totalLabel:'Totals'},
-    {key:'impressions',label:'Impressions',type:'int',fmtTotal:t=>fInt(t.impressions)},
-    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
-    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
-    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
-    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
-    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
-    {key:'ctr',label:'CTR',type:'pct',fmtTotal:t=>fPct(derive(t).ctr)},
-    {key:'cvr',label:'CVR',type:'pct',fmtTotal:t=>fPct(derive(t).cvr)},
-    {key:'cpc',label:'CPC',type:'money',fmtTotal:t=>fMoney(derive(t).cpc)},
-    {key:'cpa',label:'CPA',type:'money',fmtTotal:t=>fMoney(derive(t).cpa)},
-    {key:'spendPct',label:'Spend %',type:'pct',fmtTotal:()=>'100%'},
-    {key:'salesPct',label:'Sales %',type:'pct',fmtTotal:()=>'100%'},
-  ];
-  const tbl=buildTable({columns:cols,rows,tab:'products',totals,sortDef:{key:'spend',dir:-1},onChange:renderProducts});
+  const totalProducts=new Set(ads.map(a=>a.asin||a.sku)).size;
 
   // ---- auto-detected underperformers: no manual pre-selection — thresholds flag candidates directly ----
   // Evaluated per (ASIN, campaign) occurrence, not the aggregated ASIN totals above — a product can be fine
@@ -1220,20 +1200,15 @@ function renderProducts(){
 
   $('#app').innerHTML=`
     <div class="kpis">
-      ${kpi('Total Products',fInt(rows.length),'pink')}${kpi('Total Spend',fMoney(tot.spend))}${kpi('Total Sales',fMoney(tot.sales),'green')}
+      ${kpi('Total Products',fInt(totalProducts),'pink')}${kpi('Total Spend',fMoney(tot.spend))}${kpi('Total Sales',fMoney(tot.sales),'green')}
       ${kpi('Overall ACoS',fAcos(tot.acos),'amber')}${kpi('Total Orders',fInt(tot.orders))}${kpi('Impressions',fInt(tot.impressions))}
       ${kpi('Clicks',fInt(tot.clicks))}${kpi('CTR',fPct(tot.ctr))}${kpi('CVR',fPct(tot.cvr))}${kpi('CPA',fMoney(tot.cpa))}
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Product Performance by ASIN</h3>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">⏸ Underperforming Products (${candidates.length})</h3>
         <div class="field"><label>Filter by Portfolio</label><select id="pr-port">${portOptions(st.port)}</select></div>
         <div class="field"><label>Filter by Campaign</label><select id="pr-camp">${campOptions(st.camp,S.product)}</select></div>
-        <div class="spacer"></div><button class="btn ghost" id="pr-dl">⬇ Download</button>
       </div>
-      <div id="pr-table">${tbl.html}</div>
-    </div>
-    <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">⏸ Underperforming Products (${candidates.length})</h3></div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="slider"><div class="top"><span>Min Clicks (0 sales)</span><b>≥ ${st.pClicks}</b></div><input type="range" id="pr-clicks" min="0" max="40" value="${st.pClicks}"></div>
         <div class="slider"><div class="top"><span>ACoS Threshold (has sales)</span><b>&gt; ${st.pAcos}%</b></div><input type="range" id="pr-acos" min="0" max="150" step="5" value="${st.pAcos}"></div>
@@ -1249,10 +1224,8 @@ function renderProducts(){
         <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>⏸ Export Pause (${pauseRows.length})</button>
       </div>
     </div>`;
-  tbl.wire($('#pr-table'));
   $('#pr-port').onchange=e=>{st.port=e.target.value; renderProducts();};
   $('#pr-camp').onchange=e=>{st.camp=e.target.value; renderProducts();};
-  $('#pr-dl').onclick=()=>exportCSV(cols,rows,'products');
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); renderProducts(); },200); };
   bind('pr-clicks','pClicks',v=>+v); bind('pr-acos','pAcos',v=>+v); bind('pr-mo','pMaxOrders',v=>+v||0); bind('pr-ms','pMinSpend',v=>+v||0);
   document.querySelectorAll('[data-ptog]').forEach(cb=>cb.onchange=()=>{ known[cb.dataset.ptog]=cb.checked; renderProducts(); });
