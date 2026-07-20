@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:44</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:56</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -566,7 +566,27 @@ function processWorkbook(wb, brandTermsRaw){
   parseSBSheets(wb, byCampaign);
   parseSDSheet(wb, byCampaign);
   const brandTerms=linesOf(brandTermsRaw).map(x=>x.toLowerCase());
-  const rows=Object.values(byCampaign).filter(c=>c.state==='enabled').map(c=>{
+  const enabledCampaigns=Object.values(byCampaign).filter(c=>c.state==='enabled');
+
+  // Pass 1: for each portfolio, collect the ASINs we're ALREADY confident about — from campaigns that
+  // advertise exactly one ASIN, or whose name embeds a parent ASIN directly. This account scopes one
+  // portfolio to one product/niche, so an ASIN independently confirmed there is real corroborating
+  // evidence for an otherwise-ambiguous multi-ASIN campaign in that SAME portfolio (see pass 2) — this is
+  // NOT the same as trusting portfolio membership blindly, which would make MIXED detection meaningless.
+  const portfolioConfirmed={};
+  enabledCampaigns.forEach(c=>{
+    const asins=[...c.asins];
+    if(!asins.length) return;
+    const nameAsin=(c.campaignName||'').match(/B0[A-Z0-9]{8}/i);
+    if(asins.length===1 || nameAsin){
+      const pfKey=c.portfolioName||'(No Portfolio)';
+      const set=portfolioConfirmed[pfKey]=portfolioConfirmed[pfKey]||new Set();
+      asins.forEach(a=>set.add(resolveParent(a)));
+      if(nameAsin) set.add(nameAsin[0].toUpperCase());
+    }
+  });
+
+  const rows=enabledCampaigns.map(c=>{
     const asins=[...c.asins];
     // Mixed means DIFFERENT PARENTS, not just multiple ASINs — several variations (colors/sizes) of the
     // same parent are a normal dedicated campaign, not a mixed one. Without a Parent/Child map every ASIN
@@ -574,14 +594,24 @@ function processWorkbook(wb, brandTermsRaw){
     let parents=[...new Set(asins.map(resolveParent))];
     let mixed=parents.length>1;
     let primaryAsin=parents.length===1? parents[0] : null;
-    // Without a working Parent/Child map, each child ASIN resolves to itself, so 4 variations of one
-    // product look like 4 different "parents". Some accounts name each single-product campaign after its
-    // own parent ASIN directly (e.g. "1R | SP | Kompressionsstrümpfe | B08D1VGRTH | Profit KW Top | Exact")
-    // — when that's the case, the campaign's own name is a stronger signal than the raw child ASIN count,
-    // so it overrides a false MIXED instead of requiring a separate map upload just to fix this one case.
     if(mixed){
+      // Without a working Parent/Child map, each child ASIN resolves to itself, so several variations of
+      // one product look like several different "parents". Two fallbacks, in order of confidence:
+      // 1) the campaign's own name embeds a parent ASIN directly (e.g. "...| B08D1VGRTH | Profit KW Top...")
       const nameAsin=(c.campaignName||'').match(/B0[A-Z0-9]{8}/i);
-      if(nameAsin){ mixed=false; primaryAsin=nameAsin[0].toUpperCase(); parents=[primaryAsin]; }
+      if(nameAsin){
+        mixed=false; primaryAsin=nameAsin[0].toUpperCase(); parents=[primaryAsin];
+      } else {
+        // 2) every one of this campaign's ASINs was ALSO independently confirmed (pass 1, above) within
+        // this same portfolio — i.e. each one already has its own dedicated single-ASIN or name-ASIN
+        // campaign here, so they're a recognized family, not just "happen to share a portfolio".
+        const confirmed=portfolioConfirmed[c.portfolioName||'(No Portfolio)'];
+        if(confirmed && asins.every(a=>confirmed.has(resolveParent(a)))){
+          mixed=false;
+          primaryAsin=parentAsinFromPortfolioName(c.portfolioName) || asins[0];
+          parents=[primaryAsin];
+        }
+      }
     }
     const baseType=classify(c, brandTerms);
     // Flag mixed campaigns right in the Type text (not just a separate column) — this is the field
