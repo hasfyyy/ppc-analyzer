@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:54</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -369,7 +369,10 @@ function parseSPSheet(wb, byCampaign){
     } else if(ent==='ad group'){
       const agid=String(s.get(row,['ad group id'])||''); if(agid) c.adGroups.add(agid);
     } else if(ent==='product ad'){
-      const asin=String(s.get(row,['asin'])||'').trim(); if(asin) c.asins.add(asin);
+      // A paused/archived Product ad's ASIN shouldn't count toward "mixed" — a campaign that used to
+      // advertise several products but paused all but one is a dedicated campaign now, not a mixed one.
+      const st=String(s.get(row,['state'])||'').trim().toLowerCase();
+      const asin=String(s.get(row,['asin'])||'').trim(); if(asin && st==='enabled') c.asins.add(asin);
     } else if(ent==='keyword'){
       const mt=String(s.get(row,['match type'])||'').trim();
       if(mt) c.matchTypes.add(mt);
@@ -397,9 +400,13 @@ function parseSDSheet(wb, byCampaign){
       c.startDate=String(s.get(row,['start date'])||c.startDate).trim();
     } else if(ent==='ad group'){
       const agid=String(s.get(row,['ad group id'])||''); if(agid) c.adGroups.add(agid);
-      const asin=String(s.get(row,['asin'])||'').trim(); if(asin) c.asins.add(asin);
+      const agSt=String(s.get(row,['state'])||'').trim().toLowerCase();
+      const agAsin=String(s.get(row,['asin'])||'').trim(); if(agAsin && agSt==='enabled') c.asins.add(agAsin);
     } else if(ent==='product ad'){
-      const asin=String(s.get(row,['asin'])||'').trim(); if(asin) c.asins.add(asin);
+      // Same reasoning as SP: a paused product ad's ASIN shouldn't make an otherwise single-product
+      // campaign look mixed.
+      const st=String(s.get(row,['state'])||'').trim().toLowerCase();
+      const asin=String(s.get(row,['asin'])||'').trim(); if(asin && st==='enabled') c.asins.add(asin);
     } else if(ent==='audience targeting'){
       c.hasAudience=true;
     } else if(ent==='contextual targeting'){
@@ -439,9 +446,14 @@ function parseSBSheets(wb, byCampaign){
         c.hasPT=true;
       } else if(['video ad','brand video ad'].includes(ent)){
         c.isVideo=true;
-        extractAsinsFromText(s.get(row,['creative asins','landing page asins'])).forEach(a=>c.asins.add(a));
+        // Same reasoning as SP/SD product ads — a paused creative's ASINs shouldn't count toward "mixed".
+        if(String(s.get(row,['state'])||'').trim().toLowerCase()==='enabled'){
+          extractAsinsFromText(s.get(row,['creative asins','landing page asins'])).forEach(a=>c.asins.add(a));
+        }
       } else if(['product collection ad','auto collection ad'].includes(ent)){
-        extractAsinsFromText(s.get(row,['creative asins','landing page asins'])).forEach(a=>c.asins.add(a));
+        if(String(s.get(row,['state'])||'').trim().toLowerCase()==='enabled'){
+          extractAsinsFromText(s.get(row,['creative asins','landing page asins'])).forEach(a=>c.asins.add(a));
+        }
       } else if(ent==='store spotlight ad'){
         c.isAwarenessOnly=true;
       }
