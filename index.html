@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-20 12:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-20 13:13</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1582,6 +1582,7 @@ function computePlacementOptRows(product, filters){
   if(st.highAcos===undefined) st.highAcos=50; if(st.decStep===undefined) st.decStep=10;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
+  if(st.zeroOrderClicks===undefined) st.zeroOrderClicks=9;
   const enabledCamps=enabledCampaignIds(product);
   // Multiple keywords share one campaign's placement %, so pushing/increasing it based on one campaign-wide
   // signal is exactly the ambiguity that made the earlier bid↔placement cross-linking unreliable for
@@ -1602,7 +1603,11 @@ function computePlacementOptRows(product, filters){
     const d=derive(e);
     const isSingle=singleKw.has(e.campaignId);
     let action='none', newPct=e.percentage;
-    if(e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)){
+    // Below zeroOrderClicks there isn't enough traffic yet to tell a slow starter from a dead end, so a
+    // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
+    // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
+    // even though there's no ACoS to compute (division by zero sales).
+    if((e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)) || (e.orders===0 && e.clicks>=st.zeroOrderClicks)){
       action='decrease'; newPct=Math.max(0, e.percentage-st.decStep);
     } else if(isSingle && st.pushEnabled && e.percentage<st.pushBelow){
       // Below the floor % on a multi-keyword campaign, a placement rarely gets enough auctions to even
@@ -1661,6 +1666,10 @@ function renderOptPlacements(){
         <div class="field"><label>Push by (points)</label><input type="number" id="op-pushstep" value="${st.pushStep}" style="width:90px;"></div>
         <div class="hint" style="align-self:center;">Single-keyword campaigns only (see below) — a placement stuck below this % rarely gets enough auctions to ever build up the clicks/ACoS that would trigger the increase rule above, so this pushes it regardless of performance.</div>
       </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <div class="field"><label>Cut placement if 0 orders at ≥ clicks</label><input type="number" id="op-zeroclicks" value="${st.zeroOrderClicks}" style="width:80px;"></div>
+        <div class="hint" style="align-self:center;">Below this many clicks a zero-order placement still gets the benefit of the doubt (push/increase can still apply). At or above it, spend with zero orders is treated as bad performance and gets decreased instead — even without enough sales to compute an ACoS.</div>
+      </div>
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
@@ -1678,7 +1687,7 @@ function renderOptPlacements(){
   $('#op-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-dec','decStep',v=>+v||0); bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
-  bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
+  bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0); bind('op-zeroclicks','zeroOrderClicks',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#op-camp').oninput=debounce(()=>{st.camp=$('#op-camp').value; upd();},220);
