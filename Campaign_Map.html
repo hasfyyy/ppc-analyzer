@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 15:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:31</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -272,7 +272,11 @@ function parseExample(example){
   else if(isoym){ dateToken=isoym[0]; dateStyle='YYYY-MM'; }
   else if(myYYYY){ dateToken=myYYYY[0]; dateStyle='MM-YYYY'; }
   const mtMatch=example.match(/EXACT|PHRASE|BROAD/i);
-  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken, dateStyle, mtToken:mtMatch?mtMatch[0]:null};
+  // Unlike ASIN/date/match-type, a niche/portfolio code can't be auto-detected from an arbitrary example —
+  // there's no fixed shape to spot. So it's an explicit placeholder the user types themselves: {NICHE} (or
+  // {PORT}/{PORTFOLIO}), which gets swapped for that campaign's portfolio-derived code at generation time.
+  const nicheMatch=example.match(/\{(NICHE|PORT|PORTFOLIO)\}/i);
+  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken, dateStyle, mtToken:mtMatch?mtMatch[0]:null, nicheToken:nicheMatch?nicheMatch[0]:null};
 }
 function nameFromExample(cfg, r){
   const tpl=parseExample(cfg.example);
@@ -289,6 +293,9 @@ function nameFromExample(cfg, r){
   if(tpl.mtToken){
     const realMt=matchTypeOf(r);
     if(realMt) out=out.split(tpl.mtToken).join(matchCase(tpl.mtToken, realMt));
+  }
+  if(tpl.nicheToken){
+    out=out.split(tpl.nicheToken).join(nicheFromPortfolioName(r.portfolioName));
   }
   return out;
 }
@@ -647,18 +654,18 @@ function renderApp(rows){
     </div>
     <div class="card pad">
       <h3 class="sectitle">New naming — by example (optional, more precise than the structure above)</h3>
-      <div class="hint" style="margin-bottom:10px;">Paste one real (or made-up) example campaign name per type. The ASIN and the Month+Year token inside it are auto-detected and swapped per campaign — everything else you typed (prefix, agent code, agency suffix, separators) stays exactly as-is. Leave a row blank to keep using the structured template above for that type.</div>
+      <div class="hint" style="margin-bottom:10px;">Paste one real (or made-up) example campaign name per type. The ASIN and the Month+Year token inside it are auto-detected and swapped per campaign — everything else you typed (prefix, agent code, agency suffix, separators) stays exactly as-is. Need the portfolio's code/niche in there too? Type <code>{NICHE}</code> where you want it — it can't be auto-detected like the ASIN/date, so it's a placeholder you type on purpose. Leave a row blank to keep using the structured template above for that type.</div>
       <div class="tablewrap"><table>
         <thead><tr><th class="l">Type</th><th class="l">Example campaign name</th><th class="l">Detected</th><th class="l">Own creation month</th><th class="l"></th></tr></thead>
         <tbody>${NAME_CATEGORIES.map(c=>{
           const cfg=NAME_EXAMPLES[c.key];
           const tpl=parseExample(cfg.example);
           const detected = tpl
-            ? `${tpl.asinToken?`ASIN <code>${esc(tpl.asinToken)}</code>`:'<span class="muted">no ASIN found</span>'} · ${tpl.dateToken?`Date <code>${esc(tpl.dateToken)}</code>`:'<span class="muted">no date found</span>'}`
+            ? `${tpl.asinToken?`ASIN <code>${esc(tpl.asinToken)}</code>`:'<span class="muted">no ASIN found</span>'} · ${tpl.dateToken?`Date <code>${esc(tpl.dateToken)}</code>`:'<span class="muted">no date found</span>'} · ${tpl.nicheToken?`Niche <code>${esc(tpl.nicheToken)}</code>`:'<span class="muted">no {NICHE}</span>'}`
             : '<span class="muted">—</span>';
           return `<tr>
             <td class="l">${esc(c.label)}</td>
-            <td class="l"><input type="text" data-ex="${c.key}" value="${esc(cfg.example)}" placeholder="e.g. BSQ_EXACT_B0D877RD1K_JUL26_Insiders®" style="width:320px;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;"></td>
+            <td class="l"><input type="text" data-ex="${c.key}" value="${esc(cfg.example)}" placeholder="e.g. BSQ_EXACT_{NICHE}_B0D877RD1K_JUL26_Insiders®" style="width:340px;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;"></td>
             <td class="l" style="font-size:11px;">${detected}</td>
             <td class="l"><input type="checkbox" data-exdate="${c.key}" ${cfg.useCreationDate?'checked':''}></td>
             <td class="l"><button class="btn ghost" data-exapply="${c.key}" style="font-size:11px;padding:5px 9px;">Apply (clears manual edits for this type)</button></td>
