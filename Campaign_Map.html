@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:49</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:54</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -200,6 +200,19 @@ function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL',
 function defaultTemplate(prefix){ return {prefix, includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), useCreationDate:false, agency:'Insiders®', separator:'_'}; }
 let NAME_TEMPLATES={SP:defaultTemplate('BSQ'), SB:defaultTemplate('SB'), SD:defaultTemplate('SD')};
 let TEMPLATE_TAB='SP'; // which program's template is shown/edited in the UI right now
+// Per-portfolio review gate — lets you spot-check the auto-detected Niche/Code and Parent ASIN one
+// portfolio at a time before trusting the export; unchecking a portfolio excludes its campaigns from the
+// bulk export without hiding them from the preview above (so you can still see what the name WOULD be).
+let PORTFOLIO_CHECK={}; // portfolioName -> boolean, default true (opt-out, not opt-in)
+function portfolioSummary(rows){
+  const map=new Map();
+  rows.forEach(r=>{
+    const pf=r.portfolioName||'(No Portfolio)';
+    if(!map.has(pf)) map.set(pf,{portfolioName:pf,count:0});
+    map.get(pf).count++;
+  });
+  return [...map.values()].sort((a,b)=>b.count-a.count);
+}
 let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured template)
 // Pulls the short code straight out of the portfolio name (e.g. "01. HPR | Visual Timer for Kids | ASIN"
 // -> "HPR") — no dependency on Campaign Builder's Brand Table, works right off the uploaded bulk alone.
@@ -649,6 +662,7 @@ function renderApp(rows){
   const noAsinHtml = noAsinFiltered.length? `<tr class="grouphead"><td class="l" colspan="11">❔ No ASIN detected &nbsp;${noAsinFiltered.length} campaign(s)</td></tr>` +
     noAsinFiltered.map(rowHtml).join('') : '';
 
+  const portfolios=portfolioSummary(rows);
   const tf=templateFor(TEMPLATE_TAB);
   $('#app').innerHTML = statsHtml + `
     <div class="card pad">
@@ -695,6 +709,24 @@ function renderApp(rows){
       </table></div>
     </div>
     <div class="card pad">
+      <h3 class="sectitle">Portfolio check (${portfolios.length})</h3>
+      <div class="hint" style="margin-bottom:10px;">Spot-check the auto-detected Niche/Code and Parent ASIN per portfolio before exporting. Uncheck a portfolio to exclude its campaigns from the bulk export — the preview below still shows what the name would be, it just won't be sent.</div>
+      <div class="tablewrap"><table>
+        <thead><tr><th class="cellchk"><input type="checkbox" id="pf-selall"></th><th class="l">Portfolio</th><th class="l">Detected Niche/Code</th><th class="l">Detected Parent ASIN</th><th>Campaigns</th></tr></thead>
+        <tbody>${portfolios.map(p=>{
+          const niche=nicheFromPortfolioName(p.portfolioName);
+          const parentAsin=parentAsinFromPortfolioName(p.portfolioName);
+          return `<tr>
+            <td class="cellchk"><input type="checkbox" data-pfchk="${esc(p.portfolioName)}" ${PORTFOLIO_CHECK[p.portfolioName]!==false?'checked':''}></td>
+            <td class="l">${esc(p.portfolioName)}</td>
+            <td class="l">${niche?esc(niche):'<span class="muted">—</span>'}</td>
+            <td class="l">${parentAsin?`<code>${esc(parentAsin)}</code>`:'<span class="muted">not found</span>'}</td>
+            <td>${p.count}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>
+    <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
         <div class="field grow"><label>Search (name · ID · type · portfolio · ASIN)</label><input type="text" id="cm-search" placeholder="type to filter…" value="${esc(bySearch)}"></div>
         <div class="field"><label>Program</label><select id="cm-fprogram"><option value="">All</option><option ${byProgram==='SP'?'selected':''}>SP</option><option ${byProgram==='SB'?'selected':''}>SB</option><option ${byProgram==='SD'?'selected':''}>SD</option></select></div>
@@ -712,6 +744,12 @@ function renderApp(rows){
   $('#cm-fprogram').onchange=()=>renderApp(LAST_ROWS);
   $('#cm-export').onclick=()=>exportBulkRename(rows);
   $('#cm-export-report').onclick=()=>exportReport(rows, groups, mixedBucket, noAsinBucket);
+  document.querySelectorAll('[data-pfchk]').forEach(cb=>cb.onchange=()=>{ PORTFOLIO_CHECK[cb.dataset.pfchk]=cb.checked; renderApp(LAST_ROWS); });
+  const pfSelAll=$('#pf-selall');
+  if(pfSelAll){
+    pfSelAll.checked = portfolios.every(p=>PORTFOLIO_CHECK[p.portfolioName]!==false);
+    pfSelAll.onchange=()=>{ portfolios.forEach(p=>PORTFOLIO_CHECK[p.portfolioName]=pfSelAll.checked); renderApp(LAST_ROWS); };
+  }
   document.querySelectorAll('[data-ptab]').forEach(b=>b.onclick=()=>{ TEMPLATE_TAB=b.dataset.ptab; renderApp(LAST_ROWS); });
   const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ templateFor(TEMPLATE_TAB)[key]=e.value; renderApp(LAST_ROWS); }; };
   bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency'); bindField('cm-sep','separator');
@@ -743,6 +781,9 @@ const PROGRAM_LABEL={SP:'Sponsored Products', SB:'Sponsored Brands', SD:'Sponsor
 function exportBulkRename(rows){
   const bySheet={SP:[], SB:[], SD:[]};
   rows.forEach(r=>{
+    // Portfolios unchecked in the review checklist are excluded here even though their preview names still
+    // show above — export is the point where an unverified portfolio actually gets held back.
+    if(PORTFOLIO_CHECK[r.portfolioName||'(No Portfolio)']===false) return;
     const newName=nameFor(r);
     if(!newName || newName===r.campaignName) return; // nothing changed — skip, don't send a no-op Update row
     (bySheet[r.program]=bySheet[r.program]||[]).push(bulkRow({'Product':PROGRAM_LABEL[r.program]||'Sponsored Products','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Campaign Name':newName}));
