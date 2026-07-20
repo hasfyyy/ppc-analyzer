@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -142,6 +142,7 @@ function $(s){ return document.querySelector(s); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function normH(h){ h=String(h||'').toLowerCase(); h=h.replace(/\(.*?\)/g,''); h=h.replace(/[^a-z0-9]+/g,' '); return h.trim(); }
 function linesOf(s){ return String(s||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean); }
+function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
 
 let CAMPS=[]; // flat list of enabled campaign summaries
 let BT={accounts:{}}; // read-only Brand Table, shared localStorage — for ASIN -> name/niche enrichment only
@@ -215,7 +216,68 @@ function renderNameFromFields(fields, r){
   return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(sep);
 }
 function templateFor(program){ return NAME_TEMPLATES[program] || NAME_TEMPLATES.SP; }
-function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameFromFields(templateFor(r.program), r); }
+
+// ---- Naming by example: finer-grained than the per-program templates above — one example per actual
+// campaign TYPE (AUTO / EXACT / PHRASE / BROAD / Product Targeting, split by SP vs SB), since match type
+// often needs its own real-world naming convention, not just a "Type" checkbox slotted into one shared shape.
+const NAME_CATEGORIES=[
+  {key:'SP_AUTO', label:'SP — Auto'},
+  {key:'SP_EXACT', label:'SP — Exact'},
+  {key:'SP_PHRASE', label:'SP — Phrase'},
+  {key:'SP_BROAD', label:'SP — Broad'},
+  {key:'SP_PT', label:'SP — Product Targeting'},
+  {key:'SB_EXACT', label:'SB — Exact'},
+  {key:'SB_PHRASE', label:'SB — Phrase'},
+  {key:'SB_BROAD', label:'SB — Broad'},
+  {key:'SB_PT', label:'SB — Product Targeting'},
+];
+let NAME_EXAMPLES={}; NAME_CATEGORIES.forEach(c=>NAME_EXAMPLES[c.key]={example:'', useCreationDate:false});
+// Video (SBV) campaigns share the same naming need as their non-video SB counterparts — match type is what
+// drives the convention, not the ad format — so they fall into the same SB_EXACT/PHRASE/BROAD/PT buckets.
+function categoryFor(r){
+  const t=String(r.type||'').replace(' · MIXED','');
+  if(/^SP AUTO/.test(t)) return 'SP_AUTO';
+  if(/^SP (BRND )?EXACT$/.test(t)) return 'SP_EXACT';
+  if(/^SP (BRND )?PHRASE$/.test(t)) return 'SP_PHRASE';
+  if(/^SP (BRND )?BROAD$/.test(t)) return 'SP_BROAD';
+  if(t==='SP PT') return 'SP_PT';
+  if(t==='SBV EXACT'||t==='SB EXACT') return 'SB_EXACT';
+  if(t==='SBV PHRASE'||t==='SB PHRASE') return 'SB_PHRASE';
+  if(t==='SBV BROAD'||t==='SB BROAD') return 'SB_BROAD';
+  if(t==='SBV PT'||t==='SB PT') return 'SB_PT';
+  return null; // MIXED MATCH / unclassified / SD — no example category, falls back to the program template
+}
+// Pulls the ASIN and Month+Year tokens out of a typed example — everything else in the string (prefix,
+// agent code, agency suffix, separators) is kept 100% literal, exactly as the user typed it.
+function parseExample(example){
+  if(!example) return null;
+  const asinMatch=example.match(/B0[A-Z0-9]{8}/i);
+  // NOT \b — these tokens sit between underscores ("_JUL26_"), and \b never fires between two word
+  // characters (underscore counts as one), so a boundary-based match silently failed on every real name.
+  const dateMatch=example.match(/(?<![A-Za-z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(?!\d)/i);
+  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken:dateMatch?dateMatch[0]:null};
+}
+function nameFromExample(cfg, r){
+  const tpl=parseExample(cfg.example);
+  if(!tpl) return null;
+  let out=tpl.raw;
+  const asin=r.primaryAsin||(r.asins[0]||'');
+  if(tpl.asinToken && asin) out=out.split(tpl.asinToken).join(asin);
+  if(tpl.dateToken){
+    const my = cfg.useCreationDate && r.createdMonthYear ? r.createdMonthYear : tpl.dateToken;
+    out=out.split(tpl.dateToken).join(my);
+  }
+  return out;
+}
+function nameFor(r){
+  if(CUSTOM_NAMES[r.campaignId] != null) return CUSTOM_NAMES[r.campaignId];
+  const cat=categoryFor(r);
+  if(cat && NAME_EXAMPLES[cat].example){
+    const byExample=nameFromExample(NAME_EXAMPLES[cat], r);
+    if(byExample) return byExample;
+  }
+  return renderNameFromFields(templateFor(r.program), r);
+}
 
 /* ============================ PARSING ============================ */
 function sheetRows(wb, name){
@@ -550,6 +612,27 @@ function renderApp(rows){
       <div class="hint" style="margin-top:8px;">Builds each name as Prefix[sep]Type[sep]Niche[sep]ASIN[sep]Agent[sep]MonthYear[sep]Agency (unchecked/blank parts are skipped). Separator defaults to "_" but can be "|" or anything else you type. Editing a "New Name" cell directly always overrides this for that one row. "Use each campaign's own creation month" reads the real Start Date per campaign instead of one shared Month+Year — falls back to the text field if a campaign has no Start Date.</div>
     </div>
     <div class="card pad">
+      <h3 class="sectitle">New naming — by example (optional, more precise than the structure above)</h3>
+      <div class="hint" style="margin-bottom:10px;">Paste one real (or made-up) example campaign name per type. The ASIN and the Month+Year token inside it are auto-detected and swapped per campaign — everything else you typed (prefix, agent code, agency suffix, separators) stays exactly as-is. Leave a row blank to keep using the structured template above for that type.</div>
+      <div class="tablewrap"><table>
+        <thead><tr><th class="l">Type</th><th class="l">Example campaign name</th><th class="l">Detected</th><th class="l">Own creation month</th><th class="l"></th></tr></thead>
+        <tbody>${NAME_CATEGORIES.map(c=>{
+          const cfg=NAME_EXAMPLES[c.key];
+          const tpl=parseExample(cfg.example);
+          const detected = tpl
+            ? `${tpl.asinToken?`ASIN <code>${esc(tpl.asinToken)}</code>`:'<span class="muted">no ASIN found</span>'} · ${tpl.dateToken?`Date <code>${esc(tpl.dateToken)}</code>`:'<span class="muted">no date found</span>'}`
+            : '<span class="muted">—</span>';
+          return `<tr>
+            <td class="l">${esc(c.label)}</td>
+            <td class="l"><input type="text" data-ex="${c.key}" value="${esc(cfg.example)}" placeholder="e.g. BSQ_EXACT_B0D877RD1K_JUL26_Insiders®" style="width:320px;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;"></td>
+            <td class="l" style="font-size:11px;">${detected}</td>
+            <td class="l"><input type="checkbox" data-exdate="${c.key}" ${cfg.useCreationDate?'checked':''}></td>
+            <td class="l"><button class="btn ghost" data-exapply="${c.key}" style="font-size:11px;padding:5px 9px;">Apply (clears manual edits for this type)</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>
+    <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
         <div class="field grow"><label>Search (name · ID · type · portfolio · ASIN)</label><input type="text" id="cm-search" placeholder="type to filter…" value="${esc(bySearch)}"></div>
         <div class="field"><label>Program</label><select id="cm-fprogram"><option value="">All</option><option ${byProgram==='SP'?'selected':''}>SP</option><option ${byProgram==='SB'?'selected':''}>SB</option><option ${byProgram==='SD'?'selected':''}>SD</option></select></div>
@@ -576,6 +659,15 @@ function renderApp(rows){
     renderApp(LAST_ROWS);
   };
   document.querySelectorAll('.cm-name').forEach(inp=>inp.onchange=()=>{ CUSTOM_NAMES[inp.dataset.cid]=inp.value; });
+  // Debounced (unlike the structured-template inputs above) — an example name is a long string, and
+  // re-rendering (which drops focus) on every keystroke would make it unusable to type into.
+  document.querySelectorAll('[data-ex]').forEach(inp=>inp.oninput=debounce(()=>{ NAME_EXAMPLES[inp.dataset.ex].example=inp.value; renderApp(LAST_ROWS); },400));
+  document.querySelectorAll('[data-exdate]').forEach(cb=>cb.onchange=()=>{ NAME_EXAMPLES[cb.dataset.exdate].useCreationDate=cb.checked; renderApp(LAST_ROWS); });
+  document.querySelectorAll('[data-exapply]').forEach(btn=>btn.onclick=()=>{
+    const key=btn.dataset.exapply;
+    LAST_ROWS.forEach(r=>{ if(categoryFor(r)===key) delete CUSTOM_NAMES[r.campaignId]; });
+    renderApp(LAST_ROWS);
+  });
 }
 
 function exportMap(rows, groups, mixedBucket, noAsinBucket){
