@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:31</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:40</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -173,9 +173,11 @@ function parseParentMap(wb){
     const json=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:''});
     if(!json.length) return;
     const headers=Object.keys(json[0]);
-    const col={}; headers.forEach(h=>{ const n=normH(h); if(!(n in col)) col[n]=h; });
-    const cParent = col['parent asin']!=null? col['parent asin'] : (col['asin']!=null? col['asin'] : null);
-    const cChild = col['product asin']!=null? col['product asin'] : (col['child asin']!=null? col['child asin'] : null);
+    // Checked against the RAW header text, not normH() — normH strips "(...)" (so a Seller Central-style
+    // "(Parent) ASIN" column collapses onto plain "ASIN"), which made a parent column and a child column
+    // collide onto the same normalized key whenever both existed in the same sheet, silently parsing 0 rows.
+    const cParent = headers.find(h=>/parent/i.test(h) && /asin/i.test(h));
+    const cChild = headers.find(h=>/asin/i.test(h) && !/parent/i.test(h) && (/product|child/i.test(h) || h.trim().toLowerCase()==='asin'));
     if(!cParent || !cChild || cParent===cChild) return; // needs two distinct ASIN-ish columns to be a parent/child map
     json.forEach(row=>{
       const parent=String(row[cParent]||'').trim().toUpperCase();
