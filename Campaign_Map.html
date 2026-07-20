@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -270,7 +270,7 @@ function categoryFor(r){
   const t=String(r.type||'').replace(' · MIXED','');
   if(/^SP AUTO/.test(t)) return 'SP_AUTO';
   if(/^SP (BRND )?(EXACT|PHRASE|BROAD)$/.test(t)) return 'SP_KW';
-  if(t==='SP PT') return 'SP_PT';
+  if(t==='SP PT'||t==='SP PT CATEGORY') return 'SP_PT';
   if(/^SBV? (EXACT|PHRASE|BROAD)$/.test(t)) return 'SB_KW';
   if(t==='SBV PT'||t==='SB PT') return 'SB_PT';
   return null; // MIXED MATCH / unclassified / SD — no example category, falls back to the program template
@@ -358,7 +358,7 @@ function parseSPSheet(wb, byCampaign){
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
     const cid=String(s.get(row,['campaign id'])||'').trim();
     if(!cid) return;
-    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,asins:new Set(),keywordTexts:[]});
+    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,hasPTAsin:false,hasPTCategory:false,asins:new Set(),keywordTexts:[]});
     if(ent==='campaign'){
       c.campaignName=String(s.get(row,['campaign name'])||c.campaignName);
       c.state=String(s.get(row,['state'])||c.state).trim().toLowerCase();
@@ -379,6 +379,12 @@ function parseSPSheet(wb, byCampaign){
       const kw=String(s.get(row,['keyword text'])||'').trim(); if(kw) c.keywordTexts.push(kw);
     } else if(ent==='product targeting'){
       c.hasPT=true;
+      // "category=..." targeting is a fundamentally different campaign (broad category browsing) from
+      // "asin=..."/"asin-expanded=..." targeting (competitor/complementary ASINs) — both were being lumped
+      // into one generic "SP PT" label, hiding which kind a campaign actually is.
+      const expr=String(s.get(row,['product targeting expression'])||'').trim().toLowerCase();
+      if(expr.startsWith('category')) c.hasPTCategory=true;
+      else if(expr.startsWith('asin')) c.hasPTAsin=true;
     }
   });
 }
@@ -474,7 +480,10 @@ function classify(c, brandTerms){
     if(String(c.targetingType).toLowerCase()==='auto') return 'SP AUTO';
     const mts=[...c.matchTypes].filter(m=>!/negative/i.test(m));
     const distinct=new Set(mts.map(m=>m.trim()));
-    if(distinct.size===0) return c.hasPT? 'SP PT' : 'SP MANUAL (unclassified)';
+    if(distinct.size===0){
+      if(c.hasPTCategory && !c.hasPTAsin) return 'SP PT CATEGORY';
+      return c.hasPT? 'SP PT' : 'SP MANUAL (unclassified)';
+    }
     if(distinct.size>1) return 'SP MIXED MATCH';
     const mt=[...distinct][0].toLowerCase();
     const branded=isBranded(c.keywordTexts, brandTerms);
