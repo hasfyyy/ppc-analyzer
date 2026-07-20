@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:15</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 17:44</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -571,8 +571,18 @@ function processWorkbook(wb, brandTermsRaw){
     // Mixed means DIFFERENT PARENTS, not just multiple ASINs — several variations (colors/sizes) of the
     // same parent are a normal dedicated campaign, not a mixed one. Without a Parent/Child map every ASIN
     // is its own "parent" (unchanged old behavior); with one, variations correctly collapse together.
-    const parents=[...new Set(asins.map(resolveParent))];
-    const mixed=parents.length>1;
+    let parents=[...new Set(asins.map(resolveParent))];
+    let mixed=parents.length>1;
+    let primaryAsin=parents.length===1? parents[0] : null;
+    // Without a working Parent/Child map, each child ASIN resolves to itself, so 4 variations of one
+    // product look like 4 different "parents". Some accounts name each single-product campaign after its
+    // own parent ASIN directly (e.g. "1R | SP | Kompressionsstrümpfe | B08D1VGRTH | Profit KW Top | Exact")
+    // — when that's the case, the campaign's own name is a stronger signal than the raw child ASIN count,
+    // so it overrides a false MIXED instead of requiring a separate map upload just to fix this one case.
+    if(mixed){
+      const nameAsin=(c.campaignName||'').match(/B0[A-Z0-9]{8}/i);
+      if(nameAsin){ mixed=false; primaryAsin=nameAsin[0].toUpperCase(); parents=[primaryAsin]; }
+    }
     const baseType=classify(c, brandTerms);
     // Flag mixed campaigns right in the Type text (not just a separate column) — this is the field
     // people scan first (in the UI and once exported/re-sorted in Excel), so the flag has to travel with it.
@@ -580,7 +590,7 @@ function processWorkbook(wb, brandTermsRaw){
     return {
       campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type,
       adGroupCount:c.adGroups?c.adGroups.size:0, portfolioId:c.portfolioId, portfolioName:c.portfolioName,
-      asins, parents, mixed, primaryAsin: parents.length===1? parents[0] : null,
+      asins, parents, mixed, primaryAsin,
       createdMonthYear: monthYearFromStartDate(c.startDate), createdYM: startDateYM(c.startDate)
     };
   });
