@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:25</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:39</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -254,9 +254,17 @@ function parseExample(example){
   const asinMatch=example.match(/B0[A-Z0-9]{8}/i);
   // NOT \b — these tokens sit between underscores ("_JUL26_"), and \b never fires between two word
   // characters (underscore counts as one), so a boundary-based match silently failed on every real name.
-  const dateMatch=example.match(/(?<![A-Za-z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(?!\d)/i);
+  // Tried in this order so a token is never claimed by the wrong shape (e.g. "2026-07" isn't also a valid
+  // MM-YYYY match — 20 isn't a real month — but checking cheapest/most-specific pattern first is still safest).
+  const mmmyy=example.match(/(?<![A-Za-z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(?!\d)/i);
+  const isoym=!mmmyy && example.match(/(?<!\d)(20\d{2})-(0[1-9]|1[0-2])(?!\d)/);
+  const myYYYY=!mmmyy && !isoym && example.match(/(?<!\d)(0[1-9]|1[0-2])-(20\d{2})(?!\d)/);
+  let dateToken=null, dateStyle=null;
+  if(mmmyy){ dateToken=mmmyy[0]; dateStyle='MMMYY'; }
+  else if(isoym){ dateToken=isoym[0]; dateStyle='YYYY-MM'; }
+  else if(myYYYY){ dateToken=myYYYY[0]; dateStyle='MM-YYYY'; }
   const mtMatch=example.match(/EXACT|PHRASE|BROAD/i);
-  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken:dateMatch?dateMatch[0]:null, mtToken:mtMatch?mtMatch[0]:null};
+  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken, dateStyle, mtToken:mtMatch?mtMatch[0]:null};
 }
 function nameFromExample(cfg, r){
   const tpl=parseExample(cfg.example);
@@ -265,8 +273,10 @@ function nameFromExample(cfg, r){
   const asin=r.primaryAsin||(r.asins[0]||'');
   if(tpl.asinToken && asin) out=out.split(tpl.asinToken).join(asin);
   if(tpl.dateToken){
-    const my = cfg.useCreationDate && r.createdMonthYear ? r.createdMonthYear : tpl.dateToken;
-    out=out.split(tpl.dateToken).join(my);
+    // Formats the substituted date to match whatever shape the user actually typed (JUL26 / 2026-07 /
+    // 07-2026) instead of forcing one style — "put the date however I want" applies to this path too.
+    const my = cfg.useCreationDate && r.createdYM ? formatYM(r.createdYM, tpl.dateStyle) : tpl.dateToken;
+    if(my) out=out.split(tpl.dateToken).join(my);
   }
   if(tpl.mtToken){
     const realMt=matchTypeOf(r);
@@ -458,14 +468,25 @@ function programTag(p){ return `<span class="tag ${p.toLowerCase()}">${p}</span>
 // sometimes an Excel serial number if the cell got reformatted as a date. Either way, this is the real
 // per-campaign month, unlike the Name+Year fields elsewhere which are just today's date.
 const MONTH_ABBR3=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-function monthYearFromStartDate(sd){
-  if(!sd) return '';
+function startDateYM(sd){
+  if(!sd) return null;
   let y,m;
   if(/^\d{8}$/.test(sd)){ y=+sd.slice(0,4); m=+sd.slice(4,6); }
   else if(/^\d+(\.\d+)?$/.test(sd) && +sd>20000){ const d=XLSX.SSF.parse_date_code(+sd); if(d){ y=d.y; m=d.m; } }
   else { const d=new Date(sd); if(!isNaN(d)){ y=d.getFullYear(); m=d.getMonth()+1; } }
-  if(!y||!m||m<1||m>12) return '';
-  return MONTH_ABBR3[m-1]+String(y).slice(2);
+  if(!y||!m||m<1||m>12) return null;
+  return {y,m};
+}
+function monthYearFromStartDate(sd){ const ym=startDateYM(sd); return ym? MONTH_ABBR3[ym.m-1]+String(ym.y).slice(2) : ''; }
+// Formats a {y,m} pair to match whichever date "shape" the user actually typed in their example (JUL26 /
+// 2026-07 / 07-2026) — so "use my campaign's own creation month" respects their chosen format instead of
+// always forcing the JUL26 style.
+function formatYM(ym, style){
+  if(!ym) return '';
+  const mm=String(ym.m).padStart(2,'0');
+  if(style==='YYYY-MM') return `${ym.y}-${mm}`;
+  if(style==='MM-YYYY') return `${mm}-${ym.y}`;
+  return MONTH_ABBR3[ym.m-1]+String(ym.y).slice(2);
 }
 
 /* ============================ BUILD / RENDER ============================ */
@@ -490,7 +511,7 @@ function processWorkbook(wb, brandTermsRaw){
       campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type,
       adGroupCount:c.adGroups?c.adGroups.size:0, portfolioId:c.portfolioId, portfolioName:c.portfolioName,
       asins, parents, mixed, primaryAsin: parents.length===1? parents[0] : null,
-      createdMonthYear: monthYearFromStartDate(c.startDate)
+      createdMonthYear: monthYearFromStartDate(c.startDate), createdYM: startDateYM(c.startDate)
     };
   });
   return rows;
