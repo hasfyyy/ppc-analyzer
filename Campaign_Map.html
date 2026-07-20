@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:39</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 15:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -199,14 +199,22 @@ function defaultTemplate(prefix){ return {prefix, includeType:true, includeNiche
 let NAME_TEMPLATES={SP:defaultTemplate('BSQ'), SB:defaultTemplate('SB'), SD:defaultTemplate('SD')};
 let TEMPLATE_TAB='SP'; // which program's template is shown/edited in the UI right now
 let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured template)
+// Pulls the short code straight out of the portfolio name (e.g. "01. HPR | Visual Timer for Kids | ASIN"
+// -> "HPR") — no dependency on Campaign Builder's Brand Table, works right off the uploaded bulk alone.
+function nicheFromPortfolioName(pfName){
+  if(!pfName) return '';
+  const s=String(pfName).trim();
+  // Leading "NN. " (a portfolio numbering prefix) is stripped before taking the first "|"-delimited segment.
+  const m=s.replace(/^\d+\.\s*/,'').match(/^([^|]+?)\s*(?:\||$)/);
+  return m ? m[1].trim() : s;
+}
 function renderNameFromFields(fields, r){
-  const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
   // SBV must be checked before SB — "SBV EXACT" would otherwise fail to match "SB " (no trailing space
   // right after "SB" in "SBV"), leaving the whole "SBV EXACT" un-stripped and duplicating the SB prefix.
   const matchtype=String(r.type||'').replace(' · MIXED','').replace(/^(SP|SBV|SB|SD)\s+/,'');
   const parts=[fields.prefix];
   if(fields.includeType) parts.push(matchtype);
-  if(fields.includeNiche) parts.push(bt&&bt.niche||'');
+  if(fields.includeNiche) parts.push(nicheFromPortfolioName(r.portfolioName));
   if(fields.includeAsin) parts.push(r.primaryAsin||(r.asins[0]||''));
   // When ticked, each row gets ITS OWN campaign's actual creation month (from Start Date) instead of the
   // one static Month+Year text everyone shares — falls back to the static field if Start Date wasn't found.
@@ -626,7 +634,7 @@ function renderApp(rows){
       <div class="ctrls">
         <div class="field"><label>Prefix</label><input type="text" id="cm-prefix" value="${esc(tf.prefix)}" style="width:80px;"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-type" ${tf.includeType?'checked':''}> Type (EXACT/BROAD/AUTO…)</label>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-niche" ${tf.includeNiche?'checked':''}> Niche/Code (from Brand Table)</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-niche" ${tf.includeNiche?'checked':''}> Niche/Code (from Portfolio name)</label>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-asin" ${tf.includeAsin?'checked':''}> ASIN (parent)</label>
         <div class="field"><label>Agent</label><input type="text" id="cm-agent" value="${esc(tf.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
         <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(tf.monthyear)}" style="width:80px;" ${tf.useCreationDate?'disabled':''}></div>
