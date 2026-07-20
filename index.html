@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-20 13:13</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-20 13:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1625,7 +1625,11 @@ function computePlacementOptRows(product, filters){
 }
 function renderOptPlacements(){
   const {rows: rowsAll, st, rowsRaw}=computePlacementOptRows(S.product, {});
-  let rows=rowsAll;
+  if(st.hideSingleKw===undefined) st.hideSingleKw=true;
+  // Single-keyword campaigns' placement suggestions are already bundled into their SP Bid Changes row above
+  // (same underlying computation) — showing them here too invites doing the same export twice, so they're
+  // hidden by default. Multi-keyword campaigns only ever get decrease suggestions, which live here exclusively.
+  let rows = st.hideSingleKw ? rowsAll.filter(r=>!r.isSingle) : rowsAll;
   rows.forEach((r,i)=>r._uid='op'+i);
   const sel=selFor('optplace');
   const totals=agg(rows);
@@ -1670,6 +1674,10 @@ function renderOptPlacements(){
         <div class="field"><label>Cut placement if 0 orders at ≥ clicks</label><input type="number" id="op-zeroclicks" value="${st.zeroOrderClicks}" style="width:80px;"></div>
         <div class="hint" style="align-self:center;">Below this many clicks a zero-order placement still gets the benefit of the doubt (push/increase can still apply). At or above it, spend with zero orders is treated as bad performance and gets decreased instead — even without enough sales to compute an ACoS.</div>
       </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-hidesingle" ${st.hideSingleKw?'checked':''}> Hide single-keyword (SUP) campaigns here</label>
+        <div class="hint" style="align-self:center;">Their placement suggestions are already bundled into the SP Bid Changes row above — showing them here too just invites exporting the same change twice. Uncheck to review them here anyway.</div>
+      </div>
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
@@ -1689,6 +1697,7 @@ function renderOptPlacements(){
   bind('op-dec','decStep',v=>+v||0); bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
   bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0); bind('op-zeroclicks','zeroOrderClicks',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
+  $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#op-camp').oninput=debounce(()=>{st.camp=$('#op-camp').value; upd();},220);
   $('#op-export').onclick=()=>exportPlacementOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
