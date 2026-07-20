@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Campaign Map</title>
+<title>Renaming Campaigns</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -78,13 +78,16 @@
   .stat:last-child{border-right:none;}
   .stat b{font-size:19px;}
   .stat span{font-size:11px; color:var(--muted2);}
+  .seg{display:inline-flex; background:#f3f4f6; border-radius:9px; padding:3px; gap:2px;}
+  .seg button{border:none; background:none; padding:6px 12px; border-radius:7px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
+  .seg button.active{background:#fff; color:var(--ink); box-shadow:var(--shadow);}
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <div class="topbar">
-    <h1>🗺️ Campaign Map</h1>
+    <h1>🗺️ Renaming Campaigns</h1>
     <div class="links">
       <a class="backlink" href="Campaign_Builder.html">🏗️ Campaign Builder</a>
       <a class="backlink" href="index.html">← PPC Analyzer</a>
@@ -106,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Map · build 2026-07-20 13:28</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -188,8 +191,13 @@ function parseParentMap(wb){
 // bits (Type/Niche/ASIN) that come straight from what was already detected above. No free-text template
 // syntax to get wrong — every field is its own box, exactly like Campaign Builder.
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
-let NAME_FIELDS={prefix:'BSQ', includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), useCreationDate:false, agency:'Insiders®', separator:'_'};
-let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured fields)
+// One naming template per program (SP/SB/SD) — each has its own prefix/fields, since the three programs
+// don't share a naming convention in practice. Kept as separate objects (not one shared NAME_FIELDS) so
+// editing SP's template never touches SB's or SD's.
+function defaultTemplate(prefix){ return {prefix, includeType:true, includeNiche:false, includeAsin:true, agent:'', monthyear:currentMonthYear(), useCreationDate:false, agency:'Insiders®', separator:'_'}; }
+let NAME_TEMPLATES={SP:defaultTemplate('BSQ'), SB:defaultTemplate('SB'), SD:defaultTemplate('SD')};
+let TEMPLATE_TAB='SP'; // which program's template is shown/edited in the UI right now
+let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured template)
 function renderNameFromFields(fields, r){
   const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
   const matchtype=String(r.type||'').replace(' · MIXED','').replace(/^(SP|SB|SD)\s+/,'');
@@ -204,7 +212,8 @@ function renderNameFromFields(fields, r){
   const sep = fields.separator!=null && fields.separator!==''? fields.separator : '_';
   return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(sep);
 }
-function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameFromFields(NAME_FIELDS, r); }
+function templateFor(program){ return NAME_TEMPLATES[program] || NAME_TEMPLATES.SP; }
+function nameFor(r){ return CUSTOM_NAMES[r.campaignId] != null ? CUSTOM_NAMES[r.campaignId] : renderNameFromFields(templateFor(r.program), r); }
 
 /* ============================ PARSING ============================ */
 function sheetRows(wb, name){
@@ -493,20 +502,27 @@ function renderApp(rows){
   const noAsinHtml = noAsinFiltered.length? `<tr class="grouphead"><td class="l" colspan="11">❔ No ASIN detected &nbsp;${noAsinFiltered.length} campaign(s)</td></tr>` +
     noAsinFiltered.map(rowHtml).join('') : '';
 
+  const tf=templateFor(TEMPLATE_TAB);
   $('#app').innerHTML = statsHtml + `
     <div class="card pad">
       <h3 class="sectitle">New naming structure (optional) — same fields as Campaign Builder</h3>
+      <div class="hint" style="margin-bottom:10px;">Each program (SP/SB/SD) keeps its own template — switch tabs below to customize one without touching the others.</div>
+      <div class="seg" style="margin-bottom:12px;">
+        <button data-ptab="SP" class="${TEMPLATE_TAB==='SP'?'active':''}">SP</button>
+        <button data-ptab="SB" class="${TEMPLATE_TAB==='SB'?'active':''}">SB</button>
+        <button data-ptab="SD" class="${TEMPLATE_TAB==='SD'?'active':''}">SD</button>
+      </div>
       <div class="ctrls">
-        <div class="field"><label>Prefix</label><input type="text" id="cm-prefix" value="${esc(NAME_FIELDS.prefix)}" style="width:80px;"></div>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-type" ${NAME_FIELDS.includeType?'checked':''}> Type (EXACT/BROAD/AUTO…)</label>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-niche" ${NAME_FIELDS.includeNiche?'checked':''}> Niche/Code (from Brand Table)</label>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-asin" ${NAME_FIELDS.includeAsin?'checked':''}> ASIN (parent)</label>
-        <div class="field"><label>Agent</label><input type="text" id="cm-agent" value="${esc(NAME_FIELDS.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
-        <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(NAME_FIELDS.monthyear)}" style="width:80px;" ${NAME_FIELDS.useCreationDate?'disabled':''}></div>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-created" ${NAME_FIELDS.useCreationDate?'checked':''}> Use each campaign's own creation month (Start Date)</label>
-        <div class="field"><label>Agency suffix</label><input type="text" id="cm-agency" value="${esc(NAME_FIELDS.agency)}" style="width:110px;"></div>
-        <div class="field"><label>Separator</label><input type="text" id="cm-sep" value="${esc(NAME_FIELDS.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
-        <button class="btn ghost" id="cm-apply-template">Apply to all (clears manual edits)</button>
+        <div class="field"><label>Prefix</label><input type="text" id="cm-prefix" value="${esc(tf.prefix)}" style="width:80px;"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-type" ${tf.includeType?'checked':''}> Type (EXACT/BROAD/AUTO…)</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-niche" ${tf.includeNiche?'checked':''}> Niche/Code (from Brand Table)</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-asin" ${tf.includeAsin?'checked':''}> ASIN (parent)</label>
+        <div class="field"><label>Agent</label><input type="text" id="cm-agent" value="${esc(tf.agent)}" placeholder="e.g. Alex" style="width:100px;"></div>
+        <div class="field"><label>Month+Year</label><input type="text" id="cm-my" value="${esc(tf.monthyear)}" style="width:80px;" ${tf.useCreationDate?'disabled':''}></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cm-inc-created" ${tf.useCreationDate?'checked':''}> Use each campaign's own creation month (Start Date)</label>
+        <div class="field"><label>Agency suffix</label><input type="text" id="cm-agency" value="${esc(tf.agency)}" style="width:110px;"></div>
+        <div class="field"><label>Separator</label><input type="text" id="cm-sep" value="${esc(tf.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
+        <button class="btn ghost" id="cm-apply-template">Apply to all ${TEMPLATE_TAB} (clears manual edits for ${TEMPLATE_TAB})</button>
       </div>
       <div class="hint" style="margin-top:8px;">Builds each name as Prefix[sep]Type[sep]Niche[sep]ASIN[sep]Agent[sep]MonthYear[sep]Agency (unchecked/blank parts are skipped). Separator defaults to "_" but can be "|" or anything else you type. Editing a "New Name" cell directly always overrides this for that one row. "Use each campaign's own creation month" reads the real Start Date per campaign instead of one shared Month+Year — falls back to the text field if a campaign has no Start Date.</div>
     </div>
@@ -526,11 +542,16 @@ function renderApp(rows){
   $('#cm-search').oninput=()=>renderApp(LAST_ROWS);
   $('#cm-fprogram').onchange=()=>renderApp(LAST_ROWS);
   $('#cm-export').onclick=()=>exportMap(rows, groups, mixedBucket, noAsinBucket);
-  const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ NAME_FIELDS[key]=e.value; renderApp(LAST_ROWS); }; };
+  document.querySelectorAll('[data-ptab]').forEach(b=>b.onclick=()=>{ TEMPLATE_TAB=b.dataset.ptab; renderApp(LAST_ROWS); });
+  const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ templateFor(TEMPLATE_TAB)[key]=e.value; renderApp(LAST_ROWS); }; };
   bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency'); bindField('cm-sep','separator');
-  const bindCheck=(id,key)=>{ const e=$('#'+id); if(e) e.onchange=()=>{ NAME_FIELDS[key]=e.checked; renderApp(LAST_ROWS); }; };
+  const bindCheck=(id,key)=>{ const e=$('#'+id); if(e) e.onchange=()=>{ templateFor(TEMPLATE_TAB)[key]=e.checked; renderApp(LAST_ROWS); }; };
   bindCheck('cm-inc-type','includeType'); bindCheck('cm-inc-niche','includeNiche'); bindCheck('cm-inc-asin','includeAsin'); bindCheck('cm-inc-created','useCreationDate');
-  $('#cm-apply-template').onclick=()=>{ CUSTOM_NAMES={}; renderApp(LAST_ROWS); };
+  // Scoped to the program tab currently open — clearing manual edits for SP never touches SB/SD overrides.
+  $('#cm-apply-template').onclick=()=>{
+    LAST_ROWS.forEach(r=>{ if(r.program===TEMPLATE_TAB) delete CUSTOM_NAMES[r.campaignId]; });
+    renderApp(LAST_ROWS);
+  };
   document.querySelectorAll('.cm-name').forEach(inp=>inp.onchange=()=>{ CUSTOM_NAMES[inp.dataset.cid]=inp.value; });
 }
 
