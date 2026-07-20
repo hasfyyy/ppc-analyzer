@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:06</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -200,7 +200,9 @@ let TEMPLATE_TAB='SP'; // which program's template is shown/edited in the UI rig
 let CUSTOM_NAMES={}; // campaignId -> manually edited name (overrides the structured template)
 function renderNameFromFields(fields, r){
   const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : null;
-  const matchtype=String(r.type||'').replace(' · MIXED','').replace(/^(SP|SB|SD)\s+/,'');
+  // SBV must be checked before SB — "SBV EXACT" would otherwise fail to match "SB " (no trailing space
+  // right after "SB" in "SBV"), leaving the whole "SBV EXACT" un-stripped and duplicating the SB prefix.
+  const matchtype=String(r.type||'').replace(' · MIXED','').replace(/^(SP|SBV|SB|SD)\s+/,'');
   const parts=[fields.prefix];
   if(fields.includeType) parts.push(matchtype);
   if(fields.includeNiche) parts.push(bt&&bt.niche||'');
@@ -346,10 +348,31 @@ function classify(c, brandTerms){
   if(c.program==='SB'){
     const hasKw = c.matchTypes.size>0 || c.keywordTexts.length>0;
     const hasPT = c.hasPT;
+    const mts=[...c.matchTypes].filter(m=>!/negative/i.test(m));
+    const distinct=new Set(mts.map(m=>m.trim()));
+    // Video is a FORMAT, not a targeting type — a video campaign can still be keyword-targeted with its own
+    // real match type (EXACT/PHRASE/BROAD), so it needs the same per-match-type split SP gets below. Lumping
+    // every video campaign into one generic "SB Video" bucket collapsed EXACT and PHRASE video campaigns onto
+    // the same auto-generated name (a real collision — two different campaigns, one name).
     if(c.isVideo && hasPT && !hasKw) return 'SBV PT';
+    if(c.isVideo && hasKw){
+      if(distinct.size>1) return 'SBV MIXED MATCH';
+      const mt=[...distinct][0]?.toLowerCase();
+      if(mt==='exact') return 'SBV EXACT';
+      if(mt==='phrase') return 'SBV PHRASE';
+      if(mt==='broad') return 'SBV BROAD';
+      return 'SB Video';
+    }
     if(c.isVideo) return 'SB Video';
     if(hasPT && !hasKw) return 'SB PT';
-    if(hasKw) return 'SB';
+    if(hasKw){
+      if(distinct.size>1) return 'SB MIXED MATCH';
+      const mt=[...distinct][0]?.toLowerCase();
+      if(mt==='exact') return 'SB EXACT';
+      if(mt==='phrase') return 'SB PHRASE';
+      if(mt==='broad') return 'SB BROAD';
+      return 'SB';
+    }
     if(c.isAwarenessOnly) return 'SB (awareness format)';
     return 'SB (unclassified)';
   }
