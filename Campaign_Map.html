@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:40</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:44</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -680,7 +680,8 @@ function renderApp(rows){
         <div class="field grow"><label>Search (name · ID · type · portfolio · ASIN)</label><input type="text" id="cm-search" placeholder="type to filter…" value="${esc(bySearch)}"></div>
         <div class="field"><label>Program</label><select id="cm-fprogram"><option value="">All</option><option ${byProgram==='SP'?'selected':''}>SP</option><option ${byProgram==='SB'?'selected':''}>SB</option><option ${byProgram==='SD'?'selected':''}>SD</option></select></div>
         <div class="spacer"></div>
-        <button class="btn grad" id="cm-export">⬇ Export Map (.xlsx)</button>
+        <button class="btn ghost" id="cm-export-report">⬇ Export Report (.xlsx)</button>
+        <button class="btn grad" id="cm-export">⬇ Export Bulk (ready for Amazon)</button>
       </div>
       <div class="tablewrap"><table>
         <thead><tr><th class="l">Program</th><th class="l">Type</th><th class="l">Current Campaign Name</th><th class="l">New Name</th><th>Campaign ID</th><th>Ad Groups</th><th class="l">Current Portfolio</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASINs</th></tr></thead>
@@ -690,7 +691,8 @@ function renderApp(rows){
 
   $('#cm-search').oninput=()=>renderApp(LAST_ROWS);
   $('#cm-fprogram').onchange=()=>renderApp(LAST_ROWS);
-  $('#cm-export').onclick=()=>exportMap(rows, groups, mixedBucket, noAsinBucket);
+  $('#cm-export').onclick=()=>exportBulkRename(rows);
+  $('#cm-export-report').onclick=()=>exportReport(rows, groups, mixedBucket, noAsinBucket);
   document.querySelectorAll('[data-ptab]').forEach(b=>b.onclick=()=>{ TEMPLATE_TAB=b.dataset.ptab; renderApp(LAST_ROWS); });
   const bindField=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ templateFor(TEMPLATE_TAB)[key]=e.value; renderApp(LAST_ROWS); }; };
   bindField('cm-prefix','prefix'); bindField('cm-agent','agent'); bindField('cm-my','monthyear'); bindField('cm-agency','agency'); bindField('cm-sep','separator');
@@ -713,7 +715,28 @@ function renderApp(rows){
   });
 }
 
-function exportMap(rows, groups, mixedBucket, noAsinBucket){
+// Amazon's own bulk column set — a rename-only file needs just Product/Entity/Operation/Campaign ID/Campaign
+// Name, but every column must still be present (blank) or Bulk Operations rejects the sheet outright.
+const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression"];
+function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
+const PROGRAM_SHEET={SP:'Sponsored Products Campaigns', SB:'Sponsored Brands Campaigns', SD:'Sponsored Display Campaigns'};
+const PROGRAM_LABEL={SP:'Sponsored Products', SB:'Sponsored Brands', SD:'Sponsored Display'};
+function exportBulkRename(rows){
+  const bySheet={SP:[], SB:[], SD:[]};
+  rows.forEach(r=>{
+    const newName=nameFor(r);
+    if(!newName || newName===r.campaignName) return; // nothing changed — skip, don't send a no-op Update row
+    (bySheet[r.program]=bySheet[r.program]||[]).push(bulkRow({'Product':PROGRAM_LABEL[r.program]||'Sponsored Products','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Campaign Name':newName}));
+  });
+  const wb=XLSX.utils.book_new();
+  let any=false;
+  ['SP','SB','SD'].forEach(p=>{
+    if(bySheet[p].length){ any=true; const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...bySheet[p]]); XLSX.utils.book_append_sheet(wb, ws, PROGRAM_SHEET[p]); }
+  });
+  if(!any){ alert('No campaign names actually changed under the current naming setup — nothing to export. Set up a template or example name first.'); return; }
+  XLSX.writeFile(wb, 'campaign_rename_bulk.xlsx');
+}
+function exportReport(rows, groups, mixedBucket, noAsinBucket){
   const out=[];
   const push=(r,clusterAsin,portfolioConsistency)=>{
     const bt = r.primaryAsin? asinInfoFromBrandTable(r.primaryAsin) : (clusterAsin? asinInfoFromBrandTable(clusterAsin) : null);
