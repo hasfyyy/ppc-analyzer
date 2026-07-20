@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 14:25</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -217,45 +217,46 @@ function renderNameFromFields(fields, r){
 }
 function templateFor(program){ return NAME_TEMPLATES[program] || NAME_TEMPLATES.SP; }
 
-// ---- Naming by example: finer-grained than the per-program templates above — one example per actual
-// campaign TYPE (AUTO / EXACT / PHRASE / BROAD / Product Targeting, split by SP vs SB), since match type
-// often needs its own real-world naming convention, not just a "Type" checkbox slotted into one shared shape.
+// ---- Naming by example: finer-grained than the per-program templates above — one example per campaign
+// TYPE, split by SP vs SB. Exact/Phrase/Broad share ONE example per program (only the match-type word itself
+// ever changes between them — everything else in the name is identical), so they're one category, not three;
+// AUTO and Product Targeting still get their own since those really are structurally different names.
 const NAME_CATEGORIES=[
   {key:'SP_AUTO', label:'SP — Auto'},
-  {key:'SP_EXACT', label:'SP — Exact'},
-  {key:'SP_PHRASE', label:'SP — Phrase'},
-  {key:'SP_BROAD', label:'SP — Broad'},
+  {key:'SP_KW', label:'SP — Exact / Phrase / Broad'},
   {key:'SP_PT', label:'SP — Product Targeting'},
-  {key:'SB_EXACT', label:'SB — Exact'},
-  {key:'SB_PHRASE', label:'SB — Phrase'},
-  {key:'SB_BROAD', label:'SB — Broad'},
+  {key:'SB_KW', label:'SB — Exact / Phrase / Broad'},
   {key:'SB_PT', label:'SB — Product Targeting'},
 ];
 let NAME_EXAMPLES={}; NAME_CATEGORIES.forEach(c=>NAME_EXAMPLES[c.key]={example:'', useCreationDate:false});
 // Video (SBV) campaigns share the same naming need as their non-video SB counterparts — match type is what
-// drives the convention, not the ad format — so they fall into the same SB_EXACT/PHRASE/BROAD/PT buckets.
+// drives the convention, not the ad format — so they fall into the same SB_KW/SB_PT buckets.
 function categoryFor(r){
   const t=String(r.type||'').replace(' · MIXED','');
   if(/^SP AUTO/.test(t)) return 'SP_AUTO';
-  if(/^SP (BRND )?EXACT$/.test(t)) return 'SP_EXACT';
-  if(/^SP (BRND )?PHRASE$/.test(t)) return 'SP_PHRASE';
-  if(/^SP (BRND )?BROAD$/.test(t)) return 'SP_BROAD';
+  if(/^SP (BRND )?(EXACT|PHRASE|BROAD)$/.test(t)) return 'SP_KW';
   if(t==='SP PT') return 'SP_PT';
-  if(t==='SBV EXACT'||t==='SB EXACT') return 'SB_EXACT';
-  if(t==='SBV PHRASE'||t==='SB PHRASE') return 'SB_PHRASE';
-  if(t==='SBV BROAD'||t==='SB BROAD') return 'SB_BROAD';
+  if(/^SBV? (EXACT|PHRASE|BROAD)$/.test(t)) return 'SB_KW';
   if(t==='SBV PT'||t==='SB PT') return 'SB_PT';
   return null; // MIXED MATCH / unclassified / SD — no example category, falls back to the program template
 }
-// Pulls the ASIN and Month+Year tokens out of a typed example — everything else in the string (prefix,
-// agent code, agency suffix, separators) is kept 100% literal, exactly as the user typed it.
+function matchTypeOf(r){ const m=String(r.type||'').match(/(EXACT|PHRASE|BROAD)/i); return m? m[0].toUpperCase() : null; }
+// Reuses whatever case style the user actually typed (EXACT / exact / Exact) for the swapped-in match type.
+function matchCase(token, word){
+  if(token===token.toUpperCase()) return word.toUpperCase();
+  if(token===token.toLowerCase()) return word.toLowerCase();
+  return word.charAt(0).toUpperCase()+word.slice(1).toLowerCase();
+}
+// Pulls the ASIN, Month+Year, and (for the combined KW categories) match-type tokens out of a typed example —
+// everything else in the string (prefix, agent code, agency suffix, separators) is kept 100% literal.
 function parseExample(example){
   if(!example) return null;
   const asinMatch=example.match(/B0[A-Z0-9]{8}/i);
   // NOT \b — these tokens sit between underscores ("_JUL26_"), and \b never fires between two word
   // characters (underscore counts as one), so a boundary-based match silently failed on every real name.
   const dateMatch=example.match(/(?<![A-Za-z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(?!\d)/i);
-  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken:dateMatch?dateMatch[0]:null};
+  const mtMatch=example.match(/EXACT|PHRASE|BROAD/i);
+  return {raw:example, asinToken:asinMatch?asinMatch[0]:null, dateToken:dateMatch?dateMatch[0]:null, mtToken:mtMatch?mtMatch[0]:null};
 }
 function nameFromExample(cfg, r){
   const tpl=parseExample(cfg.example);
@@ -266,6 +267,10 @@ function nameFromExample(cfg, r){
   if(tpl.dateToken){
     const my = cfg.useCreationDate && r.createdMonthYear ? r.createdMonthYear : tpl.dateToken;
     out=out.split(tpl.dateToken).join(my);
+  }
+  if(tpl.mtToken){
+    const realMt=matchTypeOf(r);
+    if(realMt) out=out.split(tpl.mtToken).join(matchCase(tpl.mtToken, realMt));
   }
   return out;
 }
