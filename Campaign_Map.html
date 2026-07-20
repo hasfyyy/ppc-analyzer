@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:44</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-20 16:49</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -210,6 +210,18 @@ function nicheFromPortfolioName(pfName){
   const m=s.replace(/^\d+\.\s*/,'').match(/^([^|]+?)\s*(?:\||$)/);
   return m ? m[1].trim() : s;
 }
+// This account's portfolios are named "NN. Niche | ASIN" (or "NN. Niche | Product Name | ASIN"), so the
+// portfolio name itself already carries the real PARENT ASIN — a much more reliable source than the
+// campaign's own advertised ASIN, which is usually a child/variation ASIN, not the parent.
+function parentAsinFromPortfolioName(pfName){
+  const m=String(pfName||'').match(/B0[A-Z0-9]{8}/i);
+  return m ? m[0].toUpperCase() : null;
+}
+// Prefers, in order: the ASIN found in the portfolio name (the real parent) > the Parent/Child map
+// resolution (r.primaryAsin, needs that file uploaded) > the campaign's own child ASIN (last resort).
+function parentAsinFor(r){
+  return parentAsinFromPortfolioName(r.portfolioName) || r.primaryAsin || (r.asins[0]||'');
+}
 function renderNameFromFields(fields, r){
   // SBV must be checked before SB — "SBV EXACT" would otherwise fail to match "SB " (no trailing space
   // right after "SB" in "SBV"), leaving the whole "SBV EXACT" un-stripped and duplicating the SB prefix.
@@ -217,7 +229,7 @@ function renderNameFromFields(fields, r){
   const parts=[fields.prefix];
   if(fields.includeType) parts.push(matchtype);
   if(fields.includeNiche) parts.push(nicheFromPortfolioName(r.portfolioName));
-  if(fields.includeAsin) parts.push(r.primaryAsin||(r.asins[0]||''));
+  if(fields.includeAsin) parts.push(parentAsinFor(r));
   // When ticked, each row gets ITS OWN campaign's actual creation month (from Start Date) instead of the
   // one static Month+Year text everyone shares — falls back to the static field if Start Date wasn't found.
   const monthyear = fields.useCreationDate && r.createdMonthYear ? r.createdMonthYear : fields.monthyear;
@@ -284,7 +296,7 @@ function nameFromExample(cfg, r){
   const tpl=parseExample(cfg.example);
   if(!tpl) return null;
   let out=tpl.raw;
-  const asin=r.primaryAsin||(r.asins[0]||'');
+  const asin=parentAsinFor(r);
   if(tpl.asinToken && asin) out=out.split(tpl.asinToken).join(asin);
   if(tpl.dateToken){
     // Formats the substituted date to match whatever shape the user actually typed (JUL26 / 2026-07 /
@@ -313,8 +325,13 @@ function nameFor(r){
 
 /* ============================ PARSING ============================ */
 function sheetRows(wb, name){
-  if(!wb.SheetNames.includes(name)) return null;
-  const json=XLSX.utils.sheet_to_json(wb.Sheets[name],{defval:''});
+  // Trimmed + case-insensitive match — some exports carry the sheet name with different casing or a
+  // stray trailing space, and a strict wb.SheetNames.includes() silently treats that as "sheet not found",
+  // which is exactly how a whole program (e.g. SD) can go missing with no error at all.
+  const target=String(name).trim().toLowerCase();
+  const actual=wb.SheetNames.find(sn=>String(sn).trim().toLowerCase()===target);
+  if(!actual) return null;
+  const json=XLSX.utils.sheet_to_json(wb.Sheets[actual],{defval:''});
   if(!json.length) return null;
   const headers=Object.keys(json[0]);
   const col={}; headers.forEach(h=>{ const n=normH(h); if(!(n in col)) col[n]=h; });
@@ -351,7 +368,9 @@ function parseSPSheet(wb, byCampaign){
 }
 
 function parseSDSheet(wb, byCampaign){
-  const s=sheetRows(wb,'Sponsored Display Campaigns'); if(!s) return;
+  // Tries both known sheet-name variants (some exports/locales label it differently) — same pattern as
+  // SB's two candidate names below.
+  const s=sheetRows(wb,'Sponsored Display Campaigns') || sheetRows(wb,'SD Campaigns'); if(!s) return;
   s.json.forEach(row=>{
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
     const cid=String(s.get(row,['campaign id'])||'').trim();
