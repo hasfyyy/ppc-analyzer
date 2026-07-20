@@ -92,7 +92,7 @@
   <div class="topbar">
     <h1>🏗️ Campaign Builder</h1>
     <div style="display:flex;gap:8px;">
-      <a class="backlink" href="Campaign_Map.html">🗺️ Campaign Map</a>
+      <a class="backlink" href="Campaign_Map.html">🗺️ Renaming Campaigns</a>
       <a class="backlink" href="index.html">← PPC Analyzer</a>
     </div>
   </div>
@@ -108,7 +108,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-20 13:28</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-20 14:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -490,11 +490,9 @@ const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){
   // Product Targeting campaigns use "PAT 1", "PAT 2" (prefix + space + number, no duplicate match segment)
-  // instead of the usual "PREFIX_MATCH_NUM" pattern. Match+number stay space-joined ("EXACT 1") regardless
-  // of cfg.separator — only prefix/match and the segments after the number use the configurable separator.
+  // instead of the usual "PREFIX_MATCH_NUM" pattern.
   const first = cfg.type==='pt'? (num!=null? `${cfg.prefix} ${num}` : String(cfg.prefix)) : null;
-  const matchSeg = num!=null? `${match} ${num}` : match;
-  const parts = first!=null? [first] : [cfg.prefix, matchSeg];
+  const parts = first!=null? [first] : (()=>{ const p=[cfg.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
   parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency);
   return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_');
 }
@@ -514,8 +512,7 @@ function buildName(cfg,match,num){
   if(tmpl){
     const suffix=refreshDateToken(tmpl.suffix);
     const first = cfg.type==='pt'? (num!=null? `${tmpl.prefix} ${num}` : String(tmpl.prefix)) : null;
-    const matchSeg = num!=null? `${match} ${num}` : match;
-    const parts = first!=null? [first] : [tmpl.prefix, matchSeg];
+    const parts = first!=null? [first] : (()=>{ const p=[tmpl.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
     parts.push(suffix);
     return parts.filter(x=>x!=='').join(cfg.separator||'_');
   }
