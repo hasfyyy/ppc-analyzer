@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:39</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 11:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -899,27 +899,20 @@ function wireSidebar(){
 }
 
 /* ============================ TARGETS (SP + SB) ============================ */
-// A keyword/target can be individually "enabled" while the campaign around it is paused — DATA.targets only
-// carries the target's own state, so anything that reads it needs this too or a paused campaign's leftovers
-// show up as if they were still running (wrong "underperforming", wrong "duplicate", wrong bid suggestion).
-// A campaign can have State=enabled in the bulk export yet be functionally dead — Daily Budget set to $0
-// (or blank) means Amazon won't serve it another cent no matter what dayparting/schedule says, so treating
-// it as "still running" produced bid/placement suggestions for a campaign that can never act on them.
-function enabledCampaignIds(product){
-  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled' && c.dailyBudget>1).map(c=>c.campaignId));
-}
-// Dayparting flips a campaign's State between enabled/paused on a schedule — at whatever moment the bulk
-// was exported, a perfectly normal dayparted campaign can read "paused" even though it has real performance
-// data and will be back on later. Excluding it from Bid/Placement Optimizer would blind those tabs to any
-// account that uses dayparting. Optimize only needs "can it still spend" (budget>0) — Targets/Duplicates
-// keep the stricter State check above since those decide actual pause/duplicate actions, not suggestions.
+// A keyword/target can be individually "enabled" while the campaign around it isn't spending — DATA.targets
+// only carries the target's own state, so anything that reads it needs this too, or a dead campaign's
+// leftovers show up as if they were still running (wrong "underperforming", wrong "duplicate", wrong bid).
+// Campaign State (enabled/paused) is NOT used here on purpose — dayparting flips it on a schedule, so at
+// whatever moment the bulk was exported, a perfectly normal dayparted campaign can read "paused" even though
+// it has real performance data and will be back on later. Daily Budget is the reliable signal instead:
+// budget ≤ $1 means Amazon won't serve it another cent regardless of what State or dayparting says.
 function optimizableCampaignIds(product){
   return new Set(DATA.campaigns.filter(c=>c.product===product && c.dailyBudget>1).map(c=>c.campaignId));
 }
 function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
   const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
-  const enabledCamps=enabledCampaignIds(product);
+  const enabledCamps=optimizableCampaignIds(product);
   const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{ const d=derive(agg([t])); let reason=null;
     if(t.clicks>=st.clicks && t.orders<=st.maxOrders) reason='No Sales';
@@ -1194,7 +1187,7 @@ function renderProducts(){
   // ---- auto-detected underperformers: no manual pre-selection — thresholds flag candidates directly ----
   // Evaluated per (ASIN, campaign) occurrence, not the aggregated ASIN totals above — a product can be fine
   // overall but bleeding money in one specific campaign, so pausing happens at that occurrence, not everywhere.
-  const enabledCamps=enabledCampaignIds(S.product);
+  const enabledCamps=optimizableCampaignIds(S.product);
   // Pausing a campaign's ONLY active product ad would leave it with nothing left to serve — that's a
   // "pause the whole campaign" decision, not a routine underperformer cleanup, so it's excluded here
   // regardless of how bad its numbers look; handle it deliberately instead of via the mass auto-pause.
@@ -1334,7 +1327,7 @@ function exportTargetsPause(product,rows){
 // so it's obvious which copy to keep and which to pause.
 function renderDuplicates(){
   const st=stFor('duplicates'); if(st.minSpend===undefined) st.minSpend=0;
-  const enabledCampIds=enabledCampaignIds(S.product);
+  const enabledCampIds=optimizableCampaignIds(S.product);
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && enabledCampIds.has(t.campaignId));
   // Scoped to portfolio — the same literal text (especially the 4 generic Auto expressions: close-match,
   // loose-match, substitutes, complements, which exist identically on EVERY auto campaign for EVERY product)
@@ -1757,7 +1750,8 @@ function renderOptBudget(){
   if(st.lowUtil===undefined) st.lowUtil=50; if(st.badAcos===undefined) st.badAcos=60; if(st.decBudgetPct===undefined) st.decBudgetPct=20;
   if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=30;
   const days=Math.max(1, st.periodDays);
-  const camps=DATA.campaigns.filter(c=>c.product===S.product && c.state==='enabled' && c.dailyBudget>1 && c.spend>=st.minSpend);
+  // Same dayparting reasoning as the rest of Optimize — State alone isn't reliable, budget is.
+  const camps=DATA.campaigns.filter(c=>c.product===S.product && c.dailyBudget>1 && c.spend>=st.minSpend);
   let rows=camps.map(c=>{
     const d=derive(c);
     const util=campaignBudgetUtil(c,days)*100;
