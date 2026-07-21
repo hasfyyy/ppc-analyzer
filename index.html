@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:04</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:08</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -917,6 +917,9 @@ function renderTargets(product){
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   rows.forEach((r,i)=>r._uid=tab+i);
+  const allRows=rows;
+  if(st.reasonFilter===undefined) st.reasonFilter='all';
+  if(st.reasonFilter!=='all') rows=rows.filter(r=>r.reason===st.reasonFilter);
   const sel=selFor(tab); const totals=agg(rows);
   const cols=[
     {key:'reason',label:'Reason',l:true,noSort:true,cell:r=>`<span class="badge ${r.reason==='No Sales'?'nt':''}" style="${r.reason==='High ACoS'?'background:#fef3e2;color:#c2760a;':''}">${r.reason}</span>`},
@@ -943,6 +946,11 @@ function renderTargets(product){
         <div class="field"><label>Min Spend</label><input type="number" id="tg-ms" value="${st.minSpend}"></div>
         <div class="field"><label>Portfolio</label><select id="tg-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="tg-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
+        <div class="field"><label>Show</label><select id="tg-reasonf">
+          <option value="all" ${st.reasonFilter==='all'?'selected':''}>All (${allRows.length})</option>
+          <option value="No Sales" ${st.reasonFilter==='No Sales'?'selected':''}>No Sales (${allRows.filter(r=>r.reason==='No Sales').length})</option>
+          <option value="High ACoS" ${st.reasonFilter==='High ACoS'?'selected':''}>Has Sales / High ACoS (${allRows.filter(r=>r.reason==='High ACoS').length})</option>
+        </select></div>
       </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
@@ -961,6 +969,7 @@ function renderTargets(product){
   $('#tg-acos').oninput=e=>{st.acos=+e.target.value; upd();};
   $('#tg-mo').oninput=debounce(()=>{st.maxOrders=+$('#tg-mo').value; upd();},250);
   $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; upd();},250);
+  $('#tg-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
   $('#tg-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#tg-camp').oninput=debounce(()=>{st.camp=$('#tg-camp').value; upd();},220);
   $('#tg-dlall').onclick=()=>exportTargetsPause(product,rows);
