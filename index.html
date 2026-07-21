@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 09:35</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 09:43</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1171,7 +1171,12 @@ function renderProducts(){
   // Evaluated per (ASIN, campaign) occurrence, not the aggregated ASIN totals above — a product can be fine
   // overall but bleeding money in one specific campaign, so pausing happens at that occurrence, not everywhere.
   const enabledCamps=enabledCampaignIds(S.product);
-  const candidates=ads.filter(p=>p.state==='enabled' && enabledCamps.has(p.campaignId)).filter(p=>{
+  // Pausing a campaign's ONLY active product ad would leave it with nothing left to serve — that's a
+  // "pause the whole campaign" decision, not a routine underperformer cleanup, so it's excluded here
+  // regardless of how bad its numbers look; handle it deliberately instead of via the mass auto-pause.
+  const enabledAdsByCamp={};
+  DATA.productAds.forEach(p=>{ if(p.product===S.product && p.state==='enabled') enabledAdsByCamp[p.campaignId]=(enabledAdsByCamp[p.campaignId]||0)+1; });
+  const candidates=ads.filter(p=>p.state==='enabled' && enabledCamps.has(p.campaignId) && enabledAdsByCamp[p.campaignId]>1).filter(p=>{
     if(p.spend<st.pMinSpend) return false;
     const d=derive(agg([p]));
     if(p.clicks>=st.pClicks && p.orders<=st.pMaxOrders) return true;
@@ -1216,7 +1221,7 @@ function renderProducts(){
         <div class="field"><label>Max Orders</label><input type="number" id="pr-mo" value="${st.pMaxOrders}"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="pr-ms" value="${st.pMinSpend}"></div>
       </div>
-      <div class="hint" style="margin-top:6px;">Flags any product ad matching a rule below, per campaign it runs in — not the aggregated totals above. Uncheck any you don't want paused.</div>
+      <div class="hint" style="margin-top:6px;">Flags any product ad matching a rule below, per campaign it runs in — not the aggregated totals above. A campaign's only remaining active product ad is never flagged, even if it matches — pausing it would leave the campaign with nothing to serve. Uncheck any you don't want paused.</div>
       <div class="tablewrap" style="margin-top:10px;"><table><thead><tr>
         <th class="cellchk"><input type="checkbox" id="pr-selall" ${allChecked?'checked':''}></th>
         <th class="l">Product</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th class="l">Why</th>
