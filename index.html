@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-20 17:56</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 09:35</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -247,6 +247,7 @@ const MATCH = {
   operation: t=>t.join(' ')==='operation',
   campaignId: t=>t.join(' ')==='campaign id',
   adGroupId: t=>t.join(' ')==='ad group id',
+  adId: t=>t.join(' ')==='ad id',
   portfolioId: t=>t.join(' ')==='portfolio id',
   keywordId: t=>t.join(' ')==='keyword id',
   productTargetingId: t=>t.join(' ')==='product targeting id',
@@ -312,8 +313,8 @@ function parseWorkbook(wb){
       } else if(ent==='ad group'){
         DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
       } else if(ent==='product ad'){
-        const sku=String(g('sku')||''), asin=String(g('asin')||'');
-        DATA.productAds.push(Object.assign({product,campaignId,adGroupId,sku,asin,state:String(g('state')||'').toLowerCase()},met));
+        const sku=String(g('sku')||''), asin=String(g('asin')||''), adId=String(g('adId')||'').trim();
+        DATA.productAds.push(Object.assign({product,campaignId,adGroupId,adId,sku,asin,state:String(g('state')||'').toLowerCase()},met));
         (DATA.skuByCampaign[campaignId]=DATA.skuByCampaign[campaignId]||[]).push({sku,asin});
       } else if(ent==='keyword'){
         DATA.targets.push(Object.assign({kind:'keyword',product,campaignId,adGroupId,id:String(g('keywordId')||''),text:String(g('keywordText')||''),matchType:String(g('matchType')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
@@ -1235,7 +1236,9 @@ function renderProducts(){
 function exportProductsPause(pauseRows, product){
   if(!pauseRows.length){ alert('Nothing to pause with the current selection/thresholds.'); return; }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
-  const out=pauseRows.map(r=>bulkRow({'Product':prod,'Entity':'Product ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'SKU':r.sku,'State':'paused'}));
+  // Amazon's bulk validator rejects a Product ad Update row without "Ad ID" ("Missing value for column: Ad
+  // ID") — SKU + Campaign ID + Ad Group ID alone isn't enough to identify the row anymore.
+  const out=pauseRows.map(r=>bulkRow({'Product':prod,'Entity':'Product ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Ad ID':r.adId,'SKU':r.sku,'State':'paused'}));
   writeBulk(out, (product==='SB'?'sb_':'')+'products_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} product ad pause row(s) across ${new Set(pauseRows.map(r=>r.campaignId)).size} campaign(s).`);
 }
