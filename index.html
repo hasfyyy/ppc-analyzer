@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:37</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:39</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -906,7 +906,7 @@ function wireSidebar(){
 // (or blank) means Amazon won't serve it another cent no matter what dayparting/schedule says, so treating
 // it as "still running" produced bid/placement suggestions for a campaign that can never act on them.
 function enabledCampaignIds(product){
-  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled' && c.dailyBudget>0).map(c=>c.campaignId));
+  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled' && c.dailyBudget>1).map(c=>c.campaignId));
 }
 // Dayparting flips a campaign's State between enabled/paused on a schedule — at whatever moment the bulk
 // was exported, a perfectly normal dayparted campaign can read "paused" even though it has real performance
@@ -914,7 +914,7 @@ function enabledCampaignIds(product){
 // account that uses dayparting. Optimize only needs "can it still spend" (budget>0) — Targets/Duplicates
 // keep the stricter State check above since those decide actual pause/duplicate actions, not suggestions.
 function optimizableCampaignIds(product){
-  return new Set(DATA.campaigns.filter(c=>c.product===product && c.dailyBudget>0).map(c=>c.campaignId));
+  return new Set(DATA.campaigns.filter(c=>c.product===product && c.dailyBudget>1).map(c=>c.campaignId));
 }
 function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
@@ -1757,7 +1757,7 @@ function renderOptBudget(){
   if(st.lowUtil===undefined) st.lowUtil=50; if(st.badAcos===undefined) st.badAcos=60; if(st.decBudgetPct===undefined) st.decBudgetPct=20;
   if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=30;
   const days=Math.max(1, st.periodDays);
-  const camps=DATA.campaigns.filter(c=>c.product===S.product && c.state==='enabled' && c.dailyBudget>0 && c.spend>=st.minSpend);
+  const camps=DATA.campaigns.filter(c=>c.product===S.product && c.state==='enabled' && c.dailyBudget>1 && c.spend>=st.minSpend);
   let rows=camps.map(c=>{
     const d=derive(c);
     const util=campaignBudgetUtil(c,days)*100;
