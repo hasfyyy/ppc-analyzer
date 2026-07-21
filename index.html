@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:31</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:37</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -908,6 +908,14 @@ function wireSidebar(){
 function enabledCampaignIds(product){
   return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled' && c.dailyBudget>0).map(c=>c.campaignId));
 }
+// Dayparting flips a campaign's State between enabled/paused on a schedule — at whatever moment the bulk
+// was exported, a perfectly normal dayparted campaign can read "paused" even though it has real performance
+// data and will be back on later. Excluding it from Bid/Placement Optimizer would blind those tabs to any
+// account that uses dayparting. Optimize only needs "can it still spend" (budget>0) — Targets/Duplicates
+// keep the stricter State check above since those decide actual pause/duplicate actions, not suggestions.
+function optimizableCampaignIds(product){
+  return new Set(DATA.campaigns.filter(c=>c.product===product && c.dailyBudget>0).map(c=>c.campaignId));
+}
 function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
   const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
@@ -1431,7 +1439,7 @@ function decreaseTierFor(acos, st){
 // campaigns share their placements across many keywords — compensating one keyword's cut on a shared
 // placement made no sense there, so that cross-linked logic only applies here, to single-target campaigns.
 function singleKwCampaigns(product){
-  const enabledCamps=enabledCampaignIds(product);
+  const enabledCamps=optimizableCampaignIds(product);
   const counts={};
   DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId)) counts[t.campaignId]=(counts[t.campaignId]||0)+1; });
   const set=new Set(); Object.keys(counts).forEach(cid=>{ if(counts[cid]===1) set.add(cid); });
@@ -1446,7 +1454,7 @@ function renderOptBids(){
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
-  const enabledCamps=enabledCampaignIds(S.product);
+  const enabledCamps=optimizableCampaignIds(S.product);
   // Single-keyword campaigns get their placement suggestions folded right into this same table — one bid
   // change is the campaign's only lever besides placement %, so seeing them apart (in a separate section
   // below) meant changing a bid without knowing what was happening on its placements at the same time.
@@ -1607,7 +1615,7 @@ function computePlacementOptRows(product, filters){
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
   if(st.zeroOrderClicks===undefined) st.zeroOrderClicks=9;
-  const enabledCamps=enabledCampaignIds(product);
+  const enabledCamps=optimizableCampaignIds(product);
   // Multiple keywords share one campaign's placement %, so pushing/increasing it based on one campaign-wide
   // signal is exactly the ambiguity that made the earlier bid↔placement cross-linking unreliable for
   // multi-keyword campaigns. Restricting the positive actions (push/increase) to single-keyword campaigns
