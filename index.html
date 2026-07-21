@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 11:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 12:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1457,14 +1457,26 @@ function renderOptBids(){
   // below) meant changing a bid without knowing what was happening on its placements at the same time.
   // Multi-keyword campaigns don't get this column — their placement % is shared across many keywords, so it
   // stays exclusive to the Placement Optimizer section below.
-  const placementsByCamp={};
-  computePlacementOptRows(S.product, {}).rows.forEach(pr=>{ (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
+  const placementsByCamp={}; const placeStatsByCamp={};
+  const plc=computePlacementOptRows(S.product, {});
+  plc.rows.forEach(pr=>{ (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
+  plc.allRows.forEach(pr=>{ (placeStatsByCamp[pr.campaignId]=placeStatsByCamp[pr.campaignId]||[]).push(pr); });
+  const optplaceSt=stFor('optplace'); // already defaulted by computePlacementOptRows above
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
     let action='none', newBid=t.bid, pct=null, reason=null;
     if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
-      const decPct = t.orders>=1? decreaseTierFor(d.acos, st) : null;
+      let decPct = t.orders>=1? decreaseTierFor(d.acos, st) : null;
+      // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement — cutting it
+      // because the blended ACoS is bad would also squeeze a placement that's individually doing fine.
+      // Skip the cut here and let Placement Optimizer handle the actually-bad placement(s) on their own;
+      // the good one is left alone instead of getting unfairly starved by a campaign-wide bid decrease.
+      if(decPct!=null && singleKw.has(t.campaignId)){
+        const placements=placeStatsByCamp[t.campaignId]||[];
+        const hasGoodPlacement=placements.some(p=>p.clicks>=optplaceSt.minClicks && p.orders>=1 && p.acos<optplaceSt.lowAcos);
+        if(hasGoodPlacement) decPct=null;
+      }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); reason='healthy ACoS'; }
     }
