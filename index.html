@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 12:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 15:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1949,12 +1949,23 @@ function exportNewCampaigns(opps, settings){
     existingNames.add(name); nextNum++;
     return name;
   }
+  // Search terms are always scoped to a source portfolio (the one you picked to copy naming from) — a
+  // harvested campaign belongs there too. Resolved from the portfolio NAME (that's all the launch panel
+  // has) by finding any existing campaign already in it and reusing its real Portfolio ID.
+  const portfolioId=(()=>{
+    const name=settings.portfolioName;
+    if(!name || name==='(No Portfolio)') return '';
+    const c=DATA.campaigns.find(c=>(c.portfolioName||'(No Portfolio)')===name && c.portfolioId);
+    return c? c.portfolioId : '';
+  })();
   const out=[]; let missingSku=0;
   const perKwBid = o => settings.bidOverride || (o.cpc&&o.cpc>0? Math.max(0.10,+o.cpc.toFixed(2)) : 0.75);
   function addCampaign(cname, kwList){
     const agname=cname; // Ad Group ID/name = campaign name, no "_AG" suffix
     const agDefaultBid = kwList.length===1? perKwBid(kwList[0]) : (settings.bidOverride||0.75);
-    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'}));
+    const campRow={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'};
+    if(portfolioId) campRow['Portfolio ID']=portfolioId;
+    out.push(bulkRow(campRow));
     out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':agDefaultBid}));
     const skuSet=new Set(); kwList.forEach(o=>{ (DATA.skuByCampaign[o.campaignId]||[]).forEach(s=>{ if(s.sku) skuSet.add(s.sku); }); });
     const skus=[...skuSet]; if(!skus.length) missingSku++;
