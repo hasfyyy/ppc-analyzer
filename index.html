@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 11:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 11:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -913,11 +913,13 @@ function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
   const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
   const enabledCamps=optimizableCampaignIds(product);
+  const singleKw=singleKwCampaigns(product);
   const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{ const d=derive(agg([t])); let reason=null;
     if(t.clicks>=st.clicks && t.orders<=st.maxOrders) reason='No Sales';
     else if(t.orders>=1 && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
     return reason && t.spend>=st.minSpend ? Object.assign({reason},t,d):null; }).filter(Boolean);
+  if(st.exSup) rows=rows.filter(r=>!singleKw.has(r.campaignId));
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   rows.forEach((r,i)=>r._uid=tab+i);
@@ -955,6 +957,7 @@ function renderTargets(product){
           <option value="No Sales" ${st.reasonFilter==='No Sales'?'selected':''}>No Sales (${allRows.filter(r=>r.reason==='No Sales').length})</option>
           <option value="High ACoS" ${st.reasonFilter==='High ACoS'?'selected':''}>Has Sales / High ACoS (${allRows.filter(r=>r.reason==='High ACoS').length})</option>
         </select></div>
+        <div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;display:flex;align-items:center;" title="Excludes single-keyword (SUP) campaigns — those get bid+placement suggestions together in Optimize instead."><input type="checkbox" id="tg-exsup" ${st.exSup?'checked':''}> Exclude SUP (single-keyword)</label></div>
       </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
@@ -974,6 +977,7 @@ function renderTargets(product){
   $('#tg-mo').oninput=debounce(()=>{st.maxOrders=+$('#tg-mo').value; upd();},250);
   $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; upd();},250);
   $('#tg-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
+  $('#tg-exsup').onchange=e=>{st.exSup=e.target.checked; upd();};
   $('#tg-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#tg-camp').oninput=debounce(()=>{st.camp=$('#tg-camp').value; upd();},220);
   $('#tg-dlall').onclick=()=>exportTargetsPause(product,rows);
@@ -1634,10 +1638,12 @@ function computePlacementOptRows(product, filters){
     // even though there's no ACoS to compute (division by zero sales).
     if((e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)) || (e.orders===0 && e.clicks>=st.zeroOrderClicks)){
       action='decrease'; newPct=Math.max(0, e.percentage-st.decStep);
-    } else if(isSingle && st.pushEnabled && e.percentage<st.pushBelow){
-      // Below the floor % on a multi-keyword campaign, a placement rarely gets enough auctions to even
-      // build up the clicks needed to judge its ACoS — so this doesn't wait for minClicks/orders like the
-      // others. Push it up first; the ACoS-based rules above/below take over once it's actually competing.
+    } else if(isSingle && st.pushEnabled && e.percentage<st.pushBelow && !(e.clicks>=st.minClicks && e.orders>=1 && d.acos>st.lowAcos)){
+      // Below the floor % with too little data to judge ACoS yet, a placement gets the benefit of the
+      // doubt — push it up so it can actually start competing. But if there's ALREADY enough clicks/orders
+      // to see the ACoS isn't good (like 35-42% here), that benefit of the doubt doesn't apply anymore —
+      // pushing a placement we already know is mediocre just because its % happens to be low was the bug:
+      // it fought against a same-campaign bid decrease instead of agreeing with it.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
     } else if(isSingle && e.clicks>=st.minClicks && e.orders>=1 && d.acos<st.lowAcos){
       action='increase'; newPct=Math.min(900, e.percentage+st.incStep);
