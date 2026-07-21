@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 09:43</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:04</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -670,12 +670,14 @@ function renderPlacement(){
 function renderNegatives(product){
   const tab = product==='SP'?'negatives':'negatives-sb';
   const st=stFor(tab); if(st.acos===undefined)st.acos=100; if(st.clicks===undefined)st.clicks=10;
+  if(st.minSpend===undefined)st.minSpend=0;
   if(st.orders===undefined)st.orders='all'; if(st.negated===undefined)st.negated='all';
   if(st.exExact===undefined)st.exExact=true; // negating a term that IS the exact keyword targeted makes no sense — excluded by default
   const src=DATA.searchTerms.filter(s=>s.product===product);
   let cand=src.map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm)}); })
     .filter(r=>{
       if(r.clicks < st.clicks) return false;
+      if(r.spend < st.minSpend) return false;
       const noConv = r.orders===0;
       const highAcos = r.orders>0 && (r.acos===Infinity || r.acos>st.acos);
       if(!(noConv||highAcos)) return false;
@@ -725,6 +727,7 @@ function renderNegatives(product){
       <div class="ctrls">
         <div class="slider"><div class="top"><span>ACoS Threshold</span><b>&gt;${st.acos}%</b></div><input type="range" id="ng-acos" min="0" max="100" step="5" value="${st.acos}"></div>
         <div class="slider"><div class="top"><span>Clicks (No Conv.)</span><b>≥ ${st.clicks}</b></div><input type="range" id="ng-clicks" min="0" max="30" step="1" value="${st.clicks}"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="ng-minspend" value="${st.minSpend}" style="width:90px;"></div>
         <div class="field"><label>Orders Filter</label><select id="ng-orders"><option value="all" ${st.orders==='all'?'selected':''}>All</option><option value="0" ${st.orders==='0'?'selected':''}>No orders (0)</option><option value="1" ${st.orders==='1'?'selected':''}>Has orders</option></select></div>
         <div class="field"><label>Exclude</label><label style="flex-direction:row;gap:6px;font-size:12px;" title="A term identical to the exact keyword already targeted can't be meaningfully negated — excluded by default."><input type="checkbox" id="ng-exex" ${st.exExact?'checked':''}> Exact Match campaigns</label></div>
         ${spTip?`<div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;"><input type="checkbox" id="ng-exasin" ${st.exAsin?'checked':''}> ASIN (b0…)</label></div>`:''}
@@ -749,6 +752,7 @@ function renderNegatives(product){
   const upd=()=>renderNegatives(product);
   $('#ng-acos').oninput=e=>{st.acos=+e.target.value; upd();};
   $('#ng-clicks').oninput=e=>{st.clicks=+e.target.value; upd();};
+  $('#ng-minspend').oninput=debounce(()=>{st.minSpend=+$('#ng-minspend').value||0; upd();},250);
   $('#ng-orders').onchange=e=>{st.orders=e.target.value; upd();};
   $('#ng-negf').onchange=e=>{st.negated=e.target.value; upd();};
   $('#ng-exex').onchange=e=>{st.exExact=e.target.checked; upd();};
