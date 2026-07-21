@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 10:31</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -902,8 +902,11 @@ function wireSidebar(){
 // A keyword/target can be individually "enabled" while the campaign around it is paused — DATA.targets only
 // carries the target's own state, so anything that reads it needs this too or a paused campaign's leftovers
 // show up as if they were still running (wrong "underperforming", wrong "duplicate", wrong bid suggestion).
+// A campaign can have State=enabled in the bulk export yet be functionally dead — Daily Budget set to $0
+// (or blank) means Amazon won't serve it another cent no matter what dayparting/schedule says, so treating
+// it as "still running" produced bid/placement suggestions for a campaign that can never act on them.
 function enabledCampaignIds(product){
-  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled').map(c=>c.campaignId));
+  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled' && c.dailyBudget>0).map(c=>c.campaignId));
 }
 function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
