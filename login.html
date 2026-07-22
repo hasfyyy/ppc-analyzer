@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PPC Analyzer — Autentificare</title>
+<script src="supabase-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1115;
+    color: #eaeaea;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+  }
+  .card {
+    background: #171a21;
+    border: 1px solid #2a2e38;
+    border-radius: 12px;
+    padding: 32px;
+    width: 100%;
+    max-width: 380px;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  p.sub { color: #9aa0ab; font-size: 0.9rem; margin: 0 0 24px; }
+  .tabs { display: flex; margin-bottom: 20px; border-bottom: 1px solid #2a2e38; }
+  .tab {
+    flex: 1; text-align: center; padding: 10px 0; cursor: pointer;
+    color: #9aa0ab; border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: #fff; border-bottom-color: #6c8cff; }
+  label { font-size: 0.85rem; color: #c3c7d0; display: block; margin: 14px 0 6px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid #2a2e38; background: #0f1115; color: #fff; font-size: 0.95rem;
+  }
+  button.submit {
+    width: 100%; margin-top: 20px; padding: 12px; border: none; border-radius: 8px;
+    background: #6c8cff; color: #0f1115; font-weight: 600; cursor: pointer; font-size: 0.95rem;
+  }
+  button.submit:hover { background: #85a2ff; }
+  .msg { margin-top: 16px; font-size: 0.85rem; padding: 10px 12px; border-radius: 8px; display: none; }
+  .msg.error { background: #3a1f24; color: #ff8a8a; display: block; }
+  .msg.info { background: #1f2e3a; color: #8ac4ff; display: block; }
+  .msg.success { background: #1f3a24; color: #8aff9e; display: block; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>PPC Analyzer</h1>
+  <p class="sub">Autentifică-te sau cere acces</p>
+
+  <div class="tabs">
+    <div class="tab active" id="tabLogin" onclick="switchTab('login')">Autentificare</div>
+    <div class="tab" id="tabSignup" onclick="switchTab('signup')">Cer acces</div>
+  </div>
+
+  <form id="loginForm">
+    <label>Email</label>
+    <input type="email" id="loginEmail" required autocomplete="email" />
+    <label>Parolă</label>
+    <input type="password" id="loginPassword" required autocomplete="current-password" />
+    <button class="submit" type="submit">Intră</button>
+  </form>
+
+  <form id="signupForm" style="display:none">
+    <label>Email</label>
+    <input type="email" id="signupEmail" required autocomplete="email" />
+    <label>Parolă (minim 6 caractere)</label>
+    <input type="password" id="signupPassword" required minlength="6" autocomplete="new-password" />
+    <button class="submit" type="submit">Trimite cererea</button>
+  </form>
+
+  <div class="msg" id="msgBox"></div>
+</div>
+
+<script>
+  var supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+  function switchTab(tab) {
+    document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+    document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
+    document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+    document.getElementById('signupForm').style.display = tab === 'signup' ? 'block' : 'none';
+    hideMsg();
+  }
+
+  function showMsg(text, type) {
+    var box = document.getElementById('msgBox');
+    box.textContent = text;
+    box.className = 'msg ' + type;
+  }
+  function hideMsg() {
+    var box = document.getElementById('msgBox');
+    box.className = 'msg';
+  }
+
+  function getRedirectTarget() {
+    var params = new URLSearchParams(location.search);
+    return decodeURIComponent(params.get('redirect') || 'index.html');
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    hideMsg();
+    var email = document.getElementById('loginEmail').value;
+    var password = document.getElementById('loginPassword').value;
+
+    var { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      showMsg('Email sau parolă greșită.', 'error');
+      return;
+    }
+
+    var { data: profile } = await supabase
+      .from('profiles')
+      .select('status')
+      .eq('id', data.user.id)
+      .single();
+
+    if (!profile || profile.status === 'pending') {
+      showMsg('Contul tău așteaptă aprobare. Revino mai târziu.', 'info');
+      await supabase.auth.signOut();
+      return;
+    }
+    if (profile.status === 'rejected') {
+      showMsg('Cererea de acces a fost respinsă.', 'error');
+      await supabase.auth.signOut();
+      return;
+    }
+
+    showMsg('Autentificat, te redirecționez...', 'success');
+    location.href = getRedirectTarget();
+  });
+
+  document.getElementById('signupForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    hideMsg();
+    var email = document.getElementById('signupEmail').value;
+    var password = document.getElementById('signupPassword').value;
+
+    var { error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      showMsg(error.message, 'error');
+      return;
+    }
+    showMsg('Cererea a fost trimisă. Vei putea intra după ce ești aprobat.', 'success');
+    document.getElementById('signupForm').reset();
+  });
+
+  // Dacă e deja logat și aprobat, sar direct peste login
+  (async function checkExistingSession() {
+    var { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    var { data: profile } = await supabase
+      .from('profiles')
+      .select('status')
+      .eq('id', session.user.id)
+      .single();
+    if (profile && profile.status === 'approved') {
+      location.href = getRedirectTarget();
+    }
+  })();
+</script>
+
+</body>
+</html>

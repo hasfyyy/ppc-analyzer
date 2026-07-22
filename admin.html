@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PPC Analyzer — Admin</title>
+<script src="supabase-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1115; color: #eaeaea; margin: 0; padding: 32px;
+  }
+  h1 { font-size: 1.3rem; margin-bottom: 4px; }
+  p.sub { color: #9aa0ab; margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #2a2e38; font-size: 0.9rem; }
+  th { color: #9aa0ab; font-weight: 500; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: 0.75rem; }
+  .badge.pending { background: #3a331f; color: #ffd98a; }
+  .badge.approved { background: #1f3a24; color: #8aff9e; }
+  .badge.rejected { background: #3a1f24; color: #ff8a8a; }
+  button {
+    padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer;
+    font-size: 0.8rem; margin-right: 6px; font-weight: 600;
+  }
+  button.approve { background: #234a2a; color: #8aff9e; }
+  button.reject { background: #4a2328; color: #ff8a8a; }
+  button.approve:hover { background: #2c5a34; }
+  button.reject:hover { background: #5a2a30; }
+  #guard, #deny { text-align: center; margin-top: 100px; color: #9aa0ab; }
+</style>
+</head>
+<body>
+
+<div id="guard">Se verifică accesul...</div>
+<div id="deny" style="display:none">Nu ai acces la această pagină.</div>
+
+<div id="content" style="display:none">
+  <h1>Panou admin — PPC Analyzer</h1>
+  <p class="sub">Aprobă sau respinge cererile de acces</p>
+
+  <table>
+    <thead>
+      <tr><th>Email</th><th>Status</th><th>Cerut la</th><th>Acțiuni</th></tr>
+    </thead>
+    <tbody id="userRows"></tbody>
+  </table>
+</div>
+
+<script>
+  var supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+  async function init() {
+    var { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      location.href = 'login.html?redirect=' + encodeURIComponent('admin.html');
+      return;
+    }
+
+    var { data: myProfile } = await supabase
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', session.user.id)
+      .single();
+
+    if (!myProfile || !myProfile.is_admin) {
+      document.getElementById('guard').style.display = 'none';
+      document.getElementById('deny').style.display = 'block';
+      return;
+    }
+
+    document.getElementById('guard').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+    loadUsers();
+  }
+
+  async function loadUsers() {
+    var { data: users, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      alert('Eroare la încărcarea utilizatorilor: ' + error.message);
+      return;
+    }
+
+    var rows = users.map(function (u) {
+      var date = new Date(u.created_at).toLocaleDateString('ro-RO');
+      return (
+        '<tr>' +
+          '<td>' + u.email + '</td>' +
+          '<td><span class="badge ' + u.status + '">' + u.status + '</span></td>' +
+          '<td>' + date + '</td>' +
+          '<td>' +
+            '<button class="approve" onclick="setStatus(\'' + u.id + '\', \'approved\')">Aprobă</button>' +
+            '<button class="reject" onclick="setStatus(\'' + u.id + '\', \'rejected\')">Respinge</button>' +
+          '</td>' +
+        '</tr>'
+      );
+    });
+
+    document.getElementById('userRows').innerHTML = rows.join('');
+  }
+
+  async function setStatus(userId, status) {
+    var { error } = await supabase
+      .from('profiles')
+      .update({ status: status })
+      .eq('id', userId);
+
+    if (error) {
+      alert('Eroare: ' + error.message);
+      return;
+    }
+    loadUsers();
+  }
+
+  init();
+</script>
+
+</body>
+</html>
