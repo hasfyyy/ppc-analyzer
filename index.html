@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 18:54</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 19:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1513,12 +1513,18 @@ function renderOptBids(){
       // fix for THAT placement's own percentage — cutting the shared base bid on top of that is redundant
       // (double-dips on the same problem) AND collateral (a placement sitting at 0% adjustment, like Product
       // Pages here, has no percentage to absorb the cut — its real bid just drops along with everyone else's,
-      // even though it wasn't the placement that was actually bad). Skip the base-bid cut whenever a placement
-      // fix already exists; only cut the shared bid when the bad ACoS isn't localized to a specific placement.
+      // even though it wasn't the placement that was actually bad). Skip the base-bid cut only when that
+      // placement fix covers the bulk of the campaign's spend — a minor placement getting trimmed shouldn't
+      // excuse leaving a tier-3 (ACoS>=100%) keyword's bid untouched just because ONE small placement crossed
+      // its own threshold. Below tier 3, or whenever the fixed placement(s) account for most of the spend,
+      // the placement fix is trusted to have handled it on its own.
       if(decPct!=null && singleKw.has(t.campaignId)){
         const placements=placementsByCamp[t.campaignId]||[];
-        const alreadyHandledAtPlacementLevel=placements.some(p=>p.action==='decrease');
-        if(alreadyHandledAtPlacementLevel) decPct=null;
+        const decreasedSpend=placements.filter(p=>p.action==='decrease').reduce((s,p)=>s+p.spend,0);
+        const totalPlacementSpend=placements.reduce((s,p)=>s+p.spend,0);
+        const majorityCovered = totalPlacementSpend>0 && decreasedSpend/totalPlacementSpend>0.5;
+        const isTier3 = d.acos===Infinity || d.acos>=st.hi3;
+        if(decreasedSpend>0 && (!isTier3 || majorityCovered)) decPct=null;
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); reason='healthy ACoS'; }
