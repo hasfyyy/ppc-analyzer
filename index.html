@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 17:26</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 18:54</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -280,10 +280,26 @@ function colmap(headers){
 }
 function detectProduct(v){ const s=String(v||'').toLowerCase(); return s.includes('brand')?'SB':'SP'; }
 
+// Some bulk exports (esp. ones re-saved/merged by third-party tools) carry a stale/wrong <dimension> tag
+// (e.g. "A1" even though the sheet actually holds hundreds of rows). SheetJS trusts that tag for '!ref',
+// so sheet_to_json silently returns almost nothing and the whole sheet gets skipped below. The actual
+// parsed cells are keyed by address regardless of the bogus dimension, so recompute '!ref' from those
+// real addresses before converting — a no-op when the tag was already correct.
+function fixSheetRange(ws){
+  let minR=Infinity,minC=Infinity,maxR=-1,maxC=-1;
+  for(const addr in ws){
+    if(addr[0]==='!') continue;
+    const cell=XLSX.utils.decode_cell(addr);
+    if(cell.r<minR) minR=cell.r; if(cell.c<minC) minC=cell.c;
+    if(cell.r>maxR) maxR=cell.r; if(cell.c>maxC) maxC=cell.c;
+  }
+  if(maxR>=0) ws['!ref']=XLSX.utils.encode_range({s:{r:minR,c:minC},e:{r:maxR,c:maxC}});
+}
 function parseWorkbook(wb){
   Object.assign(DATA,{campaigns:[],adGroups:[],productAds:[],targets:[],searchTerms:[],negatives:[],placements:[],campById:{},skuByCampaign:{}});
   wb.SheetNames.forEach(name=>{
     const ws=wb.Sheets[name]; if(!ws) return;
+    fixSheetRange(ws);
     const json=XLSX.utils.sheet_to_json(ws,{defval:''}); if(!json.length) return;
     const headers=Object.keys(json[0]); const c=colmap(headers);
     if(c.entity===undefined && c.searchTerm===undefined && c.campaignId===undefined) return; // not a bulk sheet
@@ -904,12 +920,10 @@ function wireSidebar(){
 // A keyword/target can be individually "enabled" while the campaign around it isn't spending — DATA.targets
 // only carries the target's own state, so anything that reads it needs this too, or a dead campaign's
 // leftovers show up as if they were still running (wrong "underperforming", wrong "duplicate", wrong bid).
-// Campaign State (enabled/paused) is NOT used here on purpose — dayparting flips it on a schedule, so at
-// whatever moment the bulk was exported, a perfectly normal dayparted campaign can read "paused" even though
-// it has real performance data and will be back on later. Daily Budget is the reliable signal instead:
-// budget ≤ $1 means Amazon won't serve it another cent regardless of what State or dayparting says.
+// Campaign State (enabled/paused) is used as the gate here on purpose — only campaigns currently enabled
+// count as optimizable, across Targets, Bid Optimizer, Placement Optimizer and Duplicates alike.
 function optimizableCampaignIds(product){
-  return new Set(DATA.campaigns.filter(c=>c.product===product && c.dailyBudget>1).map(c=>c.campaignId));
+  return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled').map(c=>c.campaignId));
 }
 function renderTargets(product){
   const tab = product==='SP'?'targets':'targets-sb';
