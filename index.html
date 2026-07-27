@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 16:40</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 17:26</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -692,7 +692,9 @@ function renderNegatives(product){
     });
   if(st.term) cand=cand.filter(r=>r.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
   if(st.camp) cand=cand.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  cand.forEach((r,i)=>r._uid=tab+i);
+  // Stable identity, not a positional index — search terms have no ID of their own, so campaign+ad group+
+  // text+match type is the natural stable key (same reasoning as the Optimize tabs above).
+  cand.forEach(r=>r._uid=r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm+'|'+r.matchType);
   const totals=agg(cand);
   cand.forEach(r=>{ r.spendPct = totals.spend? r.spend/totals.spend*100:0; r.salesPct = totals.sales? r.sales/totals.sales*100:0; });
   const wasted=cand.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0);
@@ -735,7 +737,7 @@ function renderNegatives(product){
       </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('Total Candidates',fInt(cand.length))}${kpi('Wasted Spend',fMoney(wasted),'red')}${kpi('High ACoS / No Conv.',`${highA} / ${noConv}`)}${kpi('Selected for Export',fInt(sel.size),'pink')}
+      ${kpi('Total Candidates',fInt(cand.length))}${kpi('Wasted Spend',fMoney(wasted),'red')}${kpi('High ACoS / No Conv.',`${highA} / ${noConv}`)}${kpi('Selected for Export',fInt(cand.filter(r=>sel.has(r._uid)).length),'pink')}
     </div>
     <div class="card pad">
       <div class="rowbar">
@@ -744,7 +746,7 @@ function renderNegatives(product){
       </div>
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${product} Negative Candidates (${cand.length})</h3><div class="spacer"></div>
         <button class="btn ghost" id="ng-dlall">⬇ Download All</button>
-        <button class="btn grad" id="ng-dlsel" ${sel.size?'':'disabled'}>⬇ Export Selected (${sel.size})</button>
+        <button class="btn grad" id="ng-dlsel" ${cand.some(r=>sel.has(r._uid))?'':'disabled'}>⬇ Export Selected (${cand.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="ng-table">${tbl.html}</div>
     </div>`;
@@ -794,7 +796,7 @@ function renderNgram(){
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
-  rows.forEach((e,i)=>e._uid='ng'+i);
+  rows.forEach(e=>e._uid=e.root); // stable identity — the n-gram root is already the aggregation key
   const sel=selFor('ngram');
   const cols=[
     {key:'root',label:'N-gram',l:true,type:'text',sortVal:r=>r.root,cell:r=>`<span class="ng-root link" data-uid="${esc(r._uid)}">▸ ${esc(r.root)}</span>`},
@@ -922,7 +924,9 @@ function renderTargets(product){
   if(st.exSup) rows=rows.filter(r=>!singleKw.has(r.campaignId));
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  rows.forEach((r,i)=>r._uid=tab+i);
+  // Stable identity (real target ID), not a positional index — a stale "targets3" selection would otherwise
+  // silently point at whatever different target ended up at that position after a threshold/filter change.
+  rows.forEach(r=>r._uid=r.campaignId+'|'+r.adGroupId+'|'+r.id);
   const allRows=rows;
   if(st.reasonFilter===undefined) st.reasonFilter='all';
   if(st.reasonFilter!=='all') rows=rows.filter(r=>r.reason===st.reasonFilter);
@@ -961,12 +965,12 @@ function renderTargets(product){
       </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('Underperforming Targets',fInt(rows.length))}${kpi('Wasted Spend',fMoney(rows.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0)),'red')}${kpi('Total Spend',fMoney(totals.spend))}${kpi('Selected to Pause',fInt(sel.size),'pink')}
+      ${kpi('Underperforming Targets',fInt(rows.length))}${kpi('Wasted Spend',fMoney(rows.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0)),'red')}${kpi('Total Spend',fMoney(totals.spend))}${kpi('Selected to Pause',fInt(rows.filter(r=>sel.has(r._uid)).length),'pink')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${product} Underperforming Targets (${rows.length})</h3><div class="spacer"></div>
         <button class="btn ghost" id="tg-dlall">⬇ Download All</button>
-        <button class="btn grad" id="tg-pause" ${sel.size?'':'disabled'}>⏸ Export Pause (${sel.size})</button>
+        <button class="btn grad" id="tg-pause" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>⏸ Export Pause (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="tg-table">${tbl.html}</div>
     </div>`;
@@ -1000,7 +1004,9 @@ function renderHarvesting(){
   if(st.camp) opps=opps.filter(o=>(o.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const statusF=(o,key,val)=>{ if(!val||val==='all')return true; const has=o[key]; return val==='targeted'?has:val==='not'? !has:true; };
   opps=opps.filter(o=>statusF(o,'exact',st.exStat)&&statusF(o,'phrase',st.phStat)&&statusF(o,'broad',st.brStat));
-  opps.forEach((o,i)=>o._uid='hv'+i);
+  // Stable identity — the lowercased search term is already the aggregation key above, so it's unique and
+  // consistent across renders (unlike a positional index, which shifts whenever the filters change the set).
+  opps.forEach(o=>o._uid=o.searchTerm.toLowerCase());
   const totals=agg(opps); const tot=derive(totals);
   const sel=selFor('harvesting');
   const selOpps=opps.filter(o=>sel.has(o._uid));
@@ -1048,7 +1054,7 @@ function renderHarvesting(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">🚀 Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
-        <span class="countnote">${sel.size} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
+        <span class="countnote">${selOpps.length} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
       </div>
       ${renderLaunchPanel(st, selOpps)}
     </div>`;
@@ -1399,8 +1405,8 @@ function renderDuplicates(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Duplicate targets (${groups.length})</h3><div class="spacer"></div>
-        <span class="countnote">Selected to pause: ${sel.size}</span>
-        <button class="btn grad" id="dup-pause" ${sel.size?'':'disabled'}>⏸ Export Pause (${sel.size})</button>
+        <span class="countnote">Selected to pause: ${rowsFlat.filter(r=>sel.has(r._uid)).length}</span>
+        <button class="btn grad" id="dup-pause" ${rowsFlat.some(r=>sel.has(r._uid))?'':'disabled'}>⏸ Export Pause (${rowsFlat.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       ${groups.length? `<div class="tablewrap"><table>
         <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Bid</th></tr></thead>
@@ -1515,7 +1521,10 @@ function renderOptBids(){
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  rows.forEach((r,i)=>r._uid='ob'+i);
+  // Stable identity (real keyword/PT ID), not a positional index — a positional "ob3" meant a different
+  // target every time the threshold/filter changed the row set, so a stale selection either inflated
+  // "Selected to export" with phantom entries or, worse, silently carried over onto the WRONG row.
+  rows.forEach(r=>r._uid=r.campaignId+'|'+r.adGroupId+'|'+r.id);
   const allRows=rows;
   if(st.actionFilter===undefined) st.actionFilter='all';
   if(st.actionFilter!=='all') rows=rows.filter(r=>r.action===st.actionFilter);
@@ -1576,7 +1585,7 @@ function renderOptBids(){
       </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
-      ${kpi('Suggested changes',fInt(allRows.length))}${kpi('Decreases',fInt(allRows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(allRows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(allRows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(sel.size),'pink')}
+      ${kpi('Suggested changes',fInt(allRows.length))}${kpi('Decreases',fInt(allRows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(allRows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(allRows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(allRows.filter(r=>sel.has(r._uid)).length),'pink')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Changes (${rows.length})</h3>
@@ -1587,7 +1596,7 @@ function renderOptBids(){
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
         </select></div>
         <div class="spacer"></div>
-        <button class="btn grad" id="ob-export" ${sel.size?'':'disabled'}>⬇ Export Bid Update (${sel.size})</button>
+        <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>⬇ Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="ob-table">${tbl.html}</div>
     </div>`;
@@ -1696,7 +1705,8 @@ function renderOptPlacements(){
   // (same underlying computation) — showing them here too invites doing the same export twice, so they're
   // hidden by default. Multi-keyword campaigns only ever get decrease suggestions, which live here exclusively.
   let rows = st.hideSingleKw ? rowsAll.filter(r=>!r.isSingle) : rowsAll;
-  rows.forEach((r,i)=>r._uid='op'+i);
+  // Stable identity (campaign + placement), not a positional index — same reasoning as Bid Optimizer above.
+  rows.forEach(r=>r._uid=r.campaignId+'|'+r.rawPlacement);
   const sel=selFor('optplace');
   const totals=agg(rows);
   const actionBadgePl=r=>{
@@ -1747,11 +1757,11 @@ function renderOptPlacements(){
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
-      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Pushed',fInt(rows.filter(r=>r.action==='push').length))}${kpi('Selected to export',fInt(sel.size),'pink')}
+      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Decreases',fInt(rows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Pushed',fInt(rows.filter(r=>r.action==='push').length))}${kpi('Selected to export',fInt(rows.filter(r=>sel.has(r._uid)).length),'pink')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Placement Changes (${rows.length})</h3><div class="spacer"></div>
-        <button class="btn grad" id="op-export" ${sel.size?'':'disabled'}>⬇ Export Placement Update (${sel.size})</button>
+        <button class="btn grad" id="op-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>⬇ Export Placement Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="op-table">${tbl.html}</div>
     </div>`;
@@ -1805,7 +1815,7 @@ function renderOptBudget(){
     return action!=='none'? Object.assign({action,newBudget,util,reason},c,d) : null;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
-  rows.forEach((r,i)=>r._uid='obg'+i);
+  rows.forEach(r=>r._uid=r.campaignId); // stable identity — same reasoning as Bid/Placement Optimizer above
   const sel=selFor('optbudget');
   const totals=agg(rows);
   const actionBadge=r=>r.action==='increase'
