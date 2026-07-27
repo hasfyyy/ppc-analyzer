@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 19:38</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 19:44</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -451,7 +451,10 @@ function sortFor(tab,def){ if(!S.sort[tab]) S.sort[tab]=def||{key:'spend',dir:-1
 /* population getters honoring product toggle */
 const stSP = () => DATA.searchTerms.filter(s=>s.product==='SP');
 const stSB = () => DATA.searchTerms.filter(s=>s.product==='SB');
-const stByToggle = () => DATA.searchTerms.filter(s=>s.product===S.product);
+// Negative Phrase, Harvesting and Keyword Checker all read through here — scoping to enabled campaigns keeps
+// them consistent with Targets/Duplicates: a paused campaign's old search terms shouldn't drive a negative,
+// a harvest launch, or a "already targeted" check for a keyword that isn't actually running anymore.
+const stByToggle = () => { const en=optimizableCampaignIds(S.product); return DATA.searchTerms.filter(s=>s.product===S.product && en.has(s.campaignId)); };
 const targetsByToggle = () => DATA.targets.filter(t=>t.product===S.product);
 const adsByToggle = () => DATA.productAds.filter(p=>p.product===S.product);
 
@@ -689,7 +692,9 @@ function renderNegatives(product){
   if(st.minSpend===undefined)st.minSpend=0;
   if(st.orders===undefined)st.orders='all'; if(st.negated===undefined)st.negated='all';
   if(st.exExact===undefined)st.exExact=true; // negating a term that IS the exact keyword targeted makes no sense — excluded by default
-  const src=DATA.searchTerms.filter(s=>s.product===product);
+  // Same reasoning as Targets/Duplicates: a paused campaign's search terms shouldn't drive a negative export.
+  const enabledCamps=optimizableCampaignIds(product);
+  const src=DATA.searchTerms.filter(s=>s.product===product && enabledCamps.has(s.campaignId));
   let cand=src.map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm)}); })
     .filter(r=>{
       if(r.clicks < st.clicks) return false;
@@ -1375,10 +1380,13 @@ function exportTargetsPause(product,rows){
 function renderDuplicates(){
   const st=stFor('duplicates'); if(st.minSpend===undefined) st.minSpend=0;
   const enabledCampIds=optimizableCampaignIds(S.product);
-  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && enabledCampIds.has(t.campaignId));
-  // Scoped to portfolio — the same literal text (especially the 4 generic Auto expressions: close-match,
-  // loose-match, substitutes, complements, which exist identically on EVERY auto campaign for EVERY product)
-  // isn't a real duplicate/cannibalization unless it's competing within the same product/portfolio.
+  // Auto campaigns are skipped entirely, not just scoped — their targeting expressions (close-match,
+  // loose-match, substitutes, complements, category/asin) are Amazon's own auto-targeting buckets, identical
+  // across every Auto campaign for a product; they're never a real keyword/PT duplicate to fix.
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && enabledCampIds.has(t.campaignId)
+    && String(DATA.campById[t.campaignId]?.targetingType||'').toLowerCase()!=='auto');
+  // Scoped to portfolio — the same literal PT text on two different MANUAL (non-auto) campaigns still isn't
+  // a real duplicate/cannibalization unless it's competing within the same product/portfolio.
   const byKey=new Map();
   src.forEach(t=>{
     const pf=String(t.portfolioName||'(No Portfolio)');
