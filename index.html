@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 19:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 19:38</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1500,8 +1500,11 @@ function renderOptBids(){
   // below) meant changing a bid without knowing what was happening on its placements at the same time.
   // Multi-keyword campaigns don't get this column — their placement % is shared across many keywords, so it
   // stays exclusive to the Placement Optimizer section below.
+  // Full per-campaign placement picture (includes 'floor-bad' entries) — needed to decide whether the bid
+  // cut below should stay in effect. Only the actionable subset (decrease/push/increase/compensate) is
+  // shown in the "Placement (this campaign)" column / export, via placementChangesByCamp further down.
   const placementsByCamp={};
-  computePlacementOptRows(S.product, {}).rows.forEach(pr=>{ (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
+  computePlacementOptRows(S.product, {}).allRows.forEach(pr=>{ if(!pr.isSingle) return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -1520,11 +1523,15 @@ function renderOptBids(){
       // the placement fix is trusted to have handled it on its own.
       if(decPct!=null && singleKw.has(t.campaignId)){
         const placements=placementsByCamp[t.campaignId]||[];
+        // A placement stuck at its 0% floor can't be fixed at the placement level at all — its bad
+        // performance is left unresolved, so the bid cut must stay in effect no matter how much of the
+        // spend the OTHER (real) placement decreases cover.
+        const hasFloorBad = placements.some(p=>p.action==='floor-bad');
         const decreasedSpend=placements.filter(p=>p.action==='decrease').reduce((s,p)=>s+p.spend,0);
         const totalPlacementSpend=placements.reduce((s,p)=>s+p.spend,0);
         const majorityCovered = totalPlacementSpend>0 && decreasedSpend/totalPlacementSpend>0.5;
         const isTier3 = d.acos===Infinity || d.acos>=st.hi3;
-        if(decreasedSpend>0 && (!isTier3 || majorityCovered)) decPct=null;
+        if(!hasFloorBad && decreasedSpend>0 && (!isTier3 || majorityCovered)) decPct=null;
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); reason='healthy ACoS'; }
@@ -1536,7 +1543,8 @@ function renderOptBids(){
     }
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason},t,d);
-    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]) : null;
+    // Only the real, exportable placement moves — a 'floor-bad' entry has no percentage change to show.
+    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad') : null;
     return row;
   }).filter(Boolean);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
@@ -1700,8 +1708,14 @@ function computePlacementOptRows(product, filters){
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
     // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
     // even though there's no ACoS to compute (division by zero sales).
-    if((e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)) || (e.orders===0 && e.clicks>=st.zeroOrderClicks)){
+    const badPerf=(e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)) || (e.orders===0 && e.clicks>=st.zeroOrderClicks);
+    if(badPerf && e.percentage>0){
       action='decrease'; newPct=Math.max(0, e.percentage-st.decStep);
+    } else if(badPerf){
+      // Already at the 0% floor — there's no percentage left to cut, so this placement's bad performance
+      // can't be fixed here at all. Flagged as 'floor-bad' (not 'decrease') so the Bid Optimizer knows NOT
+      // to treat it as "already handled" and still cuts the shared bid instead.
+      action='floor-bad';
     } else if(isSingle && st.pushEnabled && e.percentage<st.pushBelow && !(e.clicks>=st.minClicks && e.orders>=1 && d.acos>st.lowAcos)){
       // Below the floor % with too little data to judge ACoS yet, a placement gets the benefit of the
       // doubt — push it up so it can actually start competing. But if there's ALREADY enough clicks/orders
@@ -1714,8 +1728,37 @@ function computePlacementOptRows(product, filters){
     }
     return Object.assign({action,newPct,isSingle},e,d);
   });
+  // Compensation pass: a floor-bad placement (0%, bad performance) can't be fixed here, so the Bid Optimizer
+  // will cut the shared bid instead. That bid cut also drags down every OTHER placement's effective bid
+  // (bid × (1+%/100)) in the same single-keyword campaign — including ones that were performing fine. Bump
+  // those placements' % just enough to keep their own effective bid where it was before the cut, so a good
+  // placement (e.g. Top of Search) doesn't get collateral damage from a bad one (e.g. Rest of Search) sharing
+  // its campaign's only lever.
+  const bst=stFor('optbids');
+  if(bst.hi1===undefined) bst.hi1=50; if(bst.dec1===undefined) bst.dec1=10;
+  if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=20;
+  if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=30;
+  if(bst.minClicks===undefined) bst.minClicks=10; if(bst.minSpend===undefined) bst.minSpend=0;
+  const byCampAll={};
+  allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
+  Object.keys(byCampAll).forEach(cid=>{
+    const plc=byCampAll[cid];
+    if(!plc.some(p=>p.action==='floor-bad')) return;
+    const target=DATA.targets.find(t=>t.product===product && t.campaignId===cid && t.state==='enabled' && t.bid>0);
+    if(!target) return;
+    const td=derive(agg([target]));
+    if(!(target.clicks>=bst.minClicks && target.spend>=bst.minSpend && target.orders>=1)) return;
+    const decPct=decreaseTierFor(td.acos, bst);
+    if(decPct==null) return;
+    const factor=1/(1-decPct/100);
+    plc.forEach(p=>{
+      if(p.action==='decrease' || p.action==='floor-bad' || p.percentage<=0) return;
+      const compPct=Math.min(900, +(((1+p.percentage/100)*factor-1)*100).toFixed(1));
+      if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none') p.action='compensate'; }
+    });
+  });
   if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  const rows=allRows.filter(r=>r.action!=='none');
+  const rows=allRows.filter(r=>r.action!=='none' && r.action!=='floor-bad');
   return {rows, allRows, st, rowsRaw};
 }
 function renderOptPlacements(){
@@ -1731,8 +1774,12 @@ function renderOptPlacements(){
   const totals=agg(rows);
   const actionBadgePl=r=>{
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decStep}pp</span>`;
-    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Below the ${st.pushBelow}% floor — pushed up regardless of ACoS, so it can actually start winning auctions there.">↑ +${st.pushStep}pp (push)</span>`;
-    return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${st.incStep}pp</span>`;
+    // Compensation can push a 'push'/'increase' row's newPct further than its own base step, so the badge
+    // always shows the REAL delta actually being applied, not just the rule's nominal step size.
+    const delta=(r.newPct-r.percentage).toFixed(1);
+    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Below the ${st.pushBelow}% floor — pushed up regardless of ACoS, so it can actually start winning auctions there.">↑ +${delta}pp (push)</span>`;
+    if(r.action==='compensate') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="Another placement in this campaign is stuck at 0% with bad performance, so the shared bid is getting cut instead. This bump keeps THIS placement's own effective bid where it was.">↑ +${delta}pp (compensate)</span>`;
+    return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${delta}pp</span>`;
   };
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:actionBadgePl},
