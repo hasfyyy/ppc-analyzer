@@ -1,7 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><script src="supabase-config.js"></script>
-   <script src="auth-guard.js"></script>
+<head>
 <meta charset="utf-8">
 <title>PPC Analyzer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -169,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-21 15:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 16:40</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1214,6 +1213,18 @@ function renderProducts(){
   // identity above, not on array position — thresholds add/remove rows but never reorder an existing occurrence.
   const known=st.pauseKnown=st.pauseKnown||{};
   candidates.forEach(c=>{ if(known[c._puid]===undefined) known[c._puid]=true; });
+  // Sortable like the other tables in this tool — click a column header to sort by it, click again to flip
+  // direction. Defaults to worst-spend-first so the biggest money-losers surface without any clicking.
+  if(st.pSortKey===undefined) st.pSortKey='spend'; if(st.pSortDir===undefined) st.pSortDir=-1;
+  const PR_SORT_COLS=[
+    {key:'clicks',label:'Clicks'},{key:'spend',label:'Spend'},{key:'sales',label:'Sales'},
+    {key:'orders',label:'Orders'},{key:'cpc',label:'CPC'},{key:'acos',label:'ACoS'},
+  ];
+  candidates.sort((a,b)=>{
+    let va=a[st.pSortKey], vb=b[st.pSortKey];
+    va = va===Infinity?1e18:(va||0); vb = vb===Infinity?1e18:(vb||0);
+    return st.pSortDir*(va-vb);
+  });
   const pauseRows=candidates.filter(c=>known[c._puid]);
   const pauseCampCount=new Set(pauseRows.map(r=>r.campaignId)).size;
   const allChecked=candidates.length && candidates.every(c=>known[c._puid]);
@@ -1222,6 +1233,7 @@ function renderProducts(){
       <td class="l"><span class="link">📦 ${esc(c.asin||c.sku||'—')}</span></td>
       <td class="l">${esc(c.campaignName||c.campaignId)}</td>
       <td>${fInt(c.clicks)}</td><td>${fMoney(c.spend)}</td><td class="num-green">${fMoney(c.sales)}</td><td>${fInt(c.orders)}</td>
+      <td>${fMoney(c.cpc)}</td>
       <td class="${acosClass(c.acos)}">${fAcos(c.acos)}</td>
       <td class="l">${esc(c.reason)}</td>
     </tr>`).join('');
@@ -1246,8 +1258,13 @@ function renderProducts(){
       <div class="hint" style="margin-top:6px;">Flags any product ad matching a rule below, per campaign it runs in — not the aggregated totals above. A campaign's only remaining active product ad is never flagged, even if it matches — pausing it would leave the campaign with nothing to serve. Uncheck any you don't want paused.</div>
       <div class="tablewrap" style="margin-top:10px;"><table><thead><tr>
         <th class="cellchk"><input type="checkbox" id="pr-selall" ${allChecked?'checked':''}></th>
-        <th class="l">Product</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th class="l">Why</th>
-      </tr></thead><tbody>${candRowsHtml || `<tr><td colspan="9" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No products match the current thresholds.</td></tr>`}</tbody></table></div>
+        <th class="l">Product</th><th class="l">Campaign</th>
+        ${PR_SORT_COLS.map(c=>{
+          const active=st.pSortKey===c.key;
+          return `<th class="sortable ${active?'th-active':''}" data-prsort="${c.key}">${esc(c.label)} <span class="sort-ind">${active?(st.pSortDir<0?'↓':'↑'):'↕'}</span></th>`;
+        }).join('')}
+        <th class="l">Why</th>
+      </tr></thead><tbody>${candRowsHtml || `<tr><td colspan="10" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No products match the current thresholds.</td></tr>`}</tbody></table></div>
       <div class="rowbar" style="margin-top:10px;"><span class="countnote">Will pause <b>${pauseRows.length}</b> product ad placement(s) across <b>${pauseCampCount}</b> campaign(s).</span><div class="spacer"></div>
         <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>⏸ Export Pause (${pauseRows.length})</button>
       </div>
@@ -1257,6 +1274,11 @@ function renderProducts(){
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); renderProducts(); },200); };
   bind('pr-clicks','pClicks',v=>+v); bind('pr-acos','pAcos',v=>+v); bind('pr-mo','pMaxOrders',v=>+v||0); bind('pr-ms','pMinSpend',v=>+v||0);
   document.querySelectorAll('[data-ptog]').forEach(cb=>cb.onchange=()=>{ known[cb.dataset.ptog]=cb.checked; renderProducts(); });
+  document.querySelectorAll('[data-prsort]').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.prsort;
+    if(st.pSortKey===k) st.pSortDir*=-1; else { st.pSortKey=k; st.pSortDir=-1; }
+    renderProducts();
+  });
   const selAll=$('#pr-selall'); if(selAll) selAll.onchange=()=>{ candidates.forEach(c=>known[c._puid]=selAll.checked); renderProducts(); };
   const pauseBtn=$('#pr-pause'); if(pauseBtn) pauseBtn.onclick=()=>exportProductsPause(pauseRows, S.product);
 }
