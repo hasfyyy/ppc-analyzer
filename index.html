@@ -174,11 +174,10 @@
   </div>
 
   <div class="pt-toggle" id="ptToggle" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"></div>
-  <div id="negListPanel" class="card pad hidden" style="margin:10px 0 12px;"></div>
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 12:33</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 12:45</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -578,43 +577,8 @@ function renderToggle(){
   const nSP=stSP().length, nSB=stSB().length;
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
-    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`+
-    `<button class="btn ghost" id="negListBtn" style="margin-left:auto;">Negated List</button>`;
+    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`;
   $('#ptToggle').querySelectorAll('.pt-btn').forEach(b=>b.onclick=()=>{ S.product=b.dataset.p; renderToggle(); renderTab(); });
-  $('#negListBtn').onclick=()=>{
-    const panel=$('#negListPanel');
-    if(!panel.classList.contains('hidden')){ panel.classList.add('hidden'); return; }
-    panel.classList.remove('hidden');
-    renderNegList();
-  };
-}
-// A copy-pasteable list of every keyword text already negated in a portfolio — meant for the moment you're
-// creating a brand-new Phrase/Broad/Auto campaign there by hand and want to carry over the same exclusions
-// from day one, instead of waiting for that new campaign to re-discover the same bad search terms on its own.
-function renderNegList(){
-  const st=stFor('negList');
-  const panel=$('#negListPanel');
-  // Exact campaigns' own negatives are usually there for structural reasons (isolating exact traffic from
-  // its own close variants), not "this is a bad search term the whole portfolio agreed to block" — pulling
-  // those into a list meant for a brand-new Broad/Phrase/Auto campaign would carry over the wrong exclusions.
-  const list=DATA.negatives.filter(n=>n.product===S.product && (!st.port || (n.portfolioName||'(No Portfolio)')===st.port) && !isExactCampaign(n.campaignName));
-  const texts=[...new Set(list.map(n=>n.text).filter(Boolean))].sort();
-  panel.innerHTML=`
-    <div class="rowbar" style="margin-bottom:8px;">
-      <h3 class="sectitle" style="margin:0;">Already-negated keywords</h3>
-      <div class="field" style="margin-left:14px;"><label>Portfolio</label><select id="negl-port">${portOptions(st.port)}</select></div>
-      <div class="spacer"></div>
-      <span class="countnote">${texts.length} unique term(s)</span>
-      <button class="btn grad" id="negl-copy">Copy list</button>
-    </div>
-    <div class="hint" style="margin-bottom:8px;">One per line — paste directly into Amazon's "Add negative keywords" box when setting up a new Phrase/Broad/Auto campaign in this portfolio, so it starts with the same exclusions the rest of the portfolio already learned.</div>
-    <textarea id="negl-text" readonly style="width:100%;min-height:160px;font-family:monospace;font-size:12.5px;border:1px solid var(--border);border-radius:8px;padding:10px;" placeholder="No negated keywords found for this portfolio yet.">${esc(texts.join('\n'))}</textarea>`;
-  $('#negl-port').onchange=e=>{ st.port=e.target.value; renderNegList(); };
-  $('#negl-copy').onclick=()=>{
-    const ta=$('#negl-text'); const done=()=>{ $('#negl-copy').textContent='Copied'; setTimeout(()=>{$('#negl-copy').textContent='Copy list';},1500); };
-    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done);
-    else { ta.select(); document.execCommand('copy'); done(); }
-  };
 }
 
 function renderTab(){
