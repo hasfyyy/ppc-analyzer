@@ -12,20 +12,25 @@
     /* Calm slate-blue/teal palette — muted, low-saturation, built to keep dense numeric tables easy to scan
        rather than draw attention to the chrome around them. */
     --pink:#3468c0; --pink-dark:#2851a3; --purple:#0e8fa0;
-    --grad:linear-gradient(135deg,#3468c0,#0e8fa0);
-    --grad-red:linear-gradient(135deg,#c2513f,#a83a3a);
+    /* Flat solid accent, not a gradient — a gradient on every active/primary element is the single biggest
+       thing that makes a UI read as "generic SaaS template". Same variable name kept so every rule below
+       that references var(--grad) still works; it just resolves to a plain color now. */
+    --grad:#3468c0;
+    --grad-red:#af4a3f;
     --green:#16a34a; --amber:#b8770e; --red:#c0392b;
     --bg:#f4f5f7; --card:#ffffff; --ink:#1f2937; --muted:#9aa3af; --muted2:#6b7280;
-    --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+    --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 2px rgba(16,24,40,.05);
+    --radius:7px; --radius-lg:9px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;}
   body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); font-size:13px;}
+  table{font-variant-numeric:tabular-nums;}
   a{color:var(--pink-dark); text-decoration:none;}
   .wrap{max-width:1560px; margin:0 auto; padding:18px 22px 80px;}
 
   /* upload */
-  .dropzone{border:2px dashed #c9cfda; border-radius:16px; background:#fafbfc; padding:26px; text-align:center; transition:.15s; margin-bottom:10px;}
+  .dropzone{border:2px dashed #c9cfda; border-radius:10px; background:#fafbfc; padding:26px; text-align:center; transition:.15s; margin-bottom:10px;}
   .dropzone.drag{border-color:var(--pink); background:#eef5fb;}
   .dropzone .up-ic{font-size:26px;}
   .dropzone h3{margin:8px 0 2px; font-size:15px; font-weight:600;}
@@ -35,21 +40,23 @@
 
   /* nav */
   .navrow{display:flex; justify-content:center; margin:6px 0 12px;}
-  .nav{display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:5px; box-shadow:var(--shadow); overflow-x:auto; max-width:100%;}
-  .navbtn{border:none; background:none; padding:8px 13px; font-size:13px; font-weight:600; color:var(--muted2); cursor:pointer; border-radius:9px; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:.12s;}
+  .nav{display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:5px; box-shadow:var(--shadow); overflow-x:auto; max-width:100%;}
+  .navbtn{position:relative; border:none; background:none; padding:8px 13px; font-size:13px; font-weight:600; color:var(--muted2); cursor:pointer; border-radius:6px; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:.12s;}
   .navbtn:hover{background:#eef3f9; color:var(--ink);}
-  .navbtn.active{background:var(--grad); color:#fff; box-shadow:0 2px 8px rgba(52,104,192,.30);}
+  /* Underline indicator instead of a filled pill — reads as a plain tab strip rather than a row of buttons. */
+  .navbtn.active{background:none; color:var(--pink-dark); box-shadow:none;}
+  .navbtn.active::after{content:""; position:absolute; left:10px; right:10px; bottom:1px; height:2px; border-radius:2px; background:var(--pink);}
 
   /* SP/SB toggle */
   .pt-toggle{display:flex; gap:6px; margin:0 0 16px;}
-  .pt-btn{border:1px solid var(--border); background:var(--card); padding:7px 14px; border-radius:9px; font-size:12.5px; font-weight:600; color:var(--muted2); cursor:pointer;}
-  .pt-btn.active{background:#e9f1fa; color:var(--ink); border-color:#c3d9ef;}
+  .pt-btn{border:1px solid var(--border); background:var(--card); padding:7px 14px; border-radius:6px; font-size:12.5px; font-weight:600; color:var(--muted2); cursor:pointer;}
+  .pt-btn.active{background:#e9f1fa; color:var(--pink-dark); border-color:#aecdec;}
 
   /* layout with sidebar */
   .cols{display:flex; gap:16px; align-items:flex-start;}
   .sidebar{width:238px; flex:0 0 238px;}
   .content{flex:1; min-width:0;}
-  .card{background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow);}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow);}
   .card.pad{padding:14px 16px;}
   .card + .card{margin-top:14px;}
 
@@ -63,12 +70,12 @@
   .fitem:hover{background:#f2f6fb;}
   .fitem input{accent-color:var(--pink); width:14px; height:14px;}
   .fitem span{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .resetbtn{width:100%; background:#f6f7f9; color:var(--ink); border:1px solid var(--border); padding:10px; border-radius:10px; font-weight:600; cursor:pointer;}
+  .resetbtn{width:100%; background:#f6f7f9; color:var(--ink); border:1px solid var(--border); padding:10px; border-radius:var(--radius); font-weight:600; cursor:pointer;}
   .resetbtn:hover{background:#eef0f3;}
 
   /* KPI cards */
   .kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; margin-bottom:14px;}
-  .kpi{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px 14px; box-shadow:var(--shadow);}
+  .kpi{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; box-shadow:var(--shadow);}
   .kpi .lab{font-size:11px; color:var(--muted); font-weight:500; margin-bottom:4px;}
   .kpi .val{font-size:18px; font-weight:700;}
   .kpi .val.green{color:var(--green);} .kpi .val.amber{color:var(--amber);} .kpi .val.red{color:var(--red);} .kpi .val.pink{color:var(--pink-dark);}
@@ -77,7 +84,7 @@
   .ctrls{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end;}
   .field{display:flex; flex-direction:column; gap:4px;}
   .field label{font-size:11px; color:var(--muted2); font-weight:500;}
-  .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:12.5px; background:#fff;}
+  .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:6px; padding:7px 9px; font-size:12.5px; background:#fff;}
   .field input[type=number]{width:96px;} .field select{min-width:150px;}
   .field.grow{flex:1; min-width:200px;} .field.grow input{width:100%;}
 
@@ -92,11 +99,11 @@
   /* quick chips */
   .chips{display:flex; gap:8px; align-items:center; margin-top:10px;}
   .chips .lbl{font-size:11px; color:var(--muted2);}
-  .chip{border:1px solid var(--border); background:#fff; padding:5px 12px; border-radius:20px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
+  .chip{border:1px solid var(--border); background:#fff; padding:5px 12px; border-radius:6px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
   .chip.active{background:var(--grad); color:#fff; border-color:transparent;}
 
   /* buttons */
-  .btn{border:none; border-radius:9px; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+  .btn{border:none; border-radius:6px; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
   .btn.grad{background:var(--grad); color:#fff;}
   .btn.grad:disabled{opacity:.45; cursor:not-allowed;}
   .btn.ghost{background:#fff; color:var(--ink); border:1px solid var(--border);}
@@ -108,7 +115,7 @@
   .countnote{font-size:11.5px; color:var(--muted); }
 
   /* tables */
-  .tablewrap{overflow:auto; border-radius:12px;}
+  .tablewrap{overflow:auto; border-radius:var(--radius);}
   table{width:100%; border-collapse:collapse; font-size:12px;}
   thead th{position:sticky; top:0; background:#fbfbfc; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; color:var(--muted2); font-weight:600; z-index:2;}
   thead th.l{text-align:left;} thead th.sortable{cursor:pointer;} thead th.sortable:hover{color:var(--ink);}
@@ -120,10 +127,10 @@
   .num-green{color:var(--green); font-weight:600;} .num-amber{color:var(--amber); font-weight:600;} .num-red{color:var(--red); font-weight:600;}
   .cellchk{width:34px; text-align:center !important;}
   .cellchk input, thead .cellchk input{accent-color:var(--pink); width:15px; height:15px; cursor:pointer;}
-  .badge{display:inline-block; padding:3px 9px; border-radius:20px; font-size:10.5px; font-weight:700; letter-spacing:.2px;}
+  .badge{display:inline-block; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:700; letter-spacing:.2px;}
   .badge.nt{background:#fdecec; color:#dc2626;}
   .badge.tg{background:#e7f7ee; color:#15803d;}
-  .badge.neg{border:1px solid var(--pink); color:var(--pink-dark); background:#fff; cursor:pointer; padding:4px 10px; border-radius:8px;}
+  .badge.neg{border:1px solid var(--pink); color:var(--pink-dark); background:#fff; cursor:pointer; padding:4px 10px; border-radius:6px;}
   .badge.negd{background:#eef4fb; border-color:#bcd6f0; color:#28527e;}
   .badge.clickable{cursor:pointer;}
   .badge.sel{background:var(--grad); color:#fff;}
@@ -139,27 +146,27 @@
   .empty{padding:50px 20px; text-align:center; color:var(--muted);}
   .empty .ic{font-size:34px; opacity:.5;}
   .sectitle{font-size:15px; font-weight:700; margin:0 0 12px;}
-  .seg{display:inline-flex; background:#f3f4f6; border-radius:9px; padding:3px; gap:2px;}
-  .seg button{border:none; background:none; padding:6px 12px; border-radius:7px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
+  .seg{display:inline-flex; background:#f3f4f6; border-radius:7px; padding:3px; gap:2px;}
+  .seg button{border:none; background:none; padding:6px 12px; border-radius:5px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
   .seg button.active{background:#fff; color:var(--ink); box-shadow:var(--shadow);}
-  textarea.kwbox{width:100%; min-height:220px; border:1px solid var(--border); border-radius:12px; padding:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; resize:vertical;}
-  .banner{background:#eef5fa; border:1px solid #bfdeee; color:#155e75; padding:9px 12px; border-radius:10px; font-size:12px; margin-bottom:12px;}
+  textarea.kwbox{width:100%; min-height:220px; border:1px solid var(--border); border-radius:var(--radius); padding:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; resize:vertical;}
+  .banner{background:#eef5fa; border:1px solid #bfdeee; color:#155e75; padding:9px 12px; border-radius:7px; font-size:12px; margin-bottom:12px;}
   .hidden{display:none !important;}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <div style="text-align:right;margin-bottom:6px;display:flex;gap:8px;justify-content:flex-end;"><a href="Campaign_Map.html" style="font-size:12.5px;font-weight:600;color:#6b7280;border:1px solid #e7e9ee;background:#fff;padding:7px 12px;border-radius:9px;">🗺️ Renaming Campaigns →</a><a href="Campaign_Builder.html" style="font-size:12.5px;font-weight:600;color:#6b7280;border:1px solid #e7e9ee;background:#fff;padding:7px 12px;border-radius:9px;">🏗️ Campaign Builder →</a></div>
+  <div style="text-align:right;margin-bottom:6px;display:flex;gap:8px;justify-content:flex-end;"><a href="Campaign_Map.html" style="font-size:12.5px;font-weight:600;color:#6b7280;border:1px solid #e7e9ee;background:#fff;padding:7px 12px;border-radius:9px;">Renaming Campaigns →</a><a href="Campaign_Builder.html" style="font-size:12.5px;font-weight:600;color:#6b7280;border:1px solid #e7e9ee;background:#fff;padding:7px 12px;border-radius:9px;">Campaign Builder →</a></div>
 
   <div id="dropzone" class="dropzone">
-    <div class="up-ic">⬆️</div>
+    <div class="up-ic">⬆</div>
     <h3>Drop your Amazon Bulk Operations file here</h3>
     <p>or click to browse (CSV or Excel format)</p>
     <div style="margin-top:12px;"><button class="btn grad" id="selectBtn">Select File</button></div>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
   </div>
-  <div class="prevfile"><a id="prevBtn" class="hidden">📂 Open Previous File</a> <span id="loadNote"></span></div>
+  <div class="prevfile"><a id="prevBtn" class="hidden">Open Previous File</a> <span id="loadNote"></span></div>
   <div id="btSaveBar" class="hidden" style="margin:0 0 12px;"></div>
 
   <div class="navrow">
@@ -171,7 +178,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 12:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -441,11 +448,11 @@ function renderBtSaveBar(bar, bd, fileName){
   // not surface unrelated accounts from earlier uploads. Full multi-account management still lives
   // in Campaign Builder's Brand Table tab.
   bar.classList.remove('hidden');
-  bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">💾 Save this file's ASINs, SKUs &amp; portfolios for use in the <a href="Campaign_Builder.html" style="font-weight:700;">🏗️ Campaign Builder</a> tool: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). <button class="btn grad" id="btbar-save">Save</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
+  bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">Save this file's ASINs, SKUs &amp; portfolios for use in the <a href="Campaign_Builder.html" style="font-weight:700;">Campaign Builder</a> tool: <b>${bd.products.length}</b> product(s), <b>${bd.portfolios.length}</b> portfolio(s). <button class="btn grad" id="btbar-save">Save</button> <span id="btbar-done" style="color:#15803d;font-weight:700;"></span></div>`;
   $('#btbar-save').onclick=()=>{
     const acc=(prompt('Account name:', (fileName||'').replace(/\.[^.]+$/,''))||'').trim(); if(!acc) return;
     mergeIntoAccount(acc, window.__pendingBrand); BT.current=acc; const A=acctObj(acc);
-    bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;">✓ Saved to <b>"${esc(acc)}"</b> (${A.products.length} products, ${A.portfolios.length} portfolios). <a href="Campaign_Builder.html">Open Campaign Builder →</a></div>`;
+    bar.innerHTML=`<div class="banner" style="display:flex;align-items:center;gap:10px;">Saved to <b>"${esc(acc)}"</b> (${A.products.length} products, ${A.portfolios.length} portfolios). <a href="Campaign_Builder.html">Open Campaign Builder →</a></div>`;
   };
 }
 function stFor(tab){ return S.filt[tab] = S.filt[tab] || {}; }
@@ -549,18 +556,18 @@ function metricCols(){
 
 /* ============================ nav + tabs ============================ */
 const TABS=[
-  {id:'overview',label:'Overview',ic:'📊'},
-  {id:'placement',label:'Placement',ic:'📍'},
-  {id:'negatives',label:'Negatives',ic:'⊘'},
-  {id:'negatives-sb',label:'Negatives – SB',ic:'⊘'},
-  {id:'ngram',label:'Negative Phrase',ic:'🔤'},
-  {id:'targets',label:'Targets SP',ic:'🎯'},
-  {id:'targets-sb',label:'Targets SB',ic:'🎯'},
-  {id:'harvesting',label:'Harvesting',ic:'🌱'},
-  {id:'kwcheck',label:'Keyword Checker',ic:'🔍'},
-  {id:'products',label:'Products',ic:'📦'},
-  {id:'optimize',label:'Optimize',ic:'🎚️'},
-  {id:'duplicates',label:'Duplicates',ic:'🧬'},
+  {id:'overview',label:'Overview',ic:''},
+  {id:'placement',label:'Placement',ic:''},
+  {id:'negatives',label:'Negatives',ic:''},
+  {id:'negatives-sb',label:'Negatives – SB',ic:''},
+  {id:'ngram',label:'Negative Phrase',ic:''},
+  {id:'targets',label:'Targets SP',ic:''},
+  {id:'targets-sb',label:'Targets SB',ic:''},
+  {id:'harvesting',label:'Harvesting',ic:''},
+  {id:'kwcheck',label:'Keyword Checker',ic:''},
+  {id:'products',label:'Products',ic:''},
+  {id:'optimize',label:'Optimize',ic:''},
+  {id:'duplicates',label:'Duplicates',ic:''},
 ];
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
@@ -572,7 +579,7 @@ function renderToggle(){
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
     `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`+
-    `<button class="btn ghost" id="negListBtn" style="margin-left:auto;">📋 Negated List</button>`;
+    `<button class="btn ghost" id="negListBtn" style="margin-left:auto;">Negated List</button>`;
   $('#ptToggle').querySelectorAll('.pt-btn').forEach(b=>b.onclick=()=>{ S.product=b.dataset.p; renderToggle(); renderTab(); });
   $('#negListBtn').onclick=()=>{
     const panel=$('#negListPanel');
@@ -594,17 +601,17 @@ function renderNegList(){
   const texts=[...new Set(list.map(n=>n.text).filter(Boolean))].sort();
   panel.innerHTML=`
     <div class="rowbar" style="margin-bottom:8px;">
-      <h3 class="sectitle" style="margin:0;">📋 Already-negated keywords</h3>
+      <h3 class="sectitle" style="margin:0;">Already-negated keywords</h3>
       <div class="field" style="margin-left:14px;"><label>Portfolio</label><select id="negl-port">${portOptions(st.port)}</select></div>
       <div class="spacer"></div>
       <span class="countnote">${texts.length} unique term(s)</span>
-      <button class="btn grad" id="negl-copy">⧉ Copy list</button>
+      <button class="btn grad" id="negl-copy">Copy list</button>
     </div>
     <div class="hint" style="margin-bottom:8px;">One per line — paste directly into Amazon's "Add negative keywords" box when setting up a new Phrase/Broad/Auto campaign in this portfolio, so it starts with the same exclusions the rest of the portfolio already learned.</div>
     <textarea id="negl-text" readonly style="width:100%;min-height:160px;font-family:monospace;font-size:12.5px;border:1px solid var(--border);border-radius:8px;padding:10px;" placeholder="No negated keywords found for this portfolio yet.">${esc(texts.join('\n'))}</textarea>`;
   $('#negl-port').onchange=e=>{ st.port=e.target.value; renderNegList(); };
   $('#negl-copy').onclick=()=>{
-    const ta=$('#negl-text'); const done=()=>{ $('#negl-copy').textContent='✓ Copied'; setTimeout(()=>{$('#negl-copy').textContent='⧉ Copy list';},1500); };
+    const ta=$('#negl-text'); const done=()=>{ $('#negl-copy').textContent='Copied'; setTimeout(()=>{$('#negl-copy').textContent='Copy list';},1500); };
     if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done);
     else { ta.select(); document.execCommand('copy'); done(); }
   };
@@ -612,7 +619,7 @@ function renderNegList(){
 
 function renderTab(){
   const app=$('#app');
-  if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic">📁</div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
+  if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
     ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optimize:renderOptimize, duplicates:renderDuplicates}[S.tab])();
 }
@@ -658,7 +665,7 @@ function renderOverview(){
         </div>
         <div class="field"><label>Filter by Portfolio</label><select id="ov-port">${portOptions(st.portfolio)}</select></div>
         <div class="spacer"></div>
-        <button class="btn ghost" id="ov-dl">⬇ Download</button>
+        <button class="btn ghost" id="ov-dl">Download</button>
       </div>
       <div id="ov-table">${tbl.html}</div>
     </div>`;
@@ -712,12 +719,12 @@ function renderPlacement(){
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Placement Summary</h3>
         <div class="field"><label>Filter by Portfolio</label><select id="pl-port">${portOptions(st.port)}</select></div>
-        <div class="spacer"></div><button class="btn ghost" id="pl-dl">⬇ Download</button></div>
+        <div class="spacer"></div><button class="btn ghost" id="pl-dl">Download</button></div>
       ${!hasMetrics?`<div class="banner">This bulk file has no placement-level performance metrics — showing configured bid adjustments only. For placement performance, download a Placement report from the Amazon Ads console.</div>`:''}
-      ${rowsRaw.length? `<div id="pl-table">${tbl.html}</div>` :'<div class="empty"><div class="ic">📍</div><p>No bidding adjustment / placement rows found in this file.</p></div>'}
+      ${rowsRaw.length? `<div id="pl-table">${tbl.html}</div>` :'<div class="empty"><div class="ic"></div><p>No bidding adjustment / placement rows found in this file.</p></div>'}
     </div>
     ${rowsRaw.length?`<div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bid Adjustments by Campaign (${campRows.length})</h3><div class="spacer"></div><button class="btn ghost" id="pl-dl2">⬇ Download</button></div>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bid Adjustments by Campaign (${campRows.length})</h3><div class="spacer"></div><button class="btn ghost" id="pl-dl2">Download</button></div>
       <div id="pl-camp">${camptbl.html}</div>
     </div>`:''}`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacement();};
@@ -813,8 +820,8 @@ function renderNegatives(product){
         <div class="field grow"><label>Campaign Name</label><input type="text" id="ng-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${product} Negative Candidates (${cand.length})</h3><div class="spacer"></div>
-        <button class="btn ghost" id="ng-dlall">⬇ Download All</button>
-        <button class="btn grad" id="ng-dlsel" ${cand.some(r=>sel.has(r._uid))?'':'disabled'}>⬇ Export Selected (${cand.filter(r=>sel.has(r._uid)).length})</button>
+        <button class="btn ghost" id="ng-dlall">Download All</button>
+        <button class="btn grad" id="ng-dlsel" ${cand.some(r=>sel.has(r._uid))?'':'disabled'}>Export Selected (${cand.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="ng-table">${tbl.html}</div>
     </div>`;
@@ -904,11 +911,11 @@ function renderNgram(){
           <div class="field"><label>Min ACOS %</label><input type="number" id="ng-ma" value="${ma}"></div>
           <div class="field"><label>Min Search Terms</label><input type="number" id="ng-mt" min="1" value="${mt}" title="Only show a root if it shows up across at least this many different search terms — a single one-off term isn't a real pattern."></div>
           <div class="field grow"><label>Search n-gram</label><input type="text" id="ng-text" placeholder="Filter by text…" value="${esc(st.text||'')}"></div>
-          <button class="btn ghost" id="ng-csv">⬇ Export CSV</button>
+          <button class="btn ghost" id="ng-csv">Export CSV</button>
           <select id="ng-negtype" style="border:1px solid var(--border);border-radius:8px;padding:8px 9px;font-size:12.5px;background:#fff;">${['Negative Phrase','Negative Exact'].map(x=>`<option ${(st.negtype||'Negative Phrase')===x?'selected':''}>${x}</option>`).join('')}</select>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;" title="Exports as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio as this root — not just the ad group(s) it was actually found in."><input type="checkbox" id="ng-exexcamp" ${st.exExactCamp!==false?'checked':''}> Exclude Exact campaigns</label>
-          <button class="btn grad-red" id="ng-neg">⛔ Export Negatives${sel.size?` (${sel.size})`:''}</button>
-          <button class="btn ghost" id="ng-copy" title="Copies the selected root(s) as a plain list, one per line — paste directly into Amazon's own 'Add negative keywords' box for whichever campaign(s) you pick yourself, instead of the automatic bulk export above.">⧉ Copy selected${sel.size?` (${sel.size})`:''}</button>
+          <button class="btn grad-red" id="ng-neg">Export Negatives${sel.size?` (${sel.size})`:''}</button>
+          <button class="btn ghost" id="ng-copy" title="Copies the selected root(s) as a plain list, one per line — paste directly into Amazon's own 'Add negative keywords' box for whichever campaign(s) you pick yourself, instead of the automatic bulk export above.">Copy selected${sel.size?` (${sel.size})`:''}</button>
         </div>
         <div class="rowbar">
           <div class="chips"><span class="lbl">Quick:</span>
@@ -958,7 +965,7 @@ function renderNgram(){
     const chosen = sel.size? rows.filter(r=>sel.has(r._uid)) : rows;
     if(!chosen.length){ alert('No n-grams to copy.'); return; }
     const text=[...new Set(chosen.map(r=>r.root))].sort().join('\n');
-    const done=()=>{ const btn=$('#ng-copy'); const old=btn.textContent; btn.textContent='✓ Copied'; setTimeout(()=>{btn.textContent=old;},1500); };
+    const done=()=>{ const btn=$('#ng-copy'); const old=btn.textContent; btn.textContent='Copied'; setTimeout(()=>{btn.textContent=old;},1500); };
     if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
     else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
   };
@@ -1055,8 +1062,8 @@ function renderTargets(product){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${product} Underperforming Targets (${rows.length})</h3><div class="spacer"></div>
-        <button class="btn ghost" id="tg-dlall">⬇ Download All</button>
-        <button class="btn grad" id="tg-pause" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>⏸ Export Pause (${rows.filter(r=>sel.has(r._uid)).length})</button>
+        <button class="btn ghost" id="tg-dlall">Download All</button>
+        <button class="btn grad" id="tg-pause" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Pause (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="tg-table">${tbl.html}</div>
     </div>`;
@@ -1170,12 +1177,12 @@ function renderHarvesting(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Harvesting Opportunities (${opps.length})</h3><div class="spacer"></div>
-        <button class="btn ghost" id="hv-dl">⬇ Download</button>
+        <button class="btn ghost" id="hv-dl">Download</button>
       </div>
       <div id="hv-table">${tbl.html}</div>
     </div>
     <div class="card pad">
-      <h3 class="sectitle">🔤 N-gram Roots — Low ACOS</h3>
+      <h3 class="sectitle">N-gram Roots — Low ACOS</h3>
       <div class="ctrls">
         <div class="field"><label>Max ACoS &lt;%</label><input type="number" id="hv-ngacos" min="0" value="${st.ngAcos}" style="width:90px;"></div>
         <div class="field"><label>Min Orders</label><input type="number" id="hv-ngmo" min="1" value="${st.ngMinOrders}" style="width:90px;"></div>
@@ -1184,7 +1191,7 @@ function renderHarvesting(){
       <div id="hv-ng-table">${ngTbl.html}</div>
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">🚀 Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
         <span class="countnote">${selOpps.length} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
       </div>
       ${renderLaunchPanel(st, selOpps)}
@@ -1252,16 +1259,16 @@ function renderKwCheck(){
   const skuPreview = st.port? skusForPortfolio(st.port) : [];
   $('#app').innerHTML=`
     <div class="card pad">
-      <div class="rowbar"><div class="field"><label>Portfolio</label><select id="kw-port">${portOptions(st.port)}</select></div><div class="spacer"></div><button class="btn ghost" id="kw-clear">🗑 Clear</button></div>
+      <div class="rowbar"><div class="field"><label>Portfolio</label><select id="kw-port">${portOptions(st.port)}</select></div><div class="spacer"></div><button class="btn ghost" id="kw-clear">Clear</button></div>
       <div class="field"><label>Enter Keywords (one per line)</label>
       <textarea class="kwbox" id="kw-text" placeholder="Enter keywords to check (one per line)&#10;&#10;Example:&#10;wireless headphones&#10;bluetooth speaker&#10;phone charger">${esc(st.text||'')}</textarea></div>
       <div class="countnote" style="margin-top:6px;">${kws.length} keyword(s) entered · Searching across ${fInt(src.length)} ${S.product} search term records</div>
     </div>
-    ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div><button class="btn ghost" id="kw-dl">⬇ Download</button></div>
+    ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div><button class="btn ghost" id="kw-dl">Download</button></div>
       <div class="hint" style="margin:0 0 8px;">Click a red "NO" badge (Exact/Phrase/Broad) to select that keyword for launch in that match type — click again to deselect.</div>
       <div id="kw-table">${tbl.html}</div></div>`:''}
     ${sel.size?`<div class="card pad">
-      <h3 class="sectitle">🚀 Launch ${sel.size} selected keyword/match-type combo(s)</h3>
+      <h3 class="sectitle">Launch ${sel.size} selected keyword/match-type combo(s)</h3>
       <div class="countnote" style="margin-bottom:8px;">${matchTypesSel.map(mt=>`${mt}: ${byMatch[mt].length}`).join(' · ')}</div>
       ${!st.port? `<div class="banner">Pick a specific Portfolio above first — new campaigns need to know which SKUs to advertise, and that's read from the other campaigns already in that portfolio.</div>` : `
       <div class="ctrls">
@@ -1270,7 +1277,7 @@ function renderKwCheck(){
         <div class="field"><label>Bid override ($, optional)</label><input type="number" id="kw-lbid" step="0.01" placeholder="auto" value="${esc(st.lBid)}" style="width:120px;"></div>
       </div>
       <div class="hint" style="margin-top:8px;">SKUs pulled from campaigns already in "${esc(st.port)}": ${skuPreview.length? esc(skuPreview.slice(0,6).join(', '))+(skuPreview.length>6?` +${skuPreview.length-6} more`:'') : '<span style="color:#dc2626;">none found — add products to this portfolio first.</span>'}</div>
-      <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="kw-launch" ${skuPreview.length?'':'disabled'}>➕ Create campaigns</button></div>`}
+      <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="kw-launch" ${skuPreview.length?'':'disabled'}>Create campaigns</button></div>`}
     </div>`:''}`;
   $('#kw-text').oninput=debounce(()=>{st.text=$('#kw-text').value; renderKwCheck();},350);
   $('#kw-port').onchange=e=>{st.port=e.target.value; renderKwCheck();};
@@ -1370,7 +1377,7 @@ function renderProducts(){
   const allChecked=candidates.length && candidates.every(c=>known[c._puid]);
   const candRowsHtml=candidates.map(c=>`<tr>
       <td class="cellchk"><input type="checkbox" data-ptog="${esc(c._puid)}" ${known[c._puid]?'checked':''}></td>
-      <td class="l"><span class="link">📦 ${esc(c.asin||c.sku||'—')}</span></td>
+      <td class="l"><span class="link">${esc(c.asin||c.sku||'—')}</span></td>
       <td class="l">${esc(c.campaignName||c.campaignId)}</td>
       <td>${fInt(c.clicks)}</td><td>${fMoney(c.spend)}</td><td class="num-green">${fMoney(c.sales)}</td><td>${fInt(c.orders)}</td>
       <td>${fMoney(c.cpc)}</td>
@@ -1385,7 +1392,7 @@ function renderProducts(){
       ${kpi('Clicks',fInt(tot.clicks))}${kpi('CTR',fPct(tot.ctr))}${kpi('CVR',fPct(tot.cvr))}${kpi('CPA',fMoney(tot.cpa))}
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">⏸ Underperforming Products (${candidates.length})</h3>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Underperforming Products (${candidates.length})</h3>
         <div class="field"><label>Filter by Portfolio</label><select id="pr-port">${portOptions(st.port)}</select></div>
         <div class="field"><label>Filter by Campaign</label><select id="pr-camp">${campOptions(st.camp,S.product)}</select></div>
       </div>
@@ -1406,7 +1413,7 @@ function renderProducts(){
         <th class="l">Why</th>
       </tr></thead><tbody>${candRowsHtml || `<tr><td colspan="10" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No products match the current thresholds.</td></tr>`}</tbody></table></div>
       <div class="rowbar" style="margin-top:10px;"><span class="countnote">Will pause <b>${pauseRows.length}</b> product ad placement(s) across <b>${pauseCampCount}</b> campaign(s).</span><div class="spacer"></div>
-        <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>⏸ Export Pause (${pauseRows.length})</button>
+        <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>Export Pause (${pauseRows.length})</button>
       </div>
     </div>`;
   $('#pr-port').onchange=e=>{st.port=e.target.value; renderProducts();};
@@ -1566,11 +1573,11 @@ function renderDuplicates(){
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Duplicate targets (${groups.length})</h3><div class="spacer"></div>
         <span class="countnote">Selected to pause: ${rowsFlat.filter(r=>sel.has(r._uid)).length}</span>
-        <button class="btn grad" id="dup-pause" ${rowsFlat.some(r=>sel.has(r._uid))?'':'disabled'}>⏸ Export Pause (${rowsFlat.filter(r=>sel.has(r._uid)).length})</button>
+        <button class="btn grad" id="dup-pause" ${rowsFlat.some(r=>sel.has(r._uid))?'':'disabled'}>Export Pause (${rowsFlat.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       ${groups.length? `<div class="tablewrap"><table>
         <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Bid</th></tr></thead>
-        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9">🧬 <b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
+        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9"><b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
           g.list.map(t=>`<tr>
             <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'title="Best performer — usually keep this one, but selectable if you want to pause it instead"':''}></td>
             <td class="l">${t===g.best?'<span class="badge tg">KEEP (best)</span>':''}</td>
@@ -1579,7 +1586,7 @@ function renderDuplicates(){
             <td class="${acosClass(t.acos)}">${fAcos(t.acos)}</td><td>${fMoney(t.bid)}</td>
           </tr>`).join('')
         ).join('')}</tbody>
-      </table></div>` : '<div class="empty"><div class="ic">🧬</div><p>No target is currently running in 2+ enabled campaigns at once — nothing to consolidate.</p></div>'}
+      </table></div>` : '<div class="empty"><div class="ic"></div><p>No target is currently running in 2+ enabled campaigns at once — nothing to consolidate.</p></div>'}
     </div>`;
   $('#dup-port').onchange=e=>{st.port=e.target.value; renderDuplicates();};
   $('#dup-term').oninput=debounce(()=>{st.term=$('#dup-term').value; renderDuplicates();},220);
@@ -1599,13 +1606,13 @@ function renderOptimize(){
   // Both sections live on the same page now — bids and placements are usually reviewed together in one
   // optimization pass, so switching tabs back and forth just to compare them was friction, not a feature.
   $('#app').innerHTML = `
-    <h3 class="sectitle" style="margin:0 0 4px;">🎯 Bid Optimizer (Targets)</h3>
+    <h3 class="sectitle" style="margin:0 0 4px;">Bid Optimizer (Targets)</h3>
     <div id="opt-bids"></div>
     <div style="height:22px;"></div>
-    <h3 class="sectitle" style="margin:0 0 4px;">📍 Placement Optimizer</h3>
+    <h3 class="sectitle" style="margin:0 0 4px;">Placement Optimizer</h3>
     <div id="opt-placements"></div>
     <div style="height:22px;"></div>
-    <h3 class="sectitle" style="margin:0 0 4px;">💰 Budget Rebalancing</h3>
+    <h3 class="sectitle" style="margin:0 0 4px;">Budget Rebalancing</h3>
     <div id="opt-budget"></div>`;
   renderOptBids();
   renderOptPlacements();
@@ -1791,7 +1798,7 @@ function renderOptBids(){
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
         </select></div>
         <div class="spacer"></div>
-        <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>⬇ Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
+        <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="ob-table">${tbl.html}</div>
     </div>`;
@@ -1830,7 +1837,7 @@ function exportBidOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
   const capped=cappedCampaignsIn(rows, product);
   if(capped.length){
-    const proceed=confirm(`⚠ ${capped.length} campanie(i) din selecție sunt deja la ≥80% din bugetul zilnic:\n${capped.slice(0,6).join('\n')}${capped.length>6?`\n…+${capped.length-6} more`:''}\n\nCreșterea bidului acolo n-are efect complet fără să crești și bugetul (vezi Optimize → Budget Rebalancing).\n\nContinui exportul oricum?`);
+    const proceed=confirm(`${capped.length} campanie(i) din selecție sunt deja la ≥80% din bugetul zilnic:\n${capped.slice(0,6).join('\n')}${capped.length>6?`\n…+${capped.length-6} more`:''}\n\nCreșterea bidului acolo n-are efect complet fără să crești și bugetul (vezi Optimize → Budget Rebalancing).\n\nContinui exportul oricum?`);
     if(!proceed) return;
   }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
@@ -1997,7 +2004,7 @@ function renderOptPlacements(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Placement Changes (${rows.length})</h3><div class="spacer"></div>
-        <button class="btn grad" id="op-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>⬇ Export Placement Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
+        <button class="btn grad" id="op-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Placement Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="op-table">${tbl.html}</div>
     </div>`;
@@ -2035,10 +2042,14 @@ function renderOptBudget(){
   const st=stFor('optbudget');
   if(st.capUtil===undefined) st.capUtil=80; if(st.goodAcos===undefined) st.goodAcos=30; if(st.incBudgetPct===undefined) st.incBudgetPct=20;
   if(st.lowUtil===undefined) st.lowUtil=50; if(st.badAcos===undefined) st.badAcos=60; if(st.decBudgetPct===undefined) st.decBudgetPct=20;
-  if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=30;
+  if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=7;
+  if(st.manualBudget===undefined) st.manualBudget={};
   const days=Math.max(1, st.periodDays);
   // Same dayparting reasoning as the rest of Optimize — State alone isn't reliable, budget is.
   const camps=DATA.campaigns.filter(c=>c.product===S.product && c.dailyBudget>1 && c.spend>=st.minSpend);
+  // Every eligible campaign shows up here now, not just the ones that cross a threshold — the point is to
+  // let you SEE the underlying spend/sales/ACoS for every campaign and type in your own budget if you want,
+  // not just approve or reject an auto-suggestion.
   let rows=camps.map(c=>{
     const d=derive(c);
     const util=campaignBudgetUtil(c,days)*100;
@@ -2048,15 +2059,17 @@ function renderOptBudget(){
     } else if(util<st.lowUtil && (c.orders===0 || d.acos>st.badAcos)){
       action='decrease'; newBudget=Math.max(1, +(c.dailyBudget*(1-st.decBudgetPct/100)).toFixed(2)); reason=`doar ${fInt(util)}% utilizat, ACoS slab`;
     }
-    return action!=='none'? Object.assign({action,newBudget,util,reason},c,d) : null;
-  }).filter(Boolean);
+    return Object.assign({action,newBudget,util,reason},c,d);
+  });
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
-  rows.forEach(r=>r._uid=r.campaignId); // stable identity — same reasoning as Bid/Placement Optimizer above
+  rows.forEach(r=>{ r._uid=r.campaignId; if(st.manualBudget[r._uid]!==undefined) r.newBudget=st.manualBudget[r._uid]; }); // stable identity — same reasoning as Bid/Placement Optimizer above
   const sel=selFor('optbudget');
   const totals=agg(rows);
   const actionBadge=r=>r.action==='increase'
     ? `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason)}">↑ +${st.incBudgetPct}%</span>`
-    : `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.reason)}">↓ -${st.decBudgetPct}%</span>`;
+    : r.action==='decrease'
+    ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.reason)}">↓ -${st.decBudgetPct}%</span>`
+    : `<span class="badge" style="background:#f1f3f6;color:#6b7280;">—</span>`;
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:actionBadge},
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
@@ -2065,7 +2078,7 @@ function renderOptBudget(){
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
     {key:'dailyBudget',label:'Current Budget',type:'money'},
-    {key:'newBudget',label:'New Budget',type:'money',cls:r=>r.newBudget>r.dailyBudget?'num-green':'num-red'},
+    {key:'newBudget',label:'New Budget ($)',l:true,noSort:true,cell:r=>`<input type="number" step="0.01" min="1" value="${r.newBudget}" data-budget-edit="${esc(r._uid)}" style="width:92px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;">`},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbudget',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBudget});
   $('#opt-budget').innerHTML=`
@@ -2089,11 +2102,11 @@ function renderOptBudget(){
       <div class="hint" style="margin-top:8px;">"Budget Used" = spend ÷ (daily budget × zile din perioadă) — Amazon nu spune direct câte zile cuprinde bulk-ul, așa că pune aici exact ce interval ai ales la export (ex. 7, 30). Greșit aici = "Budget Used" fals.</div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
-      ${kpi('Suggested changes',fInt(rows.length))}${kpi('Increase budget',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Decrease budget',fInt(rows.filter(r=>r.action==='decrease').length),'red')}
+      ${kpi('Campaigns shown',fInt(rows.length))}${kpi('Increase budget',fInt(rows.filter(r=>r.action==='increase').length),'green')}${kpi('Decrease budget',fInt(rows.filter(r=>r.action==='decrease').length),'red')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Budget Changes (${rows.length})</h3><div class="spacer"></div>
-        <button class="btn grad" id="obg-export" ${sel.size?'':'disabled'}>⬇ Export Budget Update (${sel.size})</button>
+        <button class="btn grad" id="obg-export" ${sel.size?'':'disabled'}>Export Budget Update (${sel.size})</button>
       </div>
       <div id="obg-table">${tbl.html}</div>
     </div>`;
@@ -2104,6 +2117,16 @@ function renderOptBudget(){
   bind('obg-lowutil','lowUtil',v=>+v||0); bind('obg-badacos','badAcos',v=>+v||0); bind('obg-decpct','decBudgetPct',v=>+v||0);
   bind('obg-ms','minSpend',v=>+v||0); bind('obg-days','periodDays',v=>+v||1);
   $('#obg-port').onchange=e=>{st.port=e.target.value; upd();};
+  // Typing a manual budget updates the row in place (and the persisted override), WITHOUT a full re-render —
+  // re-rendering on every keystroke would rebuild the input and steal focus mid-type, same issue fixed
+  // earlier for the plain filter fields.
+  document.querySelectorAll('[data-budget-edit]').forEach(inp=>{
+    inp.oninput=debounce(()=>{
+      const cid=inp.dataset.budgetEdit, val=+inp.value||0;
+      st.manualBudget[cid]=val;
+      const row=rows.find(r=>r._uid===cid); if(row) row.newBudget=val;
+    },300);
+  });
   $('#obg-export').onclick=()=>exportBudgetOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
 }
 function exportBudgetOptimization(product, rows){
@@ -2189,7 +2212,7 @@ function renderLaunchPanel(st, selOpps){
       ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)} ${nextNum}_${esc(suffix)}</b> onward — month/year refreshed to the current one, no duplicates.`
       : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)} 1, 2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
   </div>
-  <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">➕ Create ${numCampaigns} campaign(s)</button></div>`;
+  <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">Create ${numCampaigns} campaign(s)</button></div>`;
 }
 function wireLaunchPanel(st, selOpps){
   if(!selOpps.length) return;
