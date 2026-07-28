@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -810,11 +810,16 @@ function renderNgram(){
   // sidebar + product filter
   let src=stByToggle().filter(passesSidebar);
   const map=new Map();
+  // Grouped by portfolio + root, not just root — two unrelated products (different portfolios) that happen
+  // to share a common word (e.g. "timer") are a different niche each, not one pattern. Merging their spend/
+  // clicks into a single row would average away a good performer with a bad one under the same label.
   src.forEach(r=>{
+    const pf=String(r.portfolioName||'(No Portfolio)');
     const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
     new Set(words).forEach(w=>{
-      if(!map.has(w)) map.set(w,{root:w,impressions:0,clicks:0,spend:0,sales:0,orders:0,terms:[]});
-      const e=map.get(w); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders; e.terms.push(r);
+      const key=pf+'|'+w;
+      if(!map.has(key)) map.set(key,{root:w,portfolioName:pf,impressions:0,clicks:0,spend:0,sales:0,orders:0,terms:[]});
+      const e=map.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders; e.terms.push(r);
     });
   });
   let rows=[...map.values()].map(e=>{
@@ -829,10 +834,11 @@ function renderNgram(){
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
-  rows.forEach(e=>e._uid=e.root); // stable identity — the n-gram root is already the aggregation key
+  rows.forEach(e=>e._uid=e.portfolioName+'|'+e.root); // stable identity — matches the portfolio+root aggregation key above
   const sel=selFor('ngram');
   const cols=[
     {key:'root',label:'N-gram',l:true,type:'text',sortVal:r=>r.root,cell:r=>`<span class="ng-root link" data-uid="${esc(r._uid)}">▸ ${esc(r.root)}</span>`},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
     {key:'negated',label:'Negated',l:true,noSort:true,cell:r=>r.allNegated?`<span class="badge nt" title="Already negated in every campaign this root came from — exporting it again would be rejected as a duplicate.">already negated</span>`:r.someNegated?`<span class="badge" style="background:#fef3e2;color:#c2760a;" title="Already negated in some, but not all, of the campaigns this root came from — export will skip the ones already covered.">partially</span>`:''},
     {key:'impressions',label:'Impressions',type:'int'},
     {key:'clicks',label:'Clicks',type:'int'},
