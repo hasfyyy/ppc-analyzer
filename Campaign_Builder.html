@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-28 17:15</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-28 17:32</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -207,7 +207,7 @@ function parseReferenceBulk(wb){
     const cPortName=headers.find(h=>normH(h)==='portfolio name');
     json.forEach(row=>{
       if(String(row[cEntity]||'').trim().toLowerCase()!=='campaign') return;
-      const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':'SP') : (/brand/i.test(sn)?'SB':'SP');
+      const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':/display/i.test(row[cProduct])?'SD':'SP') : (/brand/i.test(sn)?'SB':/display/i.test(sn)?'SD':'SP');
       REF.campaigns.push({campaignId:String(cCampId?row[cCampId]:'').trim(), campaignName:String(row[cCampName]||'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod});
     });
   });
@@ -242,7 +242,7 @@ function extractBrandDataFromBulk(wb){
     const cState=headers.find(h=>normH(h)==='state');
     json.forEach(row=>{
       const ent=String(row[cEntity]||'').trim().toLowerCase();
-      const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':'SP') : (/brand/i.test(sn)?'SB':'SP');
+      const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':/display/i.test(row[cProduct])?'SD':'SP') : (/brand/i.test(sn)?'SB':/display/i.test(sn)?'SD':'SP');
       const campaignId=String(cCampId?row[cCampId]:'').trim();
       const state=String(cState?row[cState]:'').trim().toLowerCase();
       if(ent==='campaign') campaigns.push({campaignId, portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod, state});
@@ -490,11 +490,11 @@ function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL',
 let CFG=null;
 function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
-function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
+function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; if(cfg.type==='sd') return ['SDPT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){
-  // Product Targeting campaigns use "PAT 1", "PAT 2" (prefix + space + number, no duplicate match segment)
-  // instead of the usual "PREFIX_MATCH_NUM" pattern.
-  const first = cfg.type==='pt'? (num!=null? `${cfg.prefix} ${num}` : String(cfg.prefix)) : null;
+  // Product Targeting (SP or SD) campaigns use "PREFIX 1", "PREFIX 2" (prefix + space + number, no duplicate
+  // match segment) instead of the usual "PREFIX_MATCH_NUM" pattern.
+  const first = (cfg.type==='pt'||cfg.type==='sd')? (num!=null? `${cfg.prefix} ${num}` : String(cfg.prefix)) : null;
   const parts = first!=null? [first] : (()=>{ const p=[cfg.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
   parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency);
   return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_');
@@ -506,7 +506,7 @@ function templateFor(cfg,match){
   if(!match||match==='AUTO') return null;
   const pfName=getPortfolioNameById(cfg.btAccount, cfg.portfolioId);
   if(!pfName) return null;
-  return detectNamingTemplate(pfName, match, 'SP', cfg.prefix);
+  return detectNamingTemplate(pfName, match, cfg.type==='sd'?'SD':'SP', cfg.prefix);
 }
 // If a naming template was found (an existing campaign with this prefix/match in this portfolio), copy its
 // suffix (with the month/year refreshed) instead of the manual fields — same principle as Harvesting.
@@ -514,7 +514,7 @@ function buildName(cfg,match,num){
   const tmpl=templateFor(cfg,match);
   if(tmpl){
     const suffix=refreshDateToken(tmpl.suffix);
-    const first = cfg.type==='pt'? (num!=null? `${tmpl.prefix} ${num}` : String(tmpl.prefix)) : null;
+    const first = (cfg.type==='pt'||cfg.type==='sd')? (num!=null? `${tmpl.prefix} ${num}` : String(tmpl.prefix)) : null;
     const parts = first!=null? [first] : (()=>{ const p=[tmpl.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
     parts.push(suffix);
     return parts.filter(x=>x!=='').join(cfg.separator||'_');
@@ -523,7 +523,7 @@ function buildName(cfg,match,num){
 }
 function kwGroups(cfg){
   if(cfg.type==='auto') return [[]];
-  const list = cfg.type==='pt'? linesOf(cfg.targetAsins) : linesOf(cfg.keywords);
+  const list = (cfg.type==='pt'||cfg.type==='sd')? linesOf(cfg.targetAsins) : linesOf(cfg.keywords);
   const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
   if(per<=0) return [list];
   const g=[]; for(let i=0;i<list.length;i+=per) g.push(list.slice(i,i+per));
@@ -556,6 +556,18 @@ function buildCampaignRows(cfg){
       else { let base=cname, v=1; while(existingNames.has(cname)){ v++; cname=base+'_'+v; } }
       existingNames.add(cname);
       const agname=cname; // Ad Group ID/name = campaign name, no "_AG" suffix
+      if(cfg.type==='sd'){
+        // Sponsored Display has no keyword-style targeting, no Bidding Strategy/Top-of-Search boost column,
+        // and uses Budget (not Daily Budget) + a Tactic code. T00020 = contextual targeting tactic, which is
+        // what ASIN/category "Contextual Targeting" rows (incl. competitor-ASIN conquesting) belong to.
+        const c={'Product':'Sponsored Display','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'State':'enabled','Budget Type':'Daily','Budget':cfg.budget,'Tactic':'T00020','Cost Type':'cpc'};
+        if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
+        out.push(bulkRow(c));
+        out.push(bulkRow({'Product':'Sponsored Display','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
+        (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Display','Entity':'Product Ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
+        grp.forEach(asin=>{ const a=String(asin).trim().toUpperCase(); if(!a) return; out.push(bulkRow({'Product':'Sponsored Display','Entity':'Contextual Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Targeting Expression':`asin="${a}"`})); });
+        return;
+      }
       const c={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':cfg.type==='auto'?'Auto':'Manual','State':'enabled','Daily Budget':cfg.budget,'Bidding Strategy':cfg.strategy};
       if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
       out.push(bulkRow(c));
@@ -577,7 +589,7 @@ function builderIssues(cfg){
   const hasTemplate=matches.some(m=>templateFor(cfg,m));
   if(!hasTemplate && !String(cfg.brand).trim() && !String(cfg.asin).trim()) iss.push('Enter a Brand/Niche or ASIN for the campaign name (or upload a Reference Bulk to copy naming from an existing campaign).');
   if(cfg.type==='manual' && !linesOf(cfg.keywords).length) iss.push('Enter at least one keyword (manual campaigns).');
-  if(cfg.type==='pt' && !linesOf(cfg.targetAsins).length) iss.push('Enter at least one ASIN to target.');
+  if((cfg.type==='pt'||cfg.type==='sd') && !linesOf(cfg.targetAsins).length) iss.push('Enter at least one ASIN to target.');
   if(cfg.type==='auto' && !AUTO_GROUPS.some(g=>cfg[g.key])) iss.push('Select at least one auto targeting group (Close Match / Loose Match / Substitutes / Complements).');
   if(!linesOf(cfg.skus).length) iss.push('Select a portfolio (or add SKUs manually) — at least one SKU is required.');
   return iss;
@@ -611,6 +623,7 @@ function renderCampaignCreate(){
           <button data-t="manual" class="${cfg.type==='manual'?'active':''}">Manual (keywords)</button>
           <button data-t="pt" class="${cfg.type==='pt'?'active':''}">Product Targeting (ASINs)</button>
           <button data-t="auto" class="${cfg.type==='auto'?'active':''}">Auto targeting</button>
+          <button data-t="sd" class="${cfg.type==='sd'?'active':''}">SD Competitor Targeting</button>
         </div>
       </div>
       <div class="ctrls" id="cc-source" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
@@ -623,7 +636,7 @@ function renderCampaignCreate(){
         <div class="flist" id="cc-children">${childrenHtml}</div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
       <div class="ctrls" id="cc-matches" style="${cfg.type==='auto'?'display:none;':''}">
-        <div class="field" id="cc-matchtypes-field" style="${cfg.type==='pt'?'display:none;':''}"><label>Match types (one campaign each)</label>
+        <div class="field" id="cc-matchtypes-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'display:none;':''}"><label>Match types (one campaign each)</label>
           <div style="display:flex;gap:14px;height:32px;align-items:center;">
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-exact" ${cfg.m_exact?'checked':''}> Exact</label>
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-phrase" ${cfg.m_phrase?'checked':''}> Phrase</label>
@@ -631,9 +644,9 @@ function renderCampaignCreate(){
           </div>
         </div>
         ${cfg.type==='pt'? `<label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;height:32px;align-items:center;"><input type="checkbox" id="cc-pt-expanded" ${cfg.ptExpanded?'checked':''}> Expanded (asin-expanded — also match variations of each ASIN)</label>` : ''}
-        <div class="field"><label>${cfg.type==='pt'?'ASINs':'Keywords'} / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
+        <div class="field"><label>${(cfg.type==='pt'||cfg.type==='sd')?'ASINs':'Keywords'} / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
         <div class="field"><label>Start #</label><input type="number" id="cc-start" min="1" value="${esc(cfg.startNum)}" style="width:80px;"></div>
-        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all ${cfg.type==='pt'?'ASINs':'keywords'} in 1 campaign · 1 = single-target campaigns · N = N per campaign. Numbered from Start #.</div></div>
+        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all ${(cfg.type==='pt'||cfg.type==='sd')?'ASINs':'keywords'} in 1 campaign · 1 = single-target campaigns · N = N per campaign. Numbered from Start #.</div></div>
       </div>
       <div class="ctrls" id="cc-auto-groups" style="${cfg.type==='auto'?'':'display:none;'}">
         <div class="field"><label>Auto targeting groups (Product Targeting rows, one per group, bid = Default Bid below)</label>
@@ -666,7 +679,7 @@ function renderCampaignCreate(){
       <div class="ctrls" style="margin-top:12px;align-items:stretch;">
         <div class="field grow"><label>SKUs to advertise (auto-filled from the portfolio above — still editable)</label><textarea class="kwbox" id="cc-skus" style="min-height:120px;" placeholder="SKU-001&#10;SKU-002">${esc(cfg.skus)}</textarea></div>
         <div class="field grow" id="cc-kw-field" style="${cfg.type==='manual'?'':'display:none;'}"><label>Keywords (one per line)</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="blue widget&#10;widget for desk">${esc(cfg.keywords)}</textarea></div>
-        <div class="field grow" id="cc-pt-field" style="${cfg.type==='pt'?'':'display:none;'}"><label>ASINs to target (one per line)</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
+        <div class="field grow" id="cc-pt-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'':'display:none;'}"><label>${cfg.type==='sd'?'Competitor ASINs to target (one per line)':'ASINs to target (one per line)'}</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
       </div>
     </div>
     <div class="card pad">
@@ -724,7 +737,12 @@ function renderCampaignCreate(){
   $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
   document.querySelectorAll('.cc-auto-g').forEach(cb=>cb.onchange=()=>{ cfg[cb.dataset.g]=cb.checked; updateBuilderOutputs(); });
   const ignoreEl=$('#cc-ignore-naming'); if(ignoreEl) ignoreEl.onchange=()=>{ cfg.ignoreNaming=ignoreEl.checked; renderCampaignCreate(); };
-  $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{ cfg.type=b.dataset.t; renderCampaignCreate(); });
+  $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    // Nudge the prefix to this account's own "SDPT" (SD Product Targeting) convention when switching into
+    // the SD tab, same idea as any other default — only if the user hasn't already typed something else.
+    if(b.dataset.t==='sd' && cfg.prefix==='BSQ') cfg.prefix='SDPT';
+    cfg.type=b.dataset.t; renderCampaignCreate();
+  });
   $('#cc-export').onclick=exportCreatedCampaigns;
   updateBuilderOutputs();
 }
@@ -744,7 +762,7 @@ function updateBuilderOutputs(){
   const nCamp=names.length, nAds=nCamp*Math.max(1,skus);
   const nGroups=AUTO_GROUPS.filter(g=>cfg[g.key]).length, nKw=matches.length*kws, nPt=matches.length*asins;
   const targetSummary = cfg.type==='auto'? ` · ${nCamp*nGroups} auto targeting row(s) (${nGroups} group(s)/campaign)`
-    : cfg.type==='pt'? ` · ${nPt} product targeting row(s)`
+    : (cfg.type==='pt'||cfg.type==='sd')? ` · ${nPt} ${cfg.type==='sd'?'contextual targeting':'product targeting'} row(s)`
     : ` · ${nKw} keyword(s)`;
   $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${targetSummary}`;
   const iss=builderIssues(cfg);
@@ -752,7 +770,7 @@ function updateBuilderOutputs(){
   const exp=$('#cc-export'); if(exp) exp.disabled = iss.length>0;
   const rows=buildCampaignRows(cfg);
   const H=BULK_HEADERS, ix=n=>H.indexOf(n);
-  const pr=rows.map(r=>({entity:r[ix('Entity')],campaign:r[ix('Campaign Name')]||r[ix('Campaign ID')],ag:r[ix('Ad Group ID')],detail:r[ix('Keyword Text')]||r[ix('SKU')]||r[ix('Placement')]||r[ix('Product Targeting Expression')]||'',match:r[ix('Match Type')]||'',bid:r[ix('Bid')]||r[ix('Ad Group Default Bid')]||r[ix('Daily Budget')]||r[ix('Percentage')]||''}));
+  const pr=rows.map(r=>({entity:r[ix('Entity')],campaign:r[ix('Campaign Name')]||r[ix('Campaign ID')],ag:r[ix('Ad Group ID')],detail:r[ix('Keyword Text')]||r[ix('SKU')]||r[ix('Placement')]||r[ix('Product Targeting Expression')]||r[ix('Targeting Expression')]||'',match:r[ix('Match Type')]||'',bid:r[ix('Bid')]||r[ix('Ad Group Default Bid')]||r[ix('Daily Budget')]||r[ix('Budget')]||r[ix('Percentage')]||''}));
   let h='<div class="tablewrap"><table><thead><tr><th class="l">Entity</th><th class="l">Campaign</th><th class="l">Ad Group</th><th class="l">Keyword / SKU / Placement</th><th class="l">Match</th><th>Bid / Budget</th></tr></thead><tbody>';
   pr.slice(0,300).forEach(r=>{ h+=`<tr><td class="l"><b>${esc(r.entity)}</b></td><td class="l">${esc(r.campaign)}</td><td class="l">${esc(r.ag)}</td><td class="l">${esc(r.detail)}</td><td class="l">${esc(r.match)}</td><td>${esc(r.bid)}</td></tr>`; });
   if(!pr.length) h+='<tr><td colspan="6" class="l" style="padding:22px;color:#9aa3af;text-align:center;">Fill in the setup above to see the rows that will be generated.</td></tr>';
@@ -954,7 +972,7 @@ function exportSkwCampaigns(){
 }
 
 /* ============================ exports ============================ */
-const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression"];
+const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","Tactic","Cost Type","State","Daily Budget","Budget Type","Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression","Targeting Expression"];
 function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
 function writeBulk(rows,filename,sheet){ const aoa=[BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
 function exportCreatedCampaigns(){
@@ -962,7 +980,7 @@ function exportCreatedCampaigns(){
   if(iss.length){ alert('Please fix before export:\n\n• '+iss.join('\n• ')); return; }
   const rows=buildCampaignRows(cfg);
   const fn=(buildName(cfg,selectedMatches(cfg)[0])||'campaigns').replace(/[^a-z0-9_]+/gi,'_').slice(0,50);
-  writeBulk(rows, fn+'_bulk.xlsx');
+  writeBulk(rows, fn+'_bulk.xlsx', cfg.type==='sd'?'Sponsored Display Campaigns':'Sponsored Products Campaigns');
 }
 
 /* ============================ init ============================ */
