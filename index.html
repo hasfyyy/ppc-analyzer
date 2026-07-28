@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 16:38</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 17:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -277,13 +277,15 @@ const MATCH = {
   portfolioName: t=>t[0]==='portfolio'&&t[1]==='name',
   targetingType: t=>t.join(' ')==='targeting type',
   state: t=>t.join(' ')==='state',
-  dailyBudget: t=>t.includes('daily')&&t.includes('budget'),
+  dailyBudget: t=>(t.includes('daily')&&t.includes('budget'))||t.join(' ')==='budget',
   sku: t=>t.join(' ')==='sku',
   asin: t=>t.includes('asin'),
   bid: t=>t.join(' ')==='bid',
   keywordText: t=>t[0]==='keyword'&&t[1]==='text',
   matchType: t=>t.join(' ')==='match type',
   ptExpr: t=>t.slice(0,3).join(' ')==='product targeting expression'&&!t.includes('resolved'),
+  targetingId: t=>t.join(' ')==='targeting id',
+  targetingExpr: t=>t.join(' ')==='targeting expression'&&!t.includes('resolved'),
   placement: t=>t.join(' ')==='placement',
   percentage: t=>t.join(' ')==='percentage',
   searchTerm: t=>t.includes('search')&&t.includes('term'),
@@ -299,7 +301,7 @@ function colmap(headers){
   for(const f in MATCH){ const found=headers.find(h=>MATCH[f](tokz(h))); if(found) m[f]=found; }
   return m;
 }
-function detectProduct(v){ const s=String(v||'').toLowerCase(); return s.includes('brand')?'SB':'SP'; }
+function detectProduct(v){ const s=String(v||'').toLowerCase(); if(s.includes('brand'))return 'SB'; if(s.includes('display'))return 'SD'; return 'SP'; }
 
 // Some bulk exports (esp. ones re-saved/merged by third-party tools) carry a stale/wrong <dimension> tag
 // (e.g. "A1" even though the sheet actually holds hundreds of rows). SheetJS trusts that tag for '!ref',
@@ -324,7 +326,7 @@ function parseWorkbook(wb){
     const json=XLSX.utils.sheet_to_json(ws,{defval:''}); if(!json.length) return;
     const headers=Object.keys(json[0]); const c=colmap(headers);
     if(c.entity===undefined && c.searchTerm===undefined && c.campaignId===undefined) return; // not a bulk sheet
-    const sheetProduct = /brand/i.test(name)?'SB':(/product/i.test(name)?'SP':null);
+    const sheetProduct = /brand/i.test(name)?'SB':(/display/i.test(name)?'SD':(/product/i.test(name)?'SP':null));
     json.forEach(row=>{
       const g=f=>c[f]!==undefined?row[c[f]]:'';
       const ent=String(g('entity')||'').trim().toLowerCase();
@@ -357,6 +359,14 @@ function parseWorkbook(wb){
         DATA.targets.push(Object.assign({kind:'keyword',product,campaignId,adGroupId,id:String(g('keywordId')||''),text:String(g('keywordText')||''),matchType:String(g('matchType')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
       } else if(ent==='product targeting'){
         DATA.targets.push(Object.assign({kind:'target',product,campaignId,adGroupId,id:String(g('productTargetingId')||''),text:String(g('ptExpr')||''),matchType:String(g('ptExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
+      } else if(ent==='contextual targeting'||ent==='audience targeting'){
+        // Sponsored Display has no keyword-style targeting at all — both of its targeting types (contextual:
+        // product/category context, audience: remarketing/lifestyle audiences) use a Targeting ID + Targeting
+        // Expression pair that lines up with the same {kind:'target', id, text} shape product-targeting rows
+        // already use, so the rest of the Bid Optimizer machinery (built for keyword + PT) works unmodified.
+        // srcEntity is kept so a bid-update export writes back the SAME entity type it came from.
+        const srcEntity = ent==='contextual targeting'?'Contextual Targeting':'Audience Targeting';
+        DATA.targets.push(Object.assign({kind:'target',srcEntity,product,campaignId,adGroupId,id:String(g('targetingId')||''),text:String(g('targetingExpr')||''),matchType:String(g('targetingExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
       } else if(ent.indexOf('negative')!==-1 && ent.indexOf('keyword')!==-1){
         DATA.negatives.push({product,campaignId,adGroupId,text:String(g('keywordText')||'').trim().toLowerCase(),matchType:String(g('matchType')||''),scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
       } else if(ent==='bidding adjustment'){
@@ -658,9 +668,13 @@ function renderNav(){
 function renderToggle(){
   const el=$('#ptToggle'); if(el) el.style.display='flex';
   const nSP=stSP().length, nSB=stSB().length;
+  // SD has no search-term report at all (contextual/audience targeting, not keywords) — its targets are the
+  // closest equivalent for a "how much data is here" count on the toggle button.
+  const nSD=DATA.targets.filter(t=>t.product==='SD').length;
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
-    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`;
+    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`+
+    `<button class="pt-btn ${S.product==='SD'?'active':''}" data-p="SD" title="Sponsored Display — only the Optimize tab (Bid Optimizer) supports SD so far; other tabs rely on a search-term report SD doesn't have.">Sponsored Display (${fInt(nSD)})</button>`;
   $('#ptToggle').querySelectorAll('.pt-btn').forEach(b=>b.onclick=()=>{ S.product=b.dataset.p; renderToggle(); renderTab(); });
 }
 
@@ -1492,7 +1506,7 @@ function exportProductsPause(pauseRows, product){
 }
 
 /* ============================ exports ============================ */
-const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression"];
+const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression","Targeting Expression"];
 function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
 function writeBulk(rows,filename,sheet){ const aoa=[BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
 function exportCSV(columns,rows,name){
@@ -1886,6 +1900,9 @@ function cappedCampaignsIn(rows, product){
   });
   return [...names];
 }
+function productLabel(p){ return p==='SB'?'Sponsored Brands':p==='SD'?'Sponsored Display':'Sponsored Products'; }
+function productSheetName(p){ return p==='SB'?'Sponsored Brands Campaigns':p==='SD'?'Sponsored Display Campaigns':'Sponsored Products Campaigns'; }
+function productFilePrefix(p){ return p==='SB'?'sb_':p==='SD'?'sd_':''; }
 function exportBidOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
   const capped=cappedCampaignsIn(rows, product);
@@ -1893,8 +1910,13 @@ function exportBidOptimization(product, rows){
     const proceed=confirm(`${capped.length} campanie(i) din selecție sunt deja la ≥80% din bugetul zilnic:\n${capped.slice(0,6).join('\n')}${capped.length>6?`\n…+${capped.length-6} more`:''}\n\nCreșterea bidului acolo n-are efect complet fără să crești și bugetul (vezi Optimize → Budget Rebalancing).\n\nContinui exportul oricum?`);
     if(!proceed) return;
   }
-  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
-  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+  const prod=productLabel(product);
+  // SD has no keyword-style targeting — its rows carry their own srcEntity (Contextual/Audience Targeting)
+  // and use the shared Targeting ID column, not Keyword ID / Product Targeting ID.
+  const out=rows.map(r=>{
+    if(product==='SD') return bulkRow({'Product':prod,'Entity':r.srcEntity||'Contextual Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Targeting ID':r.id,'Bid':r.newBid});
+    return bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id}));
+  });
   // Bundle each single-keyword campaign's placement suggestions once per (campaign, placement) — shown
   // alongside the bid in the table, but only written once even if somehow selected more than once.
   const plSeen=new Set(); let plCount=0;
@@ -1903,7 +1925,7 @@ function exportBidOptimization(product, rows){
     if(plSeen.has(k)) return; plSeen.add(k); plCount++;
     out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
   }); });
-  writeBulk(out, (product==='SB'?'sb_':'')+'bid_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  writeBulk(out, productFilePrefix(product)+'bid_optimization_bulk.xlsx', productSheetName(product));
   alert(`Exported ${out.length} row(s): ${rows.length} bid update(s)${plCount?` + ${plCount} placement update(s)`:''}.`);
 }
 // Used by the Placement Optimizer below.
@@ -2078,9 +2100,9 @@ function renderOptPlacements(){
 }
 function exportPlacementOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
-  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const prod=productLabel(product);
   const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':r.rawPlacement,'Percentage':r.newPct}));
-  writeBulk(out, (product==='SB'?'sb_':'')+'placement_optimization_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  writeBulk(out, productFilePrefix(product)+'placement_optimization_bulk.xlsx', productSheetName(product));
   alert(`Exported ${out.length} placement bid adjustment update(s).`);
 }
 
@@ -2186,11 +2208,12 @@ function renderOptBudget(){
 }
 function exportBudgetOptimization(product, rows){
   if(!rows.length){ alert('No rows selected.'); return; }
-  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const prod=productLabel(product);
+  const budgetKey = product==='SD'?'Budget':'Daily Budget';
   // Leaving Portfolio ID blank on a Campaign "Update" row makes Amazon's bulk import strip the
   // campaign out of its portfolio, so it must be re-sent on every budget-only update too.
-  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Daily Budget':r.newBudget}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
-  writeBulk(out, (product==='SB'?'sb_':'')+'budget_rebalancing_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,[budgetKey]:r.newBudget}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
+  writeBulk(out, productFilePrefix(product)+'budget_rebalancing_bulk.xlsx', productSheetName(product));
   alert(`Exported ${out.length} budget update(s).`);
 }
 /* ---- naming pattern detection: reuse the convention of an existing campaign in the same portfolio ---- */
