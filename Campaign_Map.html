@@ -10,39 +10,41 @@
 <style>
   :root{
     --pink:#3468c0; --pink-dark:#2851a3; --purple:#0e8fa0;
-    --grad:linear-gradient(135deg,#3468c0,#0e8fa0);
-    --grad-red:linear-gradient(135deg,#c2513f,#a83a3a);
+    --grad:#3468c0;
+    --grad-red:#af4a3f;
     --green:#16a34a; --amber:#b8770e; --red:#c0392b;
     --bg:#f4f5f7; --card:#ffffff; --ink:#1f2937; --muted:#9aa3af; --muted2:#6b7280;
-    --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+    --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 2px rgba(16,24,40,.05);
+    --radius:7px; --radius-lg:9px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;}
   body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); font-size:13px;}
+  table{font-variant-numeric:tabular-nums;}
   a{color:var(--pink-dark); text-decoration:none;}
   .wrap{max-width:1560px; margin:0 auto; padding:18px 22px 80px;}
 
   .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:10px; flex-wrap:wrap;}
   .topbar h1{font-size:16px; margin:0; font-weight:800;}
   .topbar .links{display:flex; gap:8px;}
-  .topbar a.backlink{font-size:12.5px; font-weight:600; color:var(--muted2); border:1px solid var(--border); background:#fff; padding:7px 12px; border-radius:9px;}
+  .topbar a.backlink{font-size:12.5px; font-weight:600; color:var(--muted2); border:1px solid var(--border); background:#fff; padding:7px 12px; border-radius:6px;}
   .topbar a.backlink:hover{background:#f6f7f9; color:var(--ink);}
 
-  .card{background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow);}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow);}
   .card.pad{padding:14px 16px;}
   .card + .card{margin-top:14px;}
 
   .ctrls{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end;}
-  .fitem{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12.5px; cursor:pointer; border-radius:7px;}
+  .fitem{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12.5px; cursor:pointer; border-radius:6px;}
   .fitem:hover{background:#f2f6fb;}
   .fitem input{accent-color:var(--pink); width:14px; height:14px;}
   .field{display:flex; flex-direction:column; gap:4px;}
   .field label{font-size:11px; color:var(--muted2); font-weight:500;}
-  .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:12.5px; background:#fff;}
+  .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:6px; padding:7px 9px; font-size:12.5px; background:#fff;}
   .field select{min-width:150px;}
   .field.grow{flex:1; min-width:220px;} .field.grow input{width:100%;}
 
-  .btn{border:none; border-radius:9px; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+  .btn{border:none; border-radius:6px; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
   .btn.grad{background:var(--grad); color:#fff;}
   .btn.grad:disabled{opacity:.45; cursor:not-allowed;}
   .btn.ghost{background:#fff; color:var(--ink); border:1px solid var(--border);}
@@ -53,7 +55,7 @@
   .countnote{font-size:11.5px; color:var(--muted); }
   .hint{font-size:11px; color:var(--muted); }
 
-  .tablewrap{overflow:auto; border-radius:12px;}
+  .tablewrap{overflow:auto; border-radius:var(--radius);}
   table{width:100%; border-collapse:collapse; font-size:12px;}
   thead th{position:sticky; top:0; background:#fbfbfc; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; color:var(--muted2); font-weight:600; z-index:2; cursor:pointer;}
   thead th.l{text-align:left;}
@@ -61,10 +63,10 @@
   tbody td.l{text-align:left;}
   tbody tr:hover{background:#f7fafd;}
   tr.grouphead td{background:#eef3f9; font-weight:700; border-bottom:1px solid var(--border);}
-  .tag{display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; font-weight:700; letter-spacing:.2px;}
+  .tag{display:inline-block; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:700; letter-spacing:.2px;}
   .tag.sp{background:#e0f2fe; color:#0369a1;}
-  .tag.sb{background:#fce7f3; color:#be185d;}
-  .tag.sd{background:#ede9fe; color:#6d28d9;}
+  .tag.sb{background:#fdf0e3; color:#a8590f;}
+  .tag.sd{background:#e6f4f3; color:#0e766e;}
   .tag.mixed{background:#fee2e2; color:#b91c1c;}
   .tag.ok{background:#dcfce7; color:#15803d;}
   .tag.warn{background:#fef3c7; color:#92400e;}
@@ -87,9 +89,9 @@
 <div class="wrap">
 
   <div class="topbar">
-    <h1>🗺️ Renaming Campaigns</h1>
+    <h1>Renaming Campaigns</h1>
     <div class="links">
-      <a class="backlink" href="Campaign_Builder.html">🏗️ Campaign Builder</a>
+      <a class="backlink" href="Campaign_Builder.html">Campaign Builder</a>
       <a class="backlink" href="index.html">← PPC Analyzer</a>
     </div>
   </div>
@@ -109,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-28 11:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-28 12:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -644,7 +646,7 @@ let LAST_ROWS=[];
 function renderApp(rows){
   LAST_ROWS=rows;
   if(!rows.length){
-    $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic">🗺️</div><p>No enabled campaigns found in this file.</p></div></div>`;
+    $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>No enabled campaigns found in this file.</p></div></div>`;
     return;
   }
   const {groups, mixedBucket, noAsinBucket}=buildAsinGroups(rows);
@@ -698,16 +700,16 @@ function renderApp(rows){
     const variations=[...new Set(g.campaigns.flatMap(c=>c.asins))];
     return `<tr class="grouphead">
       <td class="l" colspan="11">
-        📦 <b>${esc(g.asin)}</b>${bt?` — ${esc([bt.brand,bt.niche,bt.name].filter(Boolean).join(' · '))}`:''}
+        <b>${esc(g.asin)}</b>${bt?` — ${esc([bt.brand,bt.niche,bt.name].filter(Boolean).join(' · '))}`:''}
         &nbsp;·&nbsp; ${camps.length} campaign(s)
         ${variations.length>1?`&nbsp;·&nbsp; <span class="muted">${variations.length} variation(s): ${esc(variations.join(', '))}</span>`:''}
-        &nbsp;·&nbsp; ${inconsistentFlag? `<span class="tag warn">⚠ spread across ${g.portfolioIds.size} portfolios: ${esc(pfList.join(', '))}</span>` : `<span class="tag ok">✓ consistent portfolio: ${esc(pfList[0]||'(No Portfolio)')}</span>`}
+        &nbsp;·&nbsp; ${inconsistentFlag? `<span class="tag warn">spread across ${g.portfolioIds.size} portfolios: ${esc(pfList.join(', '))}</span>` : `<span class="tag ok">consistent portfolio: ${esc(pfList[0]||'(No Portfolio)')}</span>`}
       </td>
     </tr>` + camps.map(rowHtml).join('');
   }).join('');
 
   const mixedFiltered=mixedBucket.filter(matchesFilter);
-  const mixedHtml = mixedFiltered.length? `<tr class="grouphead"><td class="l" colspan="11"><span class="tag mixed">⚠ MIXED — multiple ASINs, not auto-groupable</span> &nbsp;${mixedFiltered.length} campaign(s)</td></tr>` +
+  const mixedHtml = mixedFiltered.length? `<tr class="grouphead"><td class="l" colspan="11"><span class="tag mixed">MIXED — multiple ASINs, not auto-groupable</span> &nbsp;${mixedFiltered.length} campaign(s)</td></tr>` +
     mixedFiltered.map(r=>`<tr>
       <td class="l">${programTag(r.program)}</td>
       <td class="l">${esc(r.type)}</td>
@@ -792,8 +794,8 @@ function renderApp(rows){
         <div class="field grow"><label>Search (name · ID · type · portfolio · ASIN)</label><input type="text" id="cm-search" placeholder="type to filter…" value="${esc(bySearch)}"></div>
         <div class="field"><label>Program</label><select id="cm-fprogram"><option value="">All</option><option ${byProgram==='SP'?'selected':''}>SP</option><option ${byProgram==='SB'?'selected':''}>SB</option><option ${byProgram==='SD'?'selected':''}>SD</option></select></div>
         <div class="spacer"></div>
-        <button class="btn ghost" id="cm-export-report">⬇ Export Report (.xlsx)</button>
-        <button class="btn grad" id="cm-export">⬇ Export Bulk (ready for Amazon)</button>
+        <button class="btn ghost" id="cm-export-report">Export Report (.xlsx)</button>
+        <button class="btn grad" id="cm-export">Export Bulk (ready for Amazon)</button>
       </div>
       <div class="tablewrap"><table>
         <thead><tr><th class="l">Program</th><th class="l">Type</th><th class="l">Current Campaign Name</th><th class="l">New Name</th><th>Campaign ID</th><th>Ad Groups</th><th class="l">Current Portfolio</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASINs</th></tr></thead>
@@ -907,7 +909,7 @@ $('#cm-parentmap').onchange=e=>{
       const wb=XLSX.read(buf,{type:'array'});
       PARENT_MAP=parseParentMap(wb);
       const n=Object.keys(PARENT_MAP).length;
-      if(!n){ $('#cm-parentmap-status').innerHTML = `⚠ Could not find "(Parent) ASIN" / "Product ASIN"-style columns in <b>${esc(file.name)}</b> — mixed detection unchanged.`; return; }
+      if(!n){ $('#cm-parentmap-status').innerHTML = `Could not find "(Parent) ASIN" / "Product ASIN"-style columns in <b>${esc(file.name)}</b> — mixed detection unchanged.`; return; }
       $('#cm-parentmap-status').innerHTML = `<b>${esc(file.name)}</b> loaded — ${n} child→parent ASIN mapping(s). Same-parent variations will no longer be flagged as MIXED.`;
       if(LAST_WB){ const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value); renderApp(rows); }
     }catch(err){ console.error(err); alert('Import error: '+err.message); }
