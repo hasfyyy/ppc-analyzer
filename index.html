@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:19</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1451,7 +1451,7 @@ function renderDuplicates(){
         <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Bid</th></tr></thead>
         <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9">🧬 <b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
           g.list.map(t=>`<tr>
-            <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'disabled title="Best performer — pausing this one is disabled by default; uncheck a worse copy instead"':''}></td>
+            <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'title="Best performer — usually keep this one, but selectable if you want to pause it instead"':''}></td>
             <td class="l">${t===g.best?'<span class="badge tg">KEEP (best)</span>':''}</td>
             <td class="l">${esc(t.campaignName||t.campaignId)}</td>
             <td>${fInt(t.clicks)}</td><td>${fMoney(t.spend)}</td><td>${fMoney(t.sales)}</td><td>${fInt(t.orders)}</td>
