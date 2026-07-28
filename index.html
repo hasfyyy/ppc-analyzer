@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 17:32</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 18:25</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -845,6 +845,7 @@ function renderNegatives(product){
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:r=>ASIN_RE.test(String(r.searchTerm||'').trim())?`<span class="badge neg" style="border-color:#f59e0b;color:#b45309;">Negative Product</span>`:`<span class="badge neg">Negative Exact</span>`},
     {key:'searchTerm',label:'Search Term',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>esc(r.portfolioName||'(No Portfolio)')},
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
     {key:'negated',label:'Already Negated',l:true,noSort:true,cell:r=>r.negated?'<span class="badge negd">Yes</span>':'—'},
     {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
@@ -884,6 +885,8 @@ function renderNegatives(product){
       <div class="rowbar">
         <div class="field grow"><label>Search Term</label><input type="text" id="ng-term" placeholder="Filter search terms…" value="${esc(st.term||'')}"></div>
         <div class="field grow"><label>Campaign Name</label><input type="text" id="ng-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
+        <div class="field"><label>Sort by</label><select id="ng-sortby">${(()=>{ const sort=sortFor(tab); return cols.filter(c=>!c.noSort).map(c=>`<option value="${c.key}" ${sort.key===c.key?'selected':''}>${esc(c.label)}</option>`).join(''); })()}</select></div>
+        <div class="field"><label>&nbsp;</label><select id="ng-sortdir">${(()=>{ const sort=sortFor(tab); return `<option value="-1" ${sort.dir===-1?'selected':''}>High → Low</option><option value="1" ${sort.dir===1?'selected':''}>Low → High</option>`; })()}</select></div>
       </div>
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${product} Negative Candidates (${cand.length})</h3><div class="spacer"></div>
         <button class="btn ghost" id="ng-dlall">Download All</button>
@@ -902,6 +905,10 @@ function renderNegatives(product){
   if(spTip){ $('#ng-exasin').onchange=e=>{st.exAsin=e.target.checked; upd();}; }
   $('#ng-term').oninput=debounce(()=>{st.term=$('#ng-term').value; upd();},200);
   $('#ng-camp').oninput=debounce(e=>{st.camp=$('#ng-camp').value; upd();},200);
+  // Quick "Sort by" dropdown — the metric columns (Impr./Clicks/Spend/…) sit far to the right of a wide
+  // table, so this reaches the same sort the column-header menu offers without scrolling over to find it.
+  $('#ng-sortby').onchange=e=>{ const sort=sortFor(tab); sort.key=e.target.value; upd(); };
+  $('#ng-sortdir').onchange=e=>{ const sort=sortFor(tab); sort.dir=+e.target.value; upd(); };
   $('#ng-dlall').onclick=()=>exportNegatives(product,cand);
   $('#ng-dlsel').onclick=()=>exportNegatives(product,cand.filter(r=>sel.has(r._uid)));
 }
