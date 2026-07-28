@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:58</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -867,7 +867,7 @@ function renderNgram(){
           <div class="field grow"><label>Search n-gram</label><input type="text" id="ng-text" placeholder="Filter by text…" value="${esc(st.text||'')}"></div>
           <button class="btn ghost" id="ng-csv">⬇ Export CSV</button>
           <select id="ng-negtype" style="border:1px solid var(--border);border-radius:8px;padding:8px 9px;font-size:12.5px;background:#fff;">${['Negative Phrase','Negative Exact'].map(x=>`<option ${(st.negtype||'Negative Phrase')===x?'selected':''}>${x}</option>`).join('')}</select>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;"><input type="checkbox" id="ng-exexcamp" ${st.exExactCamp!==false?'checked':''}> Exclude Exact campaigns</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;" title="Exports as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio as this root — not just the ad group(s) it was actually found in."><input type="checkbox" id="ng-exexcamp" ${st.exExactCamp!==false?'checked':''}> Exclude Exact campaigns</label>
           <button class="btn grad-red" id="ng-neg">⛔ Export Negatives${sel.size?` (${sel.size})`:''}</button>
         </div>
         <div class="rowbar">
@@ -1348,29 +1348,48 @@ function exportCSV(columns,rows,name){
   const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Export'); XLSX.writeFile(wb,name+'.csv');
 }
 function isExactCampaign(name){ return /(^|[^a-z])exact([^a-z]|$)/i.test(String(name||'')); }
+function isBroadOrPhraseCampaignName(name){ return /(^|[^a-z])(broad|phrase)([^a-z]|$)/i.test(String(name||'')); }
+// Negate a root across every Broad/Phrase/Auto campaign in the SAME portfolio as where it was found — not
+// just the specific ad group(s) it happened to already show up in. A bad root discovered via one Auto
+// campaign's search terms is just as likely to get triggered again by any other Broad/Phrase/Auto campaign
+// targeting the same product, so it's blocked everywhere it could realistically resurface. Uses "Campaign
+// Negative Keyword" (campaign-wide, no Ad Group ID needed) rather than the ad-group-scoped "Negative
+// Keyword" entity, since the whole point here is NOT to restrict it to one ad group.
 function exportNgramNegatives(entries, matchType, excludeExact){
-  const out=[]; const seen=new Set(); const campsAll=new Set(); const agsAll=new Set(); let skippedNegated=0;
+  const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
   const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const singleKw=singleKwCampaigns(S.product);
+  const eligibleByPortfolio=new Map();
+  function eligibleCampaignsFor(pf){
+    if(eligibleByPortfolio.has(pf)) return eligibleByPortfolio.get(pf);
+    const list=DATA.campaigns.filter(c=>{
+      const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
+      if(c.product!==S.product || c.state!=='enabled' || (c.portfolioName||'(No Portfolio)')!==pf) return false;
+      if(excludeExact && isExactCampaign(c.campaignName)) return false;
+      // Single-keyword exclusion only makes sense for MANUAL campaigns (the SUP_/SK_ convention) — an Auto
+      // campaign with just one of its four targeting expressions still enabled isn't "single-keyword" in
+      // that sense, it's still a normal Auto campaign and should stay eligible.
+      if(!isAuto && singleKw.has(c.campaignId)) return false;
+      return isAuto || isBroadOrPhraseCampaignName(c.campaignName);
+    });
+    eligibleByPortfolio.set(pf, list);
+    return list;
+  }
   entries.forEach(e=>{
-    // only the AD GROUP(s) that actually generated this root's search terms — not campaign-wide, not portfolio-wide.
-    const pairs=new Map(); // "campId|adGroupId" -> {campaignId, adGroupId, campaignName}
-    (e.terms||[]).forEach(t=>{ if(!t.campaignId||!t.adGroupId) return; pairs.set(t.campaignId+'|'+t.adGroupId, {campaignId:t.campaignId, adGroupId:t.adGroupId, campaignName:t.campaignName}); });
-    pairs.forEach(({campaignId:cid, adGroupId:agid, campaignName})=>{
-      const cm=DATA.campById[cid];
-      const cname = cm? cm.name : (campaignName||'');
-      if(excludeExact && isExactCampaign(cname)) return;
+    const pf=e.portfolioName||'(No Portfolio)';
+    eligibleCampaignsFor(pf).forEach(c=>{
       // Already negated (as any match type) in this campaign — re-adding it is exactly what Amazon's bulk
       // importer rejects as "Invalid User Input" (duplicate negative), so skip it here instead of exporting
       // a row that's guaranteed to bounce.
-      if(isNegated(cid, e.root)){ skippedNegated++; return; }
-      const dk=cid+'|'+agid+'|'+String(e.root).toLowerCase();
-      if(seen.has(dk)) return; seen.add(dk); campsAll.add(cid); agsAll.add(cid+'|'+agid);
-      out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':cid,'Ad Group ID':agid,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
+      if(isNegated(c.campaignId, e.root)){ skippedNegated++; return; }
+      const dk=c.campaignId+'|'+String(e.root).toLowerCase();
+      if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
+      out.push(bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
     });
   });
-  if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — the campaign(s) these roots come from are all Exact Match (excluded), or their search terms have no Ad Group ID. Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
+  if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no enabled Broad/Phrase/Auto campaign found in the relevant portfolio(s). Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
   writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} ${matchType} row(s) across ${agsAll.size} ad group(s) in ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated only at the ad group level where each root's search terms actually appeared — not campaign-wide, not portfolio-wide.${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+  alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio — not just where each root's search terms happened to already appear.${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 function exportNegatives(product,rows){
