@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 17:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 17:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1992,9 +1992,14 @@ function computePlacementOptRows(product, filters){
   if(bst.minClicks===undefined) bst.minClicks=10; if(bst.minSpend===undefined) bst.minSpend=0;
   const byCampAll={};
   allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
+  // Indexed once, not re-scanned per campaign — on a large account (tens of thousands of targets), doing a
+  // DATA.targets.find() inside this per-campaign loop is O(campaigns × targets) and is exactly what made the
+  // tab lock up the tab/browser on bigger accounts.
+  const singleTargetByCamp=new Map();
+  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && !singleTargetByCamp.has(t.campaignId)) singleTargetByCamp.set(t.campaignId, t); });
   Object.keys(byCampAll).forEach(cid=>{
     const plc=byCampAll[cid];
-    const target=DATA.targets.find(t=>t.product===product && t.campaignId===cid && t.state==='enabled' && t.bid>0);
+    const target=singleTargetByCamp.get(cid);
     if(!target) return;
     const td=derive(agg([target]));
     if(!(target.clicks>=bst.minClicks && target.spend>=bst.minSpend && target.orders>=1)) return;
