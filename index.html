@@ -9,10 +9,12 @@
 <meta http-equiv="Expires" content="0">
 <style>
   :root{
-    --pink:#ec4899; --pink-dark:#db2777; --purple:#a855f7;
-    --grad:linear-gradient(135deg,#ec4899,#a855f7);
-    --grad-red:linear-gradient(135deg,#f43f5e,#e11d48);
-    --green:#16a34a; --amber:#f59e0b; --red:#ef4444;
+    /* Calm slate-blue/teal palette — muted, low-saturation, built to keep dense numeric tables easy to scan
+       rather than draw attention to the chrome around them. */
+    --pink:#3468c0; --pink-dark:#2851a3; --purple:#0e8fa0;
+    --grad:linear-gradient(135deg,#3468c0,#0e8fa0);
+    --grad-red:linear-gradient(135deg,#c2513f,#a83a3a);
+    --green:#16a34a; --amber:#b8770e; --red:#c0392b;
     --bg:#f4f5f7; --card:#ffffff; --ink:#1f2937; --muted:#9aa3af; --muted2:#6b7280;
     --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
   }
@@ -24,7 +26,7 @@
 
   /* upload */
   .dropzone{border:2px dashed #c9cfda; border-radius:16px; background:#fafbfc; padding:26px; text-align:center; transition:.15s; margin-bottom:10px;}
-  .dropzone.drag{border-color:var(--pink); background:#fdf2f8;}
+  .dropzone.drag{border-color:var(--pink); background:#eef5fb;}
   .dropzone .up-ic{font-size:26px;}
   .dropzone h3{margin:8px 0 2px; font-size:15px; font-weight:600;}
   .dropzone p{margin:0; color:var(--muted2); font-size:12.5px;}
@@ -35,13 +37,13 @@
   .navrow{display:flex; justify-content:center; margin:6px 0 12px;}
   .nav{display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:5px; box-shadow:var(--shadow); overflow-x:auto; max-width:100%;}
   .navbtn{border:none; background:none; padding:8px 13px; font-size:13px; font-weight:600; color:var(--muted2); cursor:pointer; border-radius:9px; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:.12s;}
-  .navbtn:hover{background:#f6f2fb; color:var(--ink);}
-  .navbtn.active{background:var(--grad); color:#fff; box-shadow:0 2px 8px rgba(219,39,119,.35);}
+  .navbtn:hover{background:#eef3f9; color:var(--ink);}
+  .navbtn.active{background:var(--grad); color:#fff; box-shadow:0 2px 8px rgba(52,104,192,.30);}
 
   /* SP/SB toggle */
   .pt-toggle{display:flex; gap:6px; margin:0 0 16px;}
   .pt-btn{border:1px solid var(--border); background:var(--card); padding:7px 14px; border-radius:9px; font-size:12.5px; font-weight:600; color:var(--muted2); cursor:pointer;}
-  .pt-btn.active{background:#efe9fb; color:var(--ink); border-color:#d9c9f2;}
+  .pt-btn.active{background:#e9f1fa; color:var(--ink); border-color:#c3d9ef;}
 
   /* layout with sidebar */
   .cols{display:flex; gap:16px; align-items:flex-start;}
@@ -58,7 +60,7 @@
   .fgroup input.search{width:100%; border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:12.5px;}
   .flist{max-height:172px; overflow:auto; border-top:1px solid var(--border2); margin:0 8px; }
   .fitem{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12.5px; cursor:pointer; border-radius:7px;}
-  .fitem:hover{background:#faf6fe;}
+  .fitem:hover{background:#f2f6fb;}
   .fitem input{accent-color:var(--pink); width:14px; height:14px;}
   .fitem span{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .resetbtn{width:100%; background:#f6f7f9; color:var(--ink); border:1px solid var(--border); padding:10px; border-radius:10px; font-weight:600; cursor:pointer;}
@@ -112,7 +114,7 @@
   thead th.l{text-align:left;} thead th.sortable{cursor:pointer;} thead th.sortable:hover{color:var(--ink);}
   tbody td{padding:9px 12px; border-bottom:1px solid var(--border2); white-space:nowrap; text-align:right;}
   tbody td.l{text-align:left;}
-  tbody tr:hover{background:#fcfaff;}
+  tbody tr:hover{background:#f7fafd;}
   tbody tr.totals{font-weight:700; background:#fafafa;}
   tbody tr.totals td{border-bottom:2px solid var(--border);}
   .num-green{color:var(--green); font-weight:600;} .num-amber{color:var(--amber); font-weight:600;} .num-red{color:var(--red); font-weight:600;}
@@ -122,7 +124,7 @@
   .badge.nt{background:#fdecec; color:#dc2626;}
   .badge.tg{background:#e7f7ee; color:#15803d;}
   .badge.neg{border:1px solid var(--pink); color:var(--pink-dark); background:#fff; cursor:pointer; padding:4px 10px; border-radius:8px;}
-  .badge.negd{background:#fdf2f8; border-color:#f0abcc; color:#9d174d;}
+  .badge.negd{background:#eef4fb; border-color:#bcd6f0; color:#28527e;}
   .badge.clickable{cursor:pointer;}
   .badge.sel{background:var(--grad); color:#fff;}
   .link{color:var(--pink-dark); cursor:pointer;}
@@ -141,7 +143,7 @@
   .seg button{border:none; background:none; padding:6px 12px; border-radius:7px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
   .seg button.active{background:#fff; color:var(--ink); box-shadow:var(--shadow);}
   textarea.kwbox{width:100%; min-height:220px; border:1px solid var(--border); border-radius:12px; padding:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; resize:vertical;}
-  .banner{background:#fdf2f8; border:1px solid #f6cee2; color:#9d174d; padding:9px 12px; border-radius:10px; font-size:12px; margin-bottom:12px;}
+  .banner{background:#eef5fa; border:1px solid #bfdeee; color:#155e75; padding:9px 12px; border-radius:10px; font-size:12px; margin-bottom:12px;}
   .hidden{display:none !important;}
 </style>
 </head>
@@ -169,7 +171,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:36</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:40</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
