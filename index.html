@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 16:07</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 16:31</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1674,6 +1674,21 @@ function decreaseTierFor(acos, st){
   if(acos>=st.hi1) return st.dec1;
   return null;
 }
+// Single-keyword campaigns share ONE bid across every placement — if a placement fix already absorbs most
+// of the bad spend, cutting the full bid on top would double-penalize the placements that were already fine.
+// Rather than an all-or-nothing suppression, scale the cut down by how much of the bad spend is ALREADY
+// covered by a real (non-floor) placement decrease: fully covered → no bid cut needed; not covered at all
+// (or stuck at the 0% floor, unfixable at the placement level) → the full tiered cut still applies.
+function scaleDecByPlacementCoverage(decPct, placements){
+  if(decPct==null) return null;
+  const hasFloorBad = placements.some(p=>p.action==='floor-bad');
+  if(hasFloorBad) return decPct;
+  const decreasedSpend = placements.filter(p=>p.action==='decrease').reduce((s,p)=>s+p.spend,0);
+  const totalSpend = placements.reduce((s,p)=>s+p.spend,0);
+  const coverage = totalSpend>0 ? Math.min(1, decreasedSpend/totalSpend) : 0;
+  const scaled = +(decPct*(1-coverage)).toFixed(1);
+  return scaled>0.05 ? scaled : null;
+}
 // Mirrors decreaseTierFor: three escalating tiers on the way down in ACoS too — a keyword at 5% ACoS is a
 // much better opportunity than one that just barely cleared 20%, so it should get a bigger bid bump, not the
 // same flat percentage. Tiers are checked lowest-ACoS-first so the best performers get the biggest increase.
@@ -1722,27 +1737,13 @@ function renderOptBids(){
     let action='none', newBid=t.bid, pct=null, reason=null;
     if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
       let decPct = t.orders>=1? decreaseTierFor(d.acos, st) : null;
-      // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If the bad
-      // performance is actually isolated to one placement, Placement Optimizer already prescribes a targeted
-      // fix for THAT placement's own percentage — cutting the shared base bid on top of that is redundant
-      // (double-dips on the same problem) AND collateral (a placement sitting at 0% adjustment, like Product
-      // Pages here, has no percentage to absorb the cut — its real bid just drops along with everyone else's,
-      // even though it wasn't the placement that was actually bad). Skip the base-bid cut only when that
-      // placement fix covers the bulk of the campaign's spend — a minor placement getting trimmed shouldn't
-      // excuse leaving a tier-3 (ACoS>=100%) keyword's bid untouched just because ONE small placement crossed
-      // its own threshold. Below tier 3, or whenever the fixed placement(s) account for most of the spend,
-      // the placement fix is trusted to have handled it on its own.
+      // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
+      // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
+      // — a proportional scale-down instead of an all-or-nothing suppression, so a partially-fixed campaign
+      // still gets some correction right away instead of waiting on the placement fix alone. A placement
+      // stuck at its 0% floor (unfixable there) always keeps the full cut.
       if(decPct!=null && singleKw.has(t.campaignId)){
-        const placements=placementsByCamp[t.campaignId]||[];
-        // A placement stuck at its 0% floor can't be fixed at the placement level at all — its bad
-        // performance is left unresolved, so the bid cut must stay in effect no matter how much of the
-        // spend the OTHER (real) placement decreases cover.
-        const hasFloorBad = placements.some(p=>p.action==='floor-bad');
-        const decreasedSpend=placements.filter(p=>p.action==='decrease').reduce((s,p)=>s+p.spend,0);
-        const totalPlacementSpend=placements.reduce((s,p)=>s+p.spend,0);
-        const majorityCovered = totalPlacementSpend>0 && decreasedSpend/totalPlacementSpend>0.5;
-        const isTier3 = d.acos===Infinity || d.acos>=st.hi3;
-        if(!hasFloorBad && decreasedSpend>0 && (!isTier3 || majorityCovered)) decPct=null;
+        decPct = scaleDecByPlacementCoverage(decPct, placementsByCamp[t.campaignId]||[]);
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc){
@@ -1966,12 +1967,14 @@ function computePlacementOptRows(product, filters){
   allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
   Object.keys(byCampAll).forEach(cid=>{
     const plc=byCampAll[cid];
-    if(!plc.some(p=>p.action==='floor-bad')) return;
     const target=DATA.targets.find(t=>t.product===product && t.campaignId===cid && t.state==='enabled' && t.bid>0);
     if(!target) return;
     const td=derive(agg([target]));
     if(!(target.clicks>=bst.minClicks && target.spend>=bst.minSpend && target.orders>=1)) return;
-    const decPct=decreaseTierFor(td.acos, bst);
+    // Same proportional scale-down as the Bid Optimizer uses to decide the ACTUAL cut that will land — compensate
+    // based on that real number, not the raw tier value, or a fully-scaled-away cut would still bump placements
+    // that don't need protecting.
+    let decPct=scaleDecByPlacementCoverage(decreaseTierFor(td.acos, bst), plc);
     if(decPct==null) return;
     const factor=1/(1-decPct/100);
     plc.forEach(p=>{
