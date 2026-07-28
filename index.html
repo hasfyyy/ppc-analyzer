@@ -169,7 +169,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:36</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -585,7 +585,10 @@ function renderToggle(){
 function renderNegList(){
   const st=stFor('negList');
   const panel=$('#negListPanel');
-  const list=DATA.negatives.filter(n=>n.product===S.product && (!st.port || (n.portfolioName||'(No Portfolio)')===st.port));
+  // Exact campaigns' own negatives are usually there for structural reasons (isolating exact traffic from
+  // its own close variants), not "this is a bad search term the whole portfolio agreed to block" — pulling
+  // those into a list meant for a brand-new Broad/Phrase/Auto campaign would carry over the wrong exclusions.
+  const list=DATA.negatives.filter(n=>n.product===S.product && (!st.port || (n.portfolioName||'(No Portfolio)')===st.port) && !isExactCampaign(n.campaignName));
   const texts=[...new Set(list.map(n=>n.text).filter(Boolean))].sort();
   panel.innerHTML=`
     <div class="rowbar" style="margin-bottom:8px;">
@@ -790,8 +793,8 @@ function renderNegatives(product){
     <div class="card pad">
       <h3 class="sectitle">Filter Settings</h3>
       <div class="ctrls">
-        <div class="slider"><div class="top"><span>ACoS Threshold</span><b>&gt;${st.acos}%</b></div><input type="range" id="ng-acos" min="0" max="100" step="5" value="${st.acos}"></div>
-        <div class="slider"><div class="top"><span>Clicks (No Conv.)</span><b>≥ ${st.clicks}</b></div><input type="range" id="ng-clicks" min="0" max="30" step="1" value="${st.clicks}"></div>
+        <div class="field"><label>ACoS Threshold &gt;%</label><input type="number" id="ng-acos" min="0" value="${st.acos}" style="width:90px;"></div>
+        <div class="field"><label>Clicks (No Conv.) ≥</label><input type="number" id="ng-clicks" min="0" value="${st.clicks}" style="width:90px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="ng-minspend" value="${st.minSpend}" style="width:90px;"></div>
         <div class="field"><label>Orders Filter</label><select id="ng-orders"><option value="all" ${st.orders==='all'?'selected':''}>All</option><option value="0" ${st.orders==='0'?'selected':''}>No orders (0)</option><option value="1" ${st.orders==='1'?'selected':''}>Has orders</option></select></div>
         <div class="field"><label>Exclude</label><label style="flex-direction:row;gap:6px;font-size:12px;" title="A term identical to the exact keyword already targeted can't be meaningfully negated — excluded by default."><input type="checkbox" id="ng-exex" ${st.exExact?'checked':''}> Exact Match campaigns</label></div>
@@ -815,8 +818,8 @@ function renderNegatives(product){
     </div>`;
   tbl.wire($('#ng-table'));
   const upd=()=>renderNegatives(product);
-  $('#ng-acos').oninput=e=>{st.acos=+e.target.value; upd();};
-  $('#ng-clicks').oninput=e=>{st.clicks=+e.target.value; upd();};
+  $('#ng-acos').oninput=debounce(()=>{st.acos=+$('#ng-acos').value||0; upd();},350);
+  $('#ng-clicks').oninput=debounce(()=>{st.clicks=+$('#ng-clicks').value||0; upd();},350);
   $('#ng-minspend').oninput=debounce(()=>{st.minSpend=+$('#ng-minspend').value||0; upd();},250);
   $('#ng-orders').onchange=e=>{st.orders=e.target.value; upd();};
   $('#ng-negf').onchange=e=>{st.negated=e.target.value; upd();};
@@ -903,6 +906,7 @@ function renderNgram(){
           <select id="ng-negtype" style="border:1px solid var(--border);border-radius:8px;padding:8px 9px;font-size:12.5px;background:#fff;">${['Negative Phrase','Negative Exact'].map(x=>`<option ${(st.negtype||'Negative Phrase')===x?'selected':''}>${x}</option>`).join('')}</select>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;" title="Exports as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio as this root — not just the ad group(s) it was actually found in."><input type="checkbox" id="ng-exexcamp" ${st.exExactCamp!==false?'checked':''}> Exclude Exact campaigns</label>
           <button class="btn grad-red" id="ng-neg">⛔ Export Negatives${sel.size?` (${sel.size})`:''}</button>
+          <button class="btn ghost" id="ng-copy" title="Copies the selected root(s) as a plain list, one per line — paste directly into Amazon's own 'Add negative keywords' box for whichever campaign(s) you pick yourself, instead of the automatic bulk export above.">⧉ Copy selected${sel.size?` (${sel.size})`:''}</button>
         </div>
         <div class="rowbar">
           <div class="chips"><span class="lbl">Quick:</span>
@@ -947,6 +951,14 @@ function renderNgram(){
     if(!chosen.length){ alert('No n-grams to export.'); return; }
     if(!sel.size && !confirm(`No n-grams selected — export ALL ${rows.length} filtered n-grams as campaign-level negatives (in the campaigns that generated them)?`)) return;
     exportNgramNegatives(chosen, st.negtype||'Negative Phrase', st.exExactCamp!==false);
+  };
+  $('#ng-copy').onclick=()=>{
+    const chosen = sel.size? rows.filter(r=>sel.has(r._uid)) : rows;
+    if(!chosen.length){ alert('No n-grams to copy.'); return; }
+    const text=[...new Set(chosen.map(r=>r.root))].sort().join('\n');
+    const done=()=>{ const btn=$('#ng-copy'); const old=btn.textContent; btn.textContent='✓ Copied'; setTimeout(()=>{btn.textContent=old;},1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
+    else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
   };
 }
 function sidebarHtml(){
@@ -1022,8 +1034,8 @@ function renderTargets(product){
     <div class="card pad">
       <h3 class="sectitle">Filter Settings</h3>
       <div class="ctrls">
-        <div class="slider"><div class="top"><span>Min Clicks (0 sales)</span><b>≥ ${st.clicks}</b></div><input type="range" id="tg-clicks" min="0" max="40" value="${st.clicks}"></div>
-        <div class="slider"><div class="top"><span>ACoS Threshold (has sales)</span><b>&gt; ${st.acos}%</b></div><input type="range" id="tg-acos" min="0" max="150" step="5" value="${st.acos}"></div>
+        <div class="field"><label>Min Clicks (0 sales) ≥</label><input type="number" id="tg-clicks" min="0" value="${st.clicks}" style="width:90px;"></div>
+        <div class="field"><label>ACoS Threshold (has sales) &gt;%</label><input type="number" id="tg-acos" min="0" value="${st.acos}" style="width:90px;"></div>
         <div class="field"><label>Max Orders</label><input type="number" id="tg-mo" value="${st.maxOrders}"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="tg-ms" value="${st.minSpend}"></div>
         <div class="field"><label>Portfolio</label><select id="tg-port">${portOptions(st.port)}</select></div>
@@ -1048,8 +1060,8 @@ function renderTargets(product){
     </div>`;
   tbl.wire($('#tg-table'));
   const upd=()=>renderTargets(product);
-  $('#tg-clicks').oninput=e=>{st.clicks=+e.target.value; upd();};
-  $('#tg-acos').oninput=e=>{st.acos=+e.target.value; upd();};
+  $('#tg-clicks').oninput=debounce(()=>{st.clicks=+$('#tg-clicks').value||0; upd();},350);
+  $('#tg-acos').oninput=debounce(()=>{st.acos=+$('#tg-acos').value||0; upd();},350);
   $('#tg-mo').oninput=debounce(()=>{st.maxOrders=+$('#tg-mo').value; upd();},250);
   $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; upd();},250);
   $('#tg-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
@@ -1141,8 +1153,8 @@ function renderHarvesting(){
     <div class="card pad">
       <h3 class="sectitle">Harvesting Criteria</h3>
       <div class="ctrls">
-        <div class="slider"><div class="top"><span>ACoS Threshold</span><b>&lt; ${st.acos}%</b></div><input type="range" id="hv-acos" min="5" max="100" step="5" value="${st.acos}"></div>
-        <div class="slider"><div class="top"><span>Minimum Conversions</span><b>≥ ${st.minConv}</b></div><input type="range" id="hv-conv" min="1" max="10" value="${st.minConv}"></div>
+        <div class="field"><label>ACoS Threshold &lt;%</label><input type="number" id="hv-acos" min="0" value="${st.acos}" style="width:90px;"></div>
+        <div class="field"><label>Minimum Conversions ≥</label><input type="number" id="hv-conv" min="1" value="${st.minConv}" style="width:90px;"></div>
         <div class="field"><label>Portfolio</label><select id="hv-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Search Term</label><input type="text" id="hv-term" placeholder="Filter search terms…" value="${esc(st.term||'')}"></div>
         <div class="field grow"><label>Campaign Name</label><input type="text" id="hv-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
@@ -1163,7 +1175,7 @@ function renderHarvesting(){
     <div class="card pad">
       <h3 class="sectitle">🔤 N-gram Roots — Low ACOS</h3>
       <div class="ctrls">
-        <div class="slider"><div class="top"><span>Max ACoS</span><b>&lt; ${st.ngAcos}%</b></div><input type="range" id="hv-ngacos" min="5" max="100" step="5" value="${st.ngAcos}"></div>
+        <div class="field"><label>Max ACoS &lt;%</label><input type="number" id="hv-ngacos" min="0" value="${st.ngAcos}" style="width:90px;"></div>
         <div class="field"><label>Min Orders</label><input type="number" id="hv-ngmo" min="1" value="${st.ngMinOrders}" style="width:90px;"></div>
       </div>
       <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword.</div>
@@ -1178,15 +1190,15 @@ function renderHarvesting(){
   tbl.wire($('#hv-table'));
   ngTbl.wire($('#hv-ng-table'));
   document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderHarvesting(); });
-  $('#hv-acos').oninput=e=>{st.acos=+e.target.value; renderHarvesting();};
-  $('#hv-conv').oninput=e=>{st.minConv=+e.target.value; renderHarvesting();};
+  $('#hv-acos').oninput=debounce(()=>{st.acos=+$('#hv-acos').value||0; renderHarvesting();},350);
+  $('#hv-conv').oninput=debounce(()=>{st.minConv=+$('#hv-conv').value||1; renderHarvesting();},350);
   $('#hv-port').onchange=e=>{st.port=e.target.value; renderHarvesting();};
   $('#hv-term').oninput=debounce(()=>{st.term=$('#hv-term').value; renderHarvesting();},220);
   $('#hv-camp').oninput=debounce(()=>{st.camp=$('#hv-camp').value; renderHarvesting();},220);
   $('#hv-ex').onchange=e=>{st.exStat=e.target.value; renderHarvesting();};
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
-  $('#hv-ngacos').oninput=e=>{st.ngAcos=+e.target.value; renderHarvesting();};
+  $('#hv-ngacos').oninput=debounce(()=>{st.ngAcos=+$('#hv-ngacos').value||0; renderHarvesting();},350);
   $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderHarvesting();},250);
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
   wireLaunchPanel(st, selOpps);
@@ -1376,8 +1388,8 @@ function renderProducts(){
         <div class="field"><label>Filter by Campaign</label><select id="pr-camp">${campOptions(st.camp,S.product)}</select></div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
-        <div class="slider"><div class="top"><span>Min Clicks (0 sales)</span><b>≥ ${st.pClicks}</b></div><input type="range" id="pr-clicks" min="0" max="40" value="${st.pClicks}"></div>
-        <div class="slider"><div class="top"><span>ACoS Threshold (has sales)</span><b>&gt; ${st.pAcos}%</b></div><input type="range" id="pr-acos" min="0" max="150" step="5" value="${st.pAcos}"></div>
+        <div class="field"><label>Min Clicks (0 sales) ≥</label><input type="number" id="pr-clicks" min="0" value="${st.pClicks}" style="width:90px;"></div>
+        <div class="field"><label>ACoS Threshold (has sales) &gt;%</label><input type="number" id="pr-acos" min="0" value="${st.pAcos}" style="width:90px;"></div>
         <div class="field"><label>Max Orders</label><input type="number" id="pr-mo" value="${st.pMaxOrders}"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="pr-ms" value="${st.pMinSpend}"></div>
       </div>
@@ -1954,9 +1966,9 @@ function renderOptPlacements(){
       <h3 class="sectitle">Placement rules</h3>
       <div class="hint" style="margin-bottom:10px;">Decrease applies everywhere. Increase and Push only apply to single-keyword (SUP) campaigns — a multi-keyword campaign's placement % is shared across every keyword in it, so raising it based on one campaign-wide signal is ambiguous; those campaigns get bid-only fixes from the Bid Optimizer above instead.</div>
       <div class="ctrls">
-        <div class="slider"><div class="top"><span>Decrease if ACoS &gt;</span><b>${st.highAcos}%</b></div><input type="range" id="op-hi" min="10" max="150" step="5" value="${st.highAcos}"></div>
+        <div class="field"><label>Decrease if ACoS &gt;%</label><input type="number" id="op-hi" min="0" value="${st.highAcos}" style="width:90px;"></div>
         <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec" value="${st.decStep}" style="width:90px;"></div>
-        <div class="slider"><div class="top"><span>Increase if ACoS &lt;</span><b>${st.lowAcos}%</b></div><input type="range" id="op-lo" min="0" max="80" step="5" value="${st.lowAcos}"></div>
+        <div class="field"><label>Increase if ACoS &lt;%</label><input type="number" id="op-lo" min="0" value="${st.lowAcos}" style="width:90px;"></div>
         <div class="field"><label>Increase by (points)</label><input type="number" id="op-inc" value="${st.incStep}" style="width:90px;"></div>
         <div class="field"><label>Min Clicks</label><input type="number" id="op-mc" value="${st.minClicks}" style="width:80px;"></div>
         <div class="field"><label>Portfolio</label><select id="op-port">${portOptions(st.port)}</select></div>
@@ -1989,8 +2001,8 @@ function renderOptPlacements(){
     </div>`;
   tbl.wire($('#op-table'));
   const upd=()=>renderOptPlacements();
-  $('#op-hi').oninput=e=>{st.highAcos=+e.target.value; upd();};
-  $('#op-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
+  $('#op-hi').oninput=debounce(()=>{st.highAcos=+$('#op-hi').value||0; upd();},350);
+  $('#op-lo').oninput=debounce(()=>{st.lowAcos=+$('#op-lo').value||0; upd();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-dec','decStep',v=>+v||0); bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
   bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0); bind('op-zeroclicks','zeroOrderClicks',v=>+v||0);
