@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:19</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -817,7 +817,11 @@ function renderNgram(){
       const e=map.get(w); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders; e.terms.push(r);
     });
   });
-  let rows=[...map.values()].map(e=>Object.assign(e,derive(e),{count:e.terms.length}));
+  let rows=[...map.values()].map(e=>{
+    const camps=new Set(e.terms.map(t=>t.campaignId));
+    const negCamps=[...camps].filter(cid=>isNegated(cid,e.root));
+    return Object.assign(e,derive(e),{count:e.terms.length, allNegated: camps.size>0 && negCamps.length===camps.size, someNegated: negCamps.length>0 && negCamps.length<camps.size});
+  });
   const totAll=derive(agg(src));
   // filters
   const mi=+st.mi||0, mc=+st.mc||0, ms=+st.ms||0, ma=+st.ma||0, mt=+st.minTerms||0;
@@ -829,6 +833,7 @@ function renderNgram(){
   const sel=selFor('ngram');
   const cols=[
     {key:'root',label:'N-gram',l:true,type:'text',sortVal:r=>r.root,cell:r=>`<span class="ng-root link" data-uid="${esc(r._uid)}">▸ ${esc(r.root)}</span>`},
+    {key:'negated',label:'Negated',l:true,noSort:true,cell:r=>r.allNegated?`<span class="badge nt" title="Already negated in every campaign this root came from — exporting it again would be rejected as a duplicate.">already negated</span>`:r.someNegated?`<span class="badge" style="background:#fef3e2;color:#c2760a;" title="Already negated in some, but not all, of the campaigns this root came from — export will skip the ones already covered.">partially</span>`:''},
     {key:'impressions',label:'Impressions',type:'int'},
     {key:'clicks',label:'Clicks',type:'int'},
     {key:'spend',label:'Spend',type:'money'},
@@ -1338,7 +1343,7 @@ function exportCSV(columns,rows,name){
 }
 function isExactCampaign(name){ return /(^|[^a-z])exact([^a-z]|$)/i.test(String(name||'')); }
 function exportNgramNegatives(entries, matchType, excludeExact){
-  const out=[]; const seen=new Set(); const campsAll=new Set(); const agsAll=new Set();
+  const out=[]; const seen=new Set(); const campsAll=new Set(); const agsAll=new Set(); let skippedNegated=0;
   const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
   entries.forEach(e=>{
     // only the AD GROUP(s) that actually generated this root's search terms — not campaign-wide, not portfolio-wide.
@@ -1348,14 +1353,18 @@ function exportNgramNegatives(entries, matchType, excludeExact){
       const cm=DATA.campById[cid];
       const cname = cm? cm.name : (campaignName||'');
       if(excludeExact && isExactCampaign(cname)) return;
+      // Already negated (as any match type) in this campaign — re-adding it is exactly what Amazon's bulk
+      // importer rejects as "Invalid User Input" (duplicate negative), so skip it here instead of exporting
+      // a row that's guaranteed to bounce.
+      if(isNegated(cid, e.root)){ skippedNegated++; return; }
       const dk=cid+'|'+agid+'|'+String(e.root).toLowerCase();
       if(seen.has(dk)) return; seen.add(dk); campsAll.add(cid); agsAll.add(cid+'|'+agid);
       out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':cid,'Ad Group ID':agid,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
     });
   });
-  if(!out.length){ alert('Nothing to export — the campaign(s) these roots come from are all Exact Match (excluded), or their search terms have no Ad Group ID. Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
+  if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — the campaign(s) these roots come from are all Exact Match (excluded), or their search terms have no Ad Group ID. Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
   writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} ${matchType} row(s) across ${agsAll.size} ad group(s) in ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated only at the ad group level where each root's search terms actually appeared — not campaign-wide, not portfolio-wide.`);
+  alert(`Exported ${out.length} ${matchType} row(s) across ${agsAll.size} ad group(s) in ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated only at the ad group level where each root's search terms actually appeared — not campaign-wide, not portfolio-wide.${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 function exportNegatives(product,rows){
@@ -1490,6 +1499,15 @@ function decreaseTierFor(acos, st){
   if(acos>=st.hi1) return st.dec1;
   return null;
 }
+// Mirrors decreaseTierFor: three escalating tiers on the way down in ACoS too — a keyword at 5% ACoS is a
+// much better opportunity than one that just barely cleared 20%, so it should get a bigger bid bump, not the
+// same flat percentage. Tiers are checked lowest-ACoS-first so the best performers get the biggest increase.
+function increaseTierFor(acos, st){
+  if(acos<st.incHi3) return st.incPct3;
+  if(acos<st.incHi2) return st.incPct2;
+  if(acos<st.incHi1) return st.incPct1;
+  return null;
+}
 // A campaign with only one enabled target (the SUP_/single-keyword convention) behaves differently from a
 // multi-keyword campaign: there's exactly one lever, so it's worth a placement-aware nudge. Multi-keyword
 // campaigns share their placements across many keywords — compensating one keyword's cut on a shared
@@ -1506,7 +1524,9 @@ function renderOptBids(){
   if(st.hi1===undefined) st.hi1=50; if(st.dec1===undefined) st.dec1=10;
   if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
   if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
-  if(st.lowAcos===undefined) st.lowAcos=15; if(st.incPct===undefined) st.incPct=10;
+  if(st.incHi1===undefined) st.incHi1=20; if(st.incPct1===undefined) st.incPct1=10;
+  if(st.incHi2===undefined) st.incHi2=10; if(st.incPct2===undefined) st.incPct2=20;
+  if(st.incHi3===undefined) st.incHi3=5; if(st.incPct3===undefined) st.incPct3=35;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
@@ -1550,7 +1570,10 @@ function renderOptBids(){
         if(!hasFloorBad && decreasedSpend>0 && (!isTier3 || majorityCovered)) decPct=null;
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
-      else if(t.orders>=st.minOrdersInc && d.acos<st.lowAcos){ action='increase'; pct=st.incPct; newBid=+(t.bid*(1+st.incPct/100)).toFixed(2); reason='healthy ACoS'; }
+      else if(t.orders>=st.minOrdersInc){
+        const incPct=increaseTierFor(d.acos, st);
+        if(incPct!=null){ action='increase'; pct=incPct; newBid=+(t.bid*(1+incPct/100)).toFixed(2); reason=`healthy ACoS (${fAcos(d.acos)})`; }
+      }
     }
     // Plenty of impressions but ZERO clicks means the bid is losing every auction it's even entered —
     // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates.
@@ -1612,9 +1635,16 @@ function renderOptBids(){
         <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
         <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:80px;"></div>
       </div>
+      <div class="hint" style="margin:12px 0 4px;">Graduated increase, mirrored — the lower the ACoS, the bigger the bump. Each tier's ACoS threshold must be lower than the one before it.</div>
+      <div class="ctrls">
+        <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="ob-inchi1" value="${st.incHi1}" style="width:80px;"></div>
+        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc1" value="${st.incPct1}" style="width:80px;"></div>
+        <div class="field"><label>Tier 2: ACoS &lt;</label><input type="number" id="ob-inchi2" value="${st.incHi2}" style="width:80px;"></div>
+        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc2" value="${st.incPct2}" style="width:80px;"></div>
+        <div class="field"><label>Tier 3: ACoS &lt;</label><input type="number" id="ob-inchi3" value="${st.incHi3}" style="width:80px;"></div>
+        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc3" value="${st.incPct3}" style="width:80px;"></div>
+      </div>
       <div class="ctrls" style="margin-top:12px;">
-        <div class="slider"><div class="top"><span>Increase if ACoS &lt;</span><b>${st.lowAcos}%</b></div><input type="range" id="ob-lo" min="0" max="80" step="5" value="${st.lowAcos}"></div>
-        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc" value="${st.incPct}" style="width:80px;"></div>
         <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
         <div class="field"><label>Min Clicks</label><input type="number" id="ob-mc" value="${st.minClicks}" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="ob-ms" value="${st.minSpend}" style="width:80px;"></div>
@@ -1646,12 +1676,14 @@ function renderOptBids(){
     </div>`;
   tbl.wire($('#ob-table'));
   const upd=()=>renderOptBids();
-  $('#ob-lo').oninput=e=>{st.lowAcos=+e.target.value; upd();};
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
   bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
-  bind('ob-inc','incPct',v=>+v||0); bind('ob-mo','minOrdersInc',v=>+v||0);
+  bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incPct1',v=>+v||0);
+  bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incPct2',v=>+v||0);
+  bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incPct3',v=>+v||0);
+  bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
