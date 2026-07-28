@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:13</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -833,6 +833,7 @@ function renderNgram(){
   rows=rows.filter(e=>e.impressions>=mi && e.clicks>=mc && e.spend>=ms && e.terms.length>=mt && (ma? (e.acos===Infinity||e.acos>=ma):true));
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
+  if(st.quick==='low') rows=rows.filter(e=>e.orders>0 && e.acos<20);
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
   rows.forEach(e=>e._uid=e.portfolioName+'|'+e.root); // stable identity — matches the portfolio+root aggregation key above
   const sel=selFor('ngram');
@@ -875,6 +876,7 @@ function renderNgram(){
             <span class="chip ${st.quick==='all'?'active':''}" data-q="all">All</span>
             <span class="chip ${st.quick==='wasted'?'active':''}" data-q="wasted">Wasted Spend</span>
             <span class="chip ${st.quick==='high'?'active':''}" data-q="high">High ACOS</span>
+            <span class="chip ${st.quick==='low'?'active':''}" data-q="low" title="Roots that are already converting well (orders > 0, ACOS < 20%) — good candidates for their own dedicated new campaign instead of staying buried inside a broad/auto one.">Low ACOS</span>
           </div>
           <div class="spacer"></div><span class="countnote">${fInt(rows.length)} n-grams</span>
         </div>
