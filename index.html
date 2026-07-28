@@ -168,7 +168,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-27 19:44</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 10:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -695,6 +695,13 @@ function renderNegatives(product){
   // Same reasoning as Targets/Duplicates: a paused campaign's search terms shouldn't drive a negative export.
   const enabledCamps=optimizableCampaignIds(product);
   const src=DATA.searchTerms.filter(s=>s.product===product && enabledCamps.has(s.campaignId));
+  // In a Product Targeting campaign, the "search term" report row for an ASIN is usually the campaign's own
+  // PT target reporting its performance — not something discovered via auto/broad expansion. Negating that
+  // ASIN would just exclude the very target the campaign is built around; the real fix is to pause/adjust
+  // that target directly (Targets tab), so these are dropped from Negatives entirely, not just when the
+  // "Exclude ASIN" toggle is on.
+  const ownPTAsins=new Set();
+  DATA.targets.forEach(t=>{ if(t.kind==='target'){ const m=(t.text||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i); if(m) ownPTAsins.add(t.campaignId+'|'+t.adGroupId+'|'+m[1].toLowerCase()); } });
   let cand=src.map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm)}); })
     .filter(r=>{
       if(r.clicks < st.clicks) return false;
@@ -706,6 +713,7 @@ function renderNegatives(product){
       if(st.orders==='1' && r.orders<1) return false;
       if(st.exExact && (r.matchType||'').toLowerCase()==='exact') return false;
       if(st.exExact && isExactCampaign(r.campaignName)) return false;
+      if(product==='SP' && ownPTAsins.has(r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm.trim().toLowerCase())) return false;
       if(product==='SP' && st.exAsin && /^b0[a-z0-9]{8}$/i.test(r.searchTerm.trim())) return false;
       if(st.negated==='hide' && r.negated) return false;
       if(st.negated==='only' && !r.negated) return false;
