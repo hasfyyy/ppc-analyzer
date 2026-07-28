@@ -137,6 +137,18 @@
   .link{color:var(--pink-dark); cursor:pointer;}
   .sort-ind{opacity:.4; font-size:10px;}
   .th-active .sort-ind{opacity:1; color:var(--pink-dark);}
+  .th-menu-btn{display:inline-block; opacity:.5; font-size:10px; font-weight:600; margin-left:2px; padding:1px 4px; border-radius:4px; cursor:pointer; font-variant-numeric:normal;}
+  .th-menu-btn:hover{opacity:1; background:#eef3f9;}
+  .th-menu-btn.th-menu-active{opacity:1; background:#e9f1fa; color:var(--pink-dark);}
+  .col-menu{position:absolute; z-index:50; width:200px; background:#fff; border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 4px 16px rgba(16,24,40,.14); padding:6px; font-size:12.5px;}
+  .col-menu button[data-act="desc"], .col-menu button[data-act="asc"]{display:block; width:100%; text-align:left; background:none; border:none; padding:7px 8px; border-radius:5px; cursor:pointer; font-size:12.5px; font-weight:500; color:var(--ink);}
+  .col-menu button[data-act="desc"]:hover, .col-menu button[data-act="asc"]:hover{background:#f2f6fb;}
+  .col-menu-sep{height:1px; background:var(--border2); margin:5px 2px;}
+  .col-menu-filter{display:flex; gap:6px; padding:4px 2px;}
+  .col-menu-filter select{border:1px solid var(--border); border-radius:5px; font-size:12px; width:56px;}
+  .col-menu-filter input{border:1px solid var(--border); border-radius:5px; font-size:12px; width:100%; padding:5px 6px; min-width:0;}
+  .col-menu-actions{display:flex; gap:6px; margin-top:6px;}
+  .col-menu-actions .btn{flex:1; justify-content:center; padding:6px 8px; font-size:12px;}
 
   .toggle-sw{position:relative; width:38px; height:20px; background:#d1d5db; border-radius:20px; cursor:pointer; transition:.15s; display:inline-block; vertical-align:middle;}
   .toggle-sw.on{background:var(--pink);}
@@ -177,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 12:45</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 16:07</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -411,7 +423,8 @@ function targetDetailLabel(t){
 }
 
 /* ============================ state ============================ */
-const S = { tab:'overview', product:'SP', sort:{}, sel:{}, filt:{}, sidebarPortfolios:new Set(), sidebarCampaigns:new Set() };
+const S = { tab:'overview', product:'SP', sort:{}, sel:{}, filt:{}, colFilt:{}, sidebarPortfolios:new Set(), sidebarCampaigns:new Set() };
+function colFiltersFor(tab){ return S.colFilt[tab] = S.colFilt[tab] || {}; }
 
 /* ---- Brand Table: persistent master data (accounts -> products) ---- */
 const BT_KEY='ppc_brandtable_v1';
@@ -477,10 +490,28 @@ function passesSidebar(row){
 
 /* ============================ generic sortable table ============================ */
 /* columns: [{key,label,l?,type('num'|'money'|'pct'|'acos'|'roas'|'int'|'text'),cell?(row),cls?(row),sortVal?(row),noSort?}] */
+// Column types a "high/low + filter" menu makes sense for — text/badge columns just keep the plain
+// click-to-sort header, numeric ones get the fuller Excel-style menu.
+const NUMERIC_COL_TYPES=['money','int','num','pct','acos','roas'];
+const FILTER_OPS={eq:(a,b)=>a===b, gt:(a,b)=>a>b, gte:(a,b)=>a>=b, lt:(a,b)=>a<b, lte:(a,b)=>a<=b};
+const FILTER_OP_LABEL={eq:'=', gt:'>', gte:'≥', lt:'<', lte:'≤'};
 function buildTable(opts){
   const {columns, rows, tab, selectable, totals, idKey, sortDef, onChange} = opts;
   const sort = sortFor(tab, sortDef);
+  const colFilt = colFiltersFor(tab);
   let data = rows.slice();
+  // Column filters (Excel-style "=, >, <, ≥, ≤ value") applied before sort — persisted per tab+column so
+  // they survive re-renders triggered by other controls on the same page.
+  Object.keys(colFilt).forEach(key=>{
+    const f=colFilt[key]; if(!f || f.value===''||f.value===undefined||f.value===null) return;
+    const c=columns.find(cc=>cc.key===key); if(!c) return;
+    const num=+f.value; if(Number.isNaN(num)) return;
+    data = data.filter(r=>{
+      let v = c.sortVal? c.sortVal(r) : r[key];
+      v = v===Infinity? 1e18 : (v||0);
+      return FILTER_OPS[f.op](v, num);
+    });
+  });
   const col = columns.find(c=>c.key===sort.key);
   if(col && !col.noSort){
     data.sort((a,b)=>{
@@ -496,7 +527,11 @@ function buildTable(opts){
   if(selectable) h+='<th class="cellchk"><input type="checkbox" data-selall></th>';
   columns.forEach(c=>{
     const active = sort.key===c.key;
-    h+=`<th class="${c.l?'l':''} ${c.noSort?'':'sortable'} ${active?'th-active':''}" data-sort="${c.key}">${esc(c.label)}${c.noSort?'':` <span class="sort-ind">${active?(sort.dir<0?'↓':'↑'):'↕'}</span>`}</th>`;
+    const hasMenu = !c.noSort && NUMERIC_COL_TYPES.includes(c.type);
+    const filtered = colFilt[c.key] && colFilt[c.key].value!=='' && colFilt[c.key].value!=null;
+    h+=`<th class="${c.l?'l':''} ${c.noSort?'':'sortable'} ${active?'th-active':''}" data-sort="${c.key}">${esc(c.label)}${c.noSort?'':` <span class="sort-ind">${active?(sort.dir<0?'↓':'↑'):'↕'}</span>`}`+
+      (hasMenu?` <span class="th-menu-btn ${filtered?'th-menu-active':''}" data-menu="${c.key}" title="Sort &amp; filter">${filtered?FILTER_OP_LABEL[colFilt[c.key].op]+colFilt[c.key].value:'▾'}</span>`:'')+
+      `</th>`;
   });
   h+='</tr></thead><tbody>';
   if(totals){
@@ -522,10 +557,15 @@ function buildTable(opts){
   if(!data.length) h+=`<tr><td colspan="${columns.length+(selectable?1:0)}" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No rows match the current filters.</td></tr>`;
   h+='</tbody></table></div>';
   return {html:h, wire(container){
-    container.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
+    container.querySelectorAll('th.sortable').forEach(th=>th.onclick=(e)=>{
+      if(e.target.closest('.th-menu-btn')) return; // menu button handles its own click, below
       const k=th.dataset.sort;
       if(sort.key===k) sort.dir*=-1; else {sort.key=k; sort.dir=-1;}
       onChange && onChange();
+    });
+    container.querySelectorAll('.th-menu-btn').forEach(btn=>btn.onclick=(e)=>{
+      e.stopPropagation();
+      openColMenu(btn, {key:btn.dataset.menu, colFilt, sort, onChange});
     });
     if(selectable){
       const selAll=container.querySelector('[data-selall]');
@@ -533,6 +573,49 @@ function buildTable(opts){
       container.querySelectorAll('input[data-id]').forEach(cb=>cb.onchange=()=>{ if(cb.checked) sel.add(cb.dataset.id); else sel.delete(cb.dataset.id); onChange&&onChange(); });
     }
   }};
+}
+// One shared floating menu (Excel-style "sort high/low + filter =/>/</≥/≤ value"), reused by every table's
+// numeric column headers instead of each table building its own dropdown — appended to <body> so it can sit
+// on top of sticky headers and scrollable table wrappers without being clipped by their overflow:auto.
+let _colMenuEl=null, _colMenuCloseFn=null;
+function closeColMenu(){ if(_colMenuEl){ _colMenuEl.remove(); _colMenuEl=null; } if(_colMenuCloseFn){ document.removeEventListener('mousedown', _colMenuCloseFn, true); _colMenuCloseFn=null; } }
+function openColMenu(btn, ctx){
+  closeColMenu();
+  const {key, colFilt, sort, onChange} = ctx;
+  const cur = colFilt[key] || {op:'gte', value:''};
+  const rect = btn.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.className = 'col-menu';
+  menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, window.scrollX + rect.right - 200) + 'px';
+  menu.innerHTML = `
+    <button type="button" data-act="desc">Sort High to Low</button>
+    <button type="button" data-act="asc">Sort Low to High</button>
+    <div class="col-menu-sep"></div>
+    <div class="col-menu-filter">
+      <select>${Object.keys(FILTER_OP_LABEL).map(op=>`<option value="${op}" ${cur.op===op?'selected':''}>${FILTER_OP_LABEL[op]}</option>`).join('')}</select>
+      <input type="number" step="any" placeholder="value" value="${cur.value!==undefined&&cur.value!==''?esc(cur.value):''}">
+    </div>
+    <div class="col-menu-actions">
+      <button type="button" class="btn ghost" data-act="clear">Clear</button>
+      <button type="button" class="btn grad" data-act="apply">Apply</button>
+    </div>`;
+  document.body.appendChild(menu);
+  _colMenuEl = menu;
+  menu.querySelector('[data-act="desc"]').onclick=()=>{ sort.key=key; sort.dir=-1; closeColMenu(); onChange&&onChange(); };
+  menu.querySelector('[data-act="asc"]').onclick=()=>{ sort.key=key; sort.dir=1; closeColMenu(); onChange&&onChange(); };
+  menu.querySelector('[data-act="clear"]').onclick=()=>{ delete colFilt[key]; closeColMenu(); onChange&&onChange(); };
+  menu.querySelector('[data-act="apply"]').onclick=()=>{
+    const op = menu.querySelector('select').value;
+    const value = menu.querySelector('input').value;
+    if(value===''){ delete colFilt[key]; } else { colFilt[key] = {op, value}; }
+    closeColMenu(); onChange&&onChange();
+  };
+  // Close on outside click (capture phase so it fires before the click that opened it re-triggers) or Escape.
+  _colMenuCloseFn = (e)=>{ if(!menu.contains(e.target) && e.target!==btn) closeColMenu(); };
+  setTimeout(()=>document.addEventListener('mousedown', _colMenuCloseFn, true), 0);
+  const escFn=(e)=>{ if(e.key==='Escape'){ closeColMenu(); document.removeEventListener('keydown',escFn); } };
+  document.addEventListener('keydown', escFn);
 }
 function fmtByType(v,t){
   switch(t){ case 'money':return fMoney(v); case 'pct':return fPct(v); case 'acos':return fAcos(v); case 'roas':return fRoas(v); case 'int':return fInt(v); case 'num':return fInt(v); default:return esc(v); }
