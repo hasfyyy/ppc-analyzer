@@ -164,11 +164,12 @@
     <div class="nav" id="nav"></div>
   </div>
 
-  <div class="pt-toggle" id="ptToggle"></div>
+  <div class="pt-toggle" id="ptToggle" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"></div>
+  <div id="negListPanel" class="card pad hidden" style="margin:10px 0 12px;"></div>
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:13</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 11:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -363,6 +364,7 @@ function parseWorkbook(wb){
   DATA.targets.forEach(t=>{ const cm=DATA.campById[t.campaignId]; if(cm){ t.campaignName=cm.name; t.portfolioName=cm.portfolio; } });
   DATA.productAds.forEach(p=>{ const cm=DATA.campById[p.campaignId]; if(cm){ p.campaignName=cm.name; p.portfolioName=cm.portfolio; } });
   DATA.placements.forEach(p=>{ const cm=DATA.campById[p.campaignId]; if(cm){ p.campaignName=cm.name; p.portfolioName=cm.portfolio; } });
+  DATA.negatives.forEach(n=>{ const cm=DATA.campById[n.campaignId]; if(cm){ n.campaignName=cm.name; n.portfolioName=cm.portfolio; } });
   DATA.loaded=true;
   buildTargetSets();
 }
@@ -563,12 +565,44 @@ function renderNav(){
   $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{ S.tab=b.dataset.tab; renderNav(); renderTab(); });
 }
 function renderToggle(){
-  const el=$('#ptToggle'); if(el) el.style.display='';
+  const el=$('#ptToggle'); if(el) el.style.display='flex';
   const nSP=stSP().length, nSB=stSB().length;
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
-    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`;
+    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`+
+    `<button class="btn ghost" id="negListBtn" style="margin-left:auto;">📋 Negated List</button>`;
   $('#ptToggle').querySelectorAll('.pt-btn').forEach(b=>b.onclick=()=>{ S.product=b.dataset.p; renderToggle(); renderTab(); });
+  $('#negListBtn').onclick=()=>{
+    const panel=$('#negListPanel');
+    if(!panel.classList.contains('hidden')){ panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    renderNegList();
+  };
+}
+// A copy-pasteable list of every keyword text already negated in a portfolio — meant for the moment you're
+// creating a brand-new Phrase/Broad/Auto campaign there by hand and want to carry over the same exclusions
+// from day one, instead of waiting for that new campaign to re-discover the same bad search terms on its own.
+function renderNegList(){
+  const st=stFor('negList');
+  const panel=$('#negListPanel');
+  const list=DATA.negatives.filter(n=>n.product===S.product && (!st.port || (n.portfolioName||'(No Portfolio)')===st.port));
+  const texts=[...new Set(list.map(n=>n.text).filter(Boolean))].sort();
+  panel.innerHTML=`
+    <div class="rowbar" style="margin-bottom:8px;">
+      <h3 class="sectitle" style="margin:0;">📋 Already-negated keywords</h3>
+      <div class="field" style="margin-left:14px;"><label>Portfolio</label><select id="negl-port">${portOptions(st.port)}</select></div>
+      <div class="spacer"></div>
+      <span class="countnote">${texts.length} unique term(s)</span>
+      <button class="btn grad" id="negl-copy">⧉ Copy list</button>
+    </div>
+    <div class="hint" style="margin-bottom:8px;">One per line — paste directly into Amazon's "Add negative keywords" box when setting up a new Phrase/Broad/Auto campaign in this portfolio, so it starts with the same exclusions the rest of the portfolio already learned.</div>
+    <textarea id="negl-text" readonly style="width:100%;min-height:160px;font-family:monospace;font-size:12.5px;border:1px solid var(--border);border-radius:8px;padding:10px;" placeholder="No negated keywords found for this portfolio yet.">${esc(texts.join('\n'))}</textarea>`;
+  $('#negl-port').onchange=e=>{ st.port=e.target.value; renderNegList(); };
+  $('#negl-copy').onclick=()=>{
+    const ta=$('#negl-text'); const done=()=>{ $('#negl-copy').textContent='✓ Copied'; setTimeout(()=>{$('#negl-copy').textContent='⧉ Copy list';},1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done);
+    else { ta.select(); document.execCommand('copy'); done(); }
+  };
 }
 
 function renderTab(){
@@ -833,7 +867,6 @@ function renderNgram(){
   rows=rows.filter(e=>e.impressions>=mi && e.clicks>=mc && e.spend>=ms && e.terms.length>=mt && (ma? (e.acos===Infinity||e.acos>=ma):true));
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
-  if(st.quick==='low') rows=rows.filter(e=>e.orders>0 && e.acos<20);
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
   rows.forEach(e=>e._uid=e.portfolioName+'|'+e.root); // stable identity — matches the portfolio+root aggregation key above
   const sel=selFor('ngram');
@@ -876,7 +909,6 @@ function renderNgram(){
             <span class="chip ${st.quick==='all'?'active':''}" data-q="all">All</span>
             <span class="chip ${st.quick==='wasted'?'active':''}" data-q="wasted">Wasted Spend</span>
             <span class="chip ${st.quick==='high'?'active':''}" data-q="high">High ACOS</span>
-            <span class="chip ${st.quick==='low'?'active':''}" data-q="low" title="Roots that are already converting well (orders > 0, ACOS < 20%) — good candidates for their own dedicated new campaign instead of staying buried inside a broad/auto one.">Low ACOS</span>
           </div>
           <div class="spacer"></div><span class="countnote">${fInt(rows.length)} n-grams</span>
         </div>
@@ -1049,7 +1081,29 @@ function renderHarvesting(){
   opps.forEach(o=>o._uid=o.searchTerm.toLowerCase());
   const totals=agg(opps); const tot=derive(totals);
   const sel=selFor('harvesting');
-  const selOpps=opps.filter(o=>sel.has(o._uid));
+  // N-gram roots (Low ACOS) — same word-aggregation logic as Negative Phrase, but the opposite purpose: not
+  // negating, but finding a root that's ALREADY converting well and deserves its own dedicated campaign
+  // instead of staying buried inside whatever broad/auto campaign happened to surface it. Threshold is
+  // editable (unlike a fixed cutoff) since "good enough to launch" varies a lot by niche/ACoS target.
+  if(st.ngAcos===undefined) st.ngAcos=20; if(st.ngMinOrders===undefined) st.ngMinOrders=1;
+  const ngSrc = st.port? src.filter(s=>(s.portfolioName||'(No Portfolio)')===st.port) : src;
+  const ngMap=new Map();
+  ngSrc.forEach(r=>{
+    const pf=String(r.portfolioName||'(No Portfolio)');
+    const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
+    new Set(words).forEach(w=>{
+      const key=pf+'|'+w;
+      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
+      const e=ngMap.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders;
+    });
+  });
+  let ngRows=[...ngMap.values()].map(e=>{ const d=derive(e); const term=e.root.toLowerCase(); return Object.assign(e,d,{searchTerm:e.root, exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term)}); });
+  ngRows=ngRows.filter(e=>e.orders>=st.ngMinOrders && e.acos!==Infinity && e.acos<=st.ngAcos);
+  ngRows.forEach(e=>e._uid='ng:'+e.portfolioName+'|'+e.root);
+  const ngSel=ngRows.filter(o=>sel.has(o._uid));
+  // One shared launch panel below covers both tables — a root selected here and a search term selected
+  // above can be launched together in the same batch of new campaigns.
+  const selOpps=[...opps.filter(o=>sel.has(o._uid)), ...ngSel];
   const selTot=derive(agg(selOpps));
   const badge=(v)=>v?'<span class="badge tg">TARGETED</span>':'<span class="badge nt">NOT TARGETED</span>';
   const cols=[
@@ -1069,6 +1123,20 @@ function renderHarvesting(){
     {key:'broad',label:'Broad',l:true,noSort:true,cell:r=>badge(r.broad)},
   ];
   const tbl=buildTable({columns:cols,rows:opps,tab:'harvesting',totals,sortDef:{key:'orders',dir:-1},onChange:renderHarvesting});
+  const ngCols=[
+    {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
+    {key:'root',label:'N-gram',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
+    {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
+    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+    {key:'cvr',label:'CVR',type:'pct'},
+    {key:'cpc',label:'CPC',type:'money'},
+  ];
+  const ngTbl=buildTable({columns:ngCols,rows:ngRows,tab:'harvesting-ng',totals:agg(ngRows),sortDef:{key:'orders',dir:-1},onChange:renderHarvesting});
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Harvesting Criteria</h3>
@@ -1093,12 +1161,22 @@ function renderHarvesting(){
       <div id="hv-table">${tbl.html}</div>
     </div>
     <div class="card pad">
+      <h3 class="sectitle">🔤 N-gram Roots — Low ACOS</h3>
+      <div class="ctrls">
+        <div class="slider"><div class="top"><span>Max ACoS</span><b>&lt; ${st.ngAcos}%</b></div><input type="range" id="hv-ngacos" min="5" max="100" step="5" value="${st.ngAcos}"></div>
+        <div class="field"><label>Min Orders</label><input type="number" id="hv-ngmo" min="1" value="${st.ngMinOrders}" style="width:90px;"></div>
+      </div>
+      <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword.</div>
+      <div id="hv-ng-table">${ngTbl.html}</div>
+    </div>
+    <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">🚀 Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
         <span class="countnote">${selOpps.length} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
       </div>
       ${renderLaunchPanel(st, selOpps)}
     </div>`;
   tbl.wire($('#hv-table'));
+  ngTbl.wire($('#hv-ng-table'));
   document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderHarvesting(); });
   $('#hv-acos').oninput=e=>{st.acos=+e.target.value; renderHarvesting();};
   $('#hv-conv').oninput=e=>{st.minConv=+e.target.value; renderHarvesting();};
@@ -1108,6 +1186,8 @@ function renderHarvesting(){
   $('#hv-ex').onchange=e=>{st.exStat=e.target.value; renderHarvesting();};
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
+  $('#hv-ngacos').oninput=e=>{st.ngAcos=+e.target.value; renderHarvesting();};
+  $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderHarvesting();},250);
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
   wireLaunchPanel(st, selOpps);
 }
