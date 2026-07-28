@@ -10,37 +10,40 @@
 <style>
   :root{
     --pink:#3468c0; --pink-dark:#2851a3; --purple:#0e8fa0;
-    --grad:linear-gradient(135deg,#3468c0,#0e8fa0);
-    --grad-red:linear-gradient(135deg,#c2513f,#a83a3a);
+    --grad:#3468c0;
+    --grad-red:#af4a3f;
     --green:#16a34a; --amber:#b8770e; --red:#c0392b;
     --bg:#f4f5f7; --card:#ffffff; --ink:#1f2937; --muted:#9aa3af; --muted2:#6b7280;
-    --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+    --border:#e7e9ee; --border2:#eef0f4; --shadow:0 1px 2px rgba(16,24,40,.05);
+    --radius:7px; --radius-lg:9px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;}
   body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); font-size:13px;}
+  table{font-variant-numeric:tabular-nums;}
   a{color:var(--pink-dark); text-decoration:none;}
   .wrap{max-width:1560px; margin:0 auto; padding:18px 22px 80px;}
 
   .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
   .topbar h1{font-size:16px; margin:0; font-weight:800;}
-  .topbar a.backlink{font-size:12.5px; font-weight:600; color:var(--muted2); border:1px solid var(--border); background:#fff; padding:7px 12px; border-radius:9px;}
+  .topbar a.backlink{font-size:12.5px; font-weight:600; color:var(--muted2); border:1px solid var(--border); background:#fff; padding:7px 12px; border-radius:6px;}
   .topbar a.backlink:hover{background:#f6f7f9; color:var(--ink);}
 
   /* nav */
   .navrow{display:flex; justify-content:center; margin:6px 0 12px;}
-  .nav{display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:5px; box-shadow:var(--shadow); overflow-x:auto; max-width:100%;}
-  .navbtn{border:none; background:none; padding:8px 13px; font-size:13px; font-weight:600; color:var(--muted2); cursor:pointer; border-radius:9px; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:.12s;}
+  .nav{display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:5px; box-shadow:var(--shadow); overflow-x:auto; max-width:100%;}
+  .navbtn{position:relative; border:none; background:none; padding:8px 13px; font-size:13px; font-weight:600; color:var(--muted2); cursor:pointer; border-radius:6px; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:.12s;}
   .navbtn:hover{background:#eef3f9; color:var(--ink);}
-  .navbtn.active{background:var(--grad); color:#fff; box-shadow:0 2px 8px rgba(52,104,192,.30);}
+  .navbtn.active{background:none; color:var(--pink-dark); box-shadow:none;}
+  .navbtn.active::after{content:""; position:absolute; left:10px; right:10px; bottom:1px; height:2px; border-radius:2px; background:var(--pink);}
 
-  .card{background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow);}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow);}
   .card.pad{padding:14px 16px;}
   .card + .card{margin-top:14px;}
 
   /* filter list (used by sidebar-style lists) */
-  .flist{max-height:172px; overflow:auto; border:1px solid var(--border2); border-radius:10px; padding:6px;}
-  .fitem{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12.5px; cursor:pointer; border-radius:7px;}
+  .flist{max-height:172px; overflow:auto; border:1px solid var(--border2); border-radius:var(--radius); padding:6px;}
+  .fitem{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12.5px; cursor:pointer; border-radius:6px;}
   .fitem:hover{background:#f2f6fb;}
   .fitem input{accent-color:var(--pink); width:14px; height:14px;}
   .fitem span{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
@@ -48,11 +51,11 @@
   .ctrls{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end;}
   .field{display:flex; flex-direction:column; gap:4px;}
   .field label{font-size:11px; color:var(--muted2); font-weight:500;}
-  .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:12.5px; background:#fff;}
+  .field input[type=number], .field input[type=text], .field select{border:1px solid var(--border); border-radius:6px; padding:7px 9px; font-size:12.5px; background:#fff;}
   .field input[type=number]{width:96px;} .field select{min-width:150px;}
   .field.grow{flex:1; min-width:200px;} .field.grow input{width:100%;}
 
-  .btn{border:none; border-radius:9px; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+  .btn{border:none; border-radius:6px; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
   .btn.grad{background:var(--grad); color:#fff;}
   .btn.grad:disabled{opacity:.45; cursor:not-allowed;}
   .btn.ghost{background:#fff; color:var(--ink); border:1px solid var(--border);}
@@ -64,24 +67,24 @@
   .countnote{font-size:11.5px; color:var(--muted); }
   .hint{font-size:11px; color:var(--muted); }
 
-  .tablewrap{overflow:auto; border-radius:12px;}
+  .tablewrap{overflow:auto; border-radius:var(--radius);}
   table{width:100%; border-collapse:collapse; font-size:12px;}
   thead th{position:sticky; top:0; background:#fbfbfc; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; color:var(--muted2); font-weight:600; z-index:2;}
   thead th.l{text-align:left;}
   tbody td{padding:9px 12px; border-bottom:1px solid var(--border2); white-space:nowrap; text-align:right;}
   tbody td.l{text-align:left;}
   tbody tr:hover{background:#f7fafd;}
-  tbody input{border:1px solid var(--border); border-radius:7px; padding:5px 7px; font-size:12px; width:100%;}
-  tbody select{border:1px solid var(--border); border-radius:7px; padding:5px 7px; font-size:12px;}
+  tbody input{border:1px solid var(--border); border-radius:6px; padding:5px 7px; font-size:12px; width:100%;}
+  tbody select{border:1px solid var(--border); border-radius:6px; padding:5px 7px; font-size:12px;}
 
   .empty{padding:50px 20px; text-align:center; color:var(--muted);}
   .empty .ic{font-size:34px; opacity:.5;}
   .sectitle{font-size:15px; font-weight:700; margin:0 0 12px;}
-  .seg{display:inline-flex; background:#f3f4f6; border-radius:9px; padding:3px; gap:2px;}
-  .seg button{border:none; background:none; padding:6px 12px; border-radius:7px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
+  .seg{display:inline-flex; background:#f3f4f6; border-radius:7px; padding:3px; gap:2px;}
+  .seg button{border:none; background:none; padding:6px 12px; border-radius:5px; font-size:12px; font-weight:600; color:var(--muted2); cursor:pointer;}
   .seg button.active{background:#fff; color:var(--ink); box-shadow:var(--shadow);}
-  textarea.kwbox{width:100%; min-height:220px; border:1px solid var(--border); border-radius:12px; padding:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; resize:vertical;}
-  .banner{background:#eef5fa; border:1px solid #bfdeee; color:#155e75; padding:9px 12px; border-radius:10px; font-size:12px; margin-bottom:12px;}
+  textarea.kwbox{width:100%; min-height:220px; border:1px solid var(--border); border-radius:var(--radius); padding:14px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; resize:vertical;}
+  .banner{background:#eef5fa; border:1px solid #bfdeee; color:#155e75; padding:9px 12px; border-radius:7px; font-size:12px; margin-bottom:12px;}
   .hidden{display:none !important;}
   .muted{color:var(--muted);}
 </style>
@@ -90,9 +93,9 @@
 <div class="wrap">
 
   <div class="topbar">
-    <h1>🏗️ Campaign Builder</h1>
+    <h1>Campaign Builder</h1>
     <div style="display:flex;gap:8px;">
-      <a class="backlink" href="Campaign_Map.html">🗺️ Renaming Campaigns</a>
+      <a class="backlink" href="Campaign_Map.html">Renaming Campaigns</a>
       <a class="backlink" href="index.html">← PPC Analyzer</a>
     </div>
   </div>
@@ -108,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-28 11:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-28 12:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -180,7 +183,7 @@ function rowPortfolioSelect(i, pid, ports){
 
 /* ============================ app state ============================ */
 const S = { tab:'create', btFilter:{portfolio:'', search:''} };
-const TABS=[ {id:'brandtable',label:'Brand Table',ic:'🗂️'}, {id:'create',label:'Campaign Builder',ic:'🏗️'}, {id:'singlekw',label:'Single KW Campaigns',ic:'🔑'} ];
+const TABS=[ {id:'brandtable',label:'Brand Table',ic:''}, {id:'create',label:'Campaign Builder',ic:''}, {id:'singlekw',label:'Single KW Campaigns',ic:''} ];
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
   $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{ S.tab=b.dataset.tab; renderNav(); renderTab(); });
@@ -332,7 +335,7 @@ function renderBrandTable(){
     <td><input data-i="${i}" data-f="asin" value="${esc(p.asin||'')}" style="width:120px;"></td>
     <td><input data-i="${i}" data-f="portfolioId" value="${esc(p.portfolioId||'')}" style="width:130px;"></td>
     <td><input data-i="${i}" data-f="skus" value="${esc((p.skus||[]).join(', '))}" style="width:280px;"></td>
-    <td class="l"><button class="btn ghost bt-del" data-i="${i}" style="padding:4px 9px;">✕</button></td>
+    <td class="l"><button class="btn ghost bt-del" data-i="${i}" style="padding:4px 9px;"></button></td>
   </tr>`).join('');
   // sort for display, but keep each row's ORIGINAL array index for the edit/delete handlers (data-pi)
   const portsWithIdx = ports.map((p,i)=>({p,i}));
@@ -344,18 +347,18 @@ function renderBrandTable(){
     <td class="l">${row+1}</td>
     <td><input data-pi="${i}" data-pf="name" value="${esc(p.name||'')}" placeholder="e.g. Bookends" style="width:200px;"></td>
     <td><input data-pi="${i}" data-pf="id" value="${esc(p.id||'')}" placeholder="numeric ID" style="width:180px;"></td>
-    <td class="l"><button class="btn ghost bt-pdel" data-pi="${i}" style="padding:4px 9px;">✕</button></td>
+    <td class="l"><button class="btn ghost bt-pdel" data-pi="${i}" style="padding:4px 9px;"></button></td>
   </tr>`).join('');
   $('#app').innerHTML=`
     <div class="card pad">
       <div class="rowbar">
-        <h3 class="sectitle" style="margin:0;">🗂️ Brand Table — saved master data</h3>
+        <h3 class="sectitle" style="margin:0;">Brand Table — saved master data</h3>
         <div class="spacer"></div>
         <div class="field"><label>Account</label>${accSel}</div>
         <button class="btn ghost" id="bt-new">＋ New account</button>
-        <button class="btn ghost" id="bt-ren" ${acc?'':'disabled'}>✎ Rename</button>
-        <button class="btn ghost" id="bt-delacc" ${acc?'':'disabled'}>🗑 Delete</button>
-        <button class="btn ghost" id="bt-backup" title="Download a JSON backup of all accounts">⬇ Backup</button>
+        <button class="btn ghost" id="bt-ren" ${acc?'':'disabled'}>Rename</button>
+        <button class="btn ghost" id="bt-delacc" ${acc?'':'disabled'}>Delete</button>
+        <button class="btn ghost" id="bt-backup" title="Download a JSON backup of all accounts">Backup</button>
         <label class="btn ghost" style="cursor:pointer;" title="Restore from a JSON backup">⬆ Restore<input type="file" id="bt-restore" accept=".json,application/json" style="display:none;"></label>
       </div>
       <div class="banner">Saved in this browser (shared with the PPC Analyzer, same site). Maintain your <b>Products</b> and <b>Portfolios</b> per account here once — then in <b>Campaign Builder</b> just pick the account &amp; portfolio and every SKU auto-fills. (Niche/Code is the short code used in the campaign name — e.g. BNP.)</div>
@@ -371,10 +374,10 @@ function renderBrandTable(){
         <div class="spacer"></div><span class="hint" id="bt-count"></span>
       </div>
       <div class="tablewrap"><table><thead><tr><th class="l">#</th><th class="l">Portfolio</th><th class="l">Brand</th><th class="l">Niche/Code</th><th class="l">Product Name</th><th class="l">ASIN</th><th class="l">Portfolio ID</th><th class="l">SKUs (comma-separated)</th><th class="l"></th></tr></thead><tbody>${rowsHtml||'<tr><td colspan="9" class="l" style="padding:20px;color:#9aa3af;">No products yet — click “Add product” or import your Brand Table.</td></tr>'}</tbody></table></div>`
-        : `<div class="empty"><div class="ic">🗂️</div><p>Create an account to start (e.g. Lionstrong, MR.DEKO) or import your Brand Table file.</p></div>`}
+        : `<div class="empty"><div class="ic"></div><p>Create an account to start (e.g. Lionstrong, MR.DEKO) or import your Brand Table file.</p></div>`}
     </div>
     ${acc? `<div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">📁 Portfolios — ${esc(acc)}</h3>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Portfolios — ${esc(acc)}</h3>
         <span class="hint">Give each portfolio a friendly name + its numeric ID. You'll pick these by name in Campaign Builder.</span>
         <div class="spacer"></div>
         <button class="btn ghost" id="bt-pfromprod">＋ From products' IDs</button>
@@ -674,7 +677,7 @@ function renderCampaignCreate(){
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bulk Preview</h3><div class="spacer"></div>
         <span id="cc-issues" class="countnote"></span>
-        <button class="btn grad" id="cc-export">⬇ Export Bulk (.xlsx)</button>
+        <button class="btn grad" id="cc-export">Export Bulk (.xlsx)</button>
       </div>
       <div id="cc-preview"></div>
     </div>`;
@@ -734,7 +737,7 @@ function updateBuilderOutputs(){
   const groups=kwGroups(cfg);
   const names=[];
   matches.forEach(m=>groups.forEach((grp,gi)=>{ const num=numbered?start+gi:null; names.push({name:buildName(cfg,m,num), kw: (per===1&&grp.length)?grp[0]:null}); }));
-  const shown=names.slice(0,30).map(n=>`📁 ${esc(n.name)}${n.kw?` <span style="color:#9aa3af;">→ ${esc(n.kw)}</span>`:''}<br><span style="color:#c3c3cc;">   └ Ad Group: ${esc(n.name)}</span>`).join('<br>');
+  const shown=names.slice(0,30).map(n=>`${esc(n.name)}${n.kw?` <span style="color:#9aa3af;">→ ${esc(n.kw)}</span>`:''}<br><span style="color:#c3c3cc;">   └ Ad Group: ${esc(n.name)}</span>`).join('<br>');
   $('#cc-names').innerHTML = names.length? shown+(names.length>30?`<br><span class="muted">…+${names.length-30} more campaigns</span>`:'') : '<span class="muted">Select a match type to preview names.</span>';
   const bannerEl=$('#cc-naming-banner'); if(bannerEl) bannerEl.innerHTML=namingBannerHtml(cfg);
   const skus=linesOf(cfg.skus).length, kws=linesOf(cfg.keywords).length, asins=linesOf(cfg.targetAsins).length;
@@ -745,7 +748,7 @@ function updateBuilderOutputs(){
     : ` · ${nKw} keyword(s)`;
   $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${targetSummary}`;
   const iss=builderIssues(cfg);
-  $('#cc-issues').innerHTML = iss.length? `<span style="color:#dc2626;">⚠ ${esc(iss[0])}</span>`:'<span style="color:#15803d;">✓ Ready to export</span>';
+  $('#cc-issues').innerHTML = iss.length? `<span style="color:#dc2626;">${esc(iss[0])}</span>`:'<span style="color:#15803d;">Ready to export</span>';
   const exp=$('#cc-export'); if(exp) exp.disabled = iss.length>0;
   const rows=buildCampaignRows(cfg);
   const H=BULK_HEADERS, ix=n=>H.indexOf(n);
@@ -840,7 +843,7 @@ function renderSingleKw(){
   const strat=['Dynamic bids - down only','Dynamic bids - up and down','Fixed bids'];
   $('#app').innerHTML=`
     <div class="card pad">
-      <h3 class="sectitle">🔑 Single Keyword Campaigns</h3>
+      <h3 class="sectitle">Single Keyword Campaigns</h3>
       <div class="hint" style="margin-bottom:12px;">One campaign per keyword — the keyword is always embedded in the campaign name.</div>
       <div class="ctrls" id="skw-source" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
         <div class="field"><label>Account (Brand Table)</label><select id="skw-acc">${btAccountOptions(cfg.btAccount)}</select></div>
@@ -882,7 +885,7 @@ function renderSingleKw(){
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bulk Preview</h3><div class="spacer"></div>
         <span id="skw-issues" class="countnote"></span>
-        <button class="btn grad" id="skw-export">⬇ Export Bulk (.xlsx)</button>
+        <button class="btn grad" id="skw-export">Export Bulk (.xlsx)</button>
       </div>
       <div id="skw-preview"></div>
     </div>`;
@@ -925,13 +928,13 @@ function updateSkwOutputs(){
   const kws=linesOf(cfg.keywords);
   const template=skwTemplate(cfg);
   const names=kws.map(kw=>({name:buildSkwName(cfg,kw,template), kw}));
-  const shown=names.slice(0,30).map(n=>`📁 ${esc(n.name)} <span style="color:#9aa3af;">→ ${esc(n.kw)}</span>`).join('<br>');
+  const shown=names.slice(0,30).map(n=>`${esc(n.name)} <span style="color:#9aa3af;">→ ${esc(n.kw)}</span>`).join('<br>');
   $('#skw-names').innerHTML = names.length? shown+(names.length>30?`<br><span class="muted">…+${names.length-30} more campaigns</span>`:'') : '<span class="muted">Enter keywords to preview names.</span>';
   const skus=linesOf(cfg.skus).length;
   $('#skw-summary').textContent = `Will create: ${names.length} campaign(s) · ${names.length} ad group(s) · ${names.length*Math.max(1,skus)} product ad(s) · ${names.length} keyword(s)`;
   const bannerEl=$('#skw-naming-banner'); if(bannerEl) bannerEl.innerHTML=skwNamingBannerHtml(cfg);
   const iss=skwIssues(cfg);
-  $('#skw-issues').innerHTML = iss.length? `<span style="color:#dc2626;">⚠ ${esc(iss[0])}</span>`:'<span style="color:#15803d;">✓ Ready to export</span>';
+  $('#skw-issues').innerHTML = iss.length? `<span style="color:#dc2626;">${esc(iss[0])}</span>`:'<span style="color:#15803d;">Ready to export</span>';
   const exp=$('#skw-export'); if(exp) exp.disabled = iss.length>0;
   const rows=buildSkwRows(cfg);
   const H=BULK_HEADERS, ix=n=>H.indexOf(n);
