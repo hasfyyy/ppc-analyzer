@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 11:13</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 11:18</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -684,18 +684,27 @@ const TABS=[
 ];
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
-  $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{ S.tab=b.dataset.tab; renderNav(); renderTab(); });
+  $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{
+    S.tab=b.dataset.tab;
+    // Leaving Optimize while SD was selected would otherwise strand S.product on 'SD' with no visible way to
+    // switch back (the toggle button only exists on Optimize) — every other tab would just render empty.
+    if(S.tab!=='optimize' && S.product==='SD') S.product='SP';
+    renderNav(); renderToggle(); renderTab();
+  });
 }
 function renderToggle(){
   const el=$('#ptToggle'); if(el) el.style.display='flex';
   const nSP=stSP().length, nSB=stSB().length;
-  // SD has no search-term report at all (contextual/audience targeting, not keywords) — its targets are the
-  // closest equivalent for a "how much data is here" count on the toggle button.
-  const nSD=DATA.targets.filter(t=>t.product==='SD').length;
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
-    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`+
-    `<button class="pt-btn ${S.product==='SD'?'active':''}" data-p="SD" title="Sponsored Display — only the Optimize tab (Bid Optimizer) supports SD so far; other tabs rely on a search-term report SD doesn't have.">Sponsored Display (${fInt(nSD)})</button>`;
+    `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`;
+  // SD only has real support on the Optimize tab (Bid Optimizer) — there's no way to negate, harvest, check
+  // keywords, etc. for Sponsored Display (no keyword-style targeting, no search-term report at all), so the
+  // toggle button only shows up there instead of offering a choice that just renders empty everywhere else.
+  if(S.tab==='optimize'){
+    const nSD=DATA.targets.filter(t=>t.product==='SD').length;
+    $('#ptToggle').innerHTML += `<button class="pt-btn ${S.product==='SD'?'active':''}" data-p="SD">Sponsored Display (${fInt(nSD)})</button>`;
+  }
   $('#ptToggle').querySelectorAll('.pt-btn').forEach(b=>b.onclick=()=>{ S.product=b.dataset.p; renderToggle(); renderTab(); });
 }
 
