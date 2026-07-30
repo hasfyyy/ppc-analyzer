@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 10:51</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 11:13</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -852,12 +852,14 @@ function renderNegatives(product){
       if(st.orders==='1' && r.orders<1) return false;
       if(st.exExact && (r.matchType||'').toLowerCase()==='exact') return false;
       if(st.exExact && isExactCampaign(r.campaignName)) return false;
-      if(product==='SP' && ownPTAsins.has(r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm.trim().toLowerCase())) return false;
-      // Any ASIN "search term" from a MANUAL (non-Auto) campaign is that campaign's own Product Targeting
-      // reporting itself, paused or not — negating it is never the right move there, the fix is always to
-      // pause/adjust the target directly in Targets. Only an Auto campaign's own expansion legitimately
-      // "discovers" an ASIN worth negating.
-      if(product==='SP' && /^b0[a-z0-9]{8}$/i.test(r.searchTerm.trim()) && String(DATA.campById[r.campaignId]?.targetingType||'').toLowerCase()!=='auto') return false;
+      if(ownPTAsins.has(r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm.trim().toLowerCase())) return false;
+      // Any ASIN "search term" from a MANUAL/Product-Targeting (non-Auto) campaign is that campaign's own
+      // target reporting itself, paused or not — negating it is never the right move there, the fix is
+      // always to pause/adjust the target directly in Targets. Only an Auto campaign's own expansion
+      // legitimately "discovers" an ASIN worth negating. Applies to SB just as much as SP — SB has category/
+      // product-targeting campaigns (e.g. "SB category", "SBV PAT") with the exact same issue, and SB has no
+      // true Auto tactic at all, so an ASIN there is NEVER a real discovery.
+      if(/^(b0[a-z0-9]{8}|category=|category\s*=)/i.test(r.searchTerm.trim()) && String(DATA.campById[r.campaignId]?.targetingType||'').toLowerCase()!=='auto') return false;
       if(product==='SP' && st.exAsin && /^b0[a-z0-9]{8}$/i.test(r.searchTerm.trim())) return false;
       if(st.negated==='hide' && r.negated) return false;
       if(st.negated==='only' && !r.negated) return false;
