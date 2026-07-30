@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 11:32</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 16:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -679,16 +679,19 @@ const TABS=[
   {id:'harvesting',label:'Harvesting',ic:''},
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
-  {id:'optimize',label:'Optimize',ic:''},
+  {id:'optbids',label:'Bid Optimizer',ic:''},
+  {id:'optplacements',label:'Placement Optimizer',ic:''},
+  {id:'optbudget',label:'Budget Rebalancing',ic:''},
   {id:'duplicates',label:'Duplicates',ic:''},
 ];
+const OPT_TABS=new Set(['optbids','optplacements','optbudget']);
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
   $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{
     S.tab=b.dataset.tab;
-    // Leaving Optimize while SD was selected would otherwise strand S.product on 'SD' with no visible way to
-    // switch back (the toggle button only exists on Optimize) — every other tab would just render empty.
-    if(S.tab!=='optimize' && S.product==='SD') S.product='SP';
+    // Leaving the Optimize tabs while SD was selected would otherwise strand S.product on 'SD' with no visible
+    // way to switch back (the toggle button only exists there) — every other tab would just render empty.
+    if(!OPT_TABS.has(S.tab) && S.product==='SD') S.product='SP';
     renderNav(); renderToggle(); renderTab();
   });
 }
@@ -698,10 +701,10 @@ function renderToggle(){
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
     `<button class="pt-btn ${S.product==='SB'?'active':''}" data-p="SB">Sponsored Brands (${fInt(nSB)})</button>`;
-  // SD only has real support on the Optimize tab (Bid Optimizer) — there's no way to negate, harvest, check
+  // SD only has real support on the Optimize tabs (Bid Optimizer) — there's no way to negate, harvest, check
   // keywords, etc. for Sponsored Display (no keyword-style targeting, no search-term report at all), so the
   // toggle button only shows up there instead of offering a choice that just renders empty everywhere else.
-  if(S.tab==='optimize'){
+  if(OPT_TABS.has(S.tab)){
     const nSD=DATA.targets.filter(t=>t.product==='SD').length;
     $('#ptToggle').innerHTML += `<button class="pt-btn ${S.product==='SD'?'active':''}" data-p="SD">Sponsored Display (${fInt(nSD)})</button>`;
   }
@@ -712,7 +715,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optimize:renderOptimize, duplicates:renderDuplicates}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1726,22 +1729,6 @@ function renderDuplicates(){
 // Reads whatever date range is baked into the uploaded bulk file's performance columns (last 7 days,
 // last 30, custom — whatever the user picked when exporting from Amazon Ads console). We don't second-guess
 // the window; we just act on the numbers as given.
-function renderOptimize(){
-  // Both sections live on the same page now — bids and placements are usually reviewed together in one
-  // optimization pass, so switching tabs back and forth just to compare them was friction, not a feature.
-  $('#app').innerHTML = `
-    <h3 class="sectitle" style="margin:0 0 4px;">Bid Optimizer (Targets)</h3>
-    <div id="opt-bids"></div>
-    <div style="height:22px;"></div>
-    <h3 class="sectitle" style="margin:0 0 4px;">Placement Optimizer</h3>
-    <div id="opt-placements"></div>
-    <div style="height:22px;"></div>
-    <h3 class="sectitle" style="margin:0 0 4px;">Budget Rebalancing</h3>
-    <div id="opt-budget"></div>`;
-  renderOptBids();
-  renderOptPlacements();
-  renderOptBudget();
-}
 // Three escalating ACoS tiers instead of one flat cut — a keyword at 140% ACoS gets hit much harder than
 // one that just crept past the first threshold. Tiers must be checked highest-first so the worst offenders
 // get the biggest cut, not the first (lowest) tier they happen to clear.
@@ -1907,7 +1894,7 @@ function renderOptBids(){
     }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
-  $('#opt-bids').innerHTML=`
+  $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Bid rules</h3>
       <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
@@ -2037,10 +2024,18 @@ function exportBidOptimization(product, rows){
 // Used by the Placement Optimizer below.
 function computePlacementOptRows(product, filters){
   const st=stFor('optplace');
-  if(st.highAcos===undefined) st.highAcos=50; if(st.decStep===undefined) st.decStep=10;
+  // Graduated decrease, same shape as the Bid Optimizer's ACoS tiers — a placement at 140% ACoS gets cut
+  // much harder than one that just crept past the first threshold, instead of one flat step for both.
+  if(st.hi1===undefined) st.hi1=50; if(st.dec1===undefined) st.dec1=10;
+  if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
+  if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
-  if(st.zeroOrderClicks===undefined) st.zeroOrderClicks=9;
+  // 0 orders has no ACoS to grade against, so it runs on its own click-based ladder — same graduated shape,
+  // mirroring the Bid Optimizer's own 0-order tiers one axis over (clicks instead of ACoS).
+  if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
+  if(st.zeroHi2===undefined) st.zeroHi2=15; if(st.zeroDec2===undefined) st.zeroDec2=20;
+  if(st.zeroHi3===undefined) st.zeroHi3=20; if(st.zeroDec3===undefined) st.zeroDec3=30;
   const enabledCamps=optimizableCampaignIds(product);
   // Multiple keywords share one campaign's placement %, so pushing/increasing it based on one campaign-wide
   // signal is exactly the ambiguity that made the earlier bid↔placement cross-linking unreliable for
@@ -2065,9 +2060,10 @@ function computePlacementOptRows(product, filters){
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
     // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
     // even though there's no ACoS to compute (division by zero sales).
-    const badPerf=(e.clicks>=st.minClicks && e.orders>=1 && (d.acos===Infinity||d.acos>st.highAcos)) || (e.orders===0 && e.clicks>=st.zeroOrderClicks);
+    const decPct = (e.clicks>=st.minClicks && e.orders>=1) ? decreaseTierFor(d.acos, st) : (e.orders===0 ? zeroOrderDecreaseTierFor(e.clicks, st) : null);
+    const badPerf = decPct!=null;
     if(badPerf && e.percentage>0){
-      action='decrease'; newPct=Math.max(0, e.percentage-st.decStep);
+      action='decrease'; newPct=Math.max(0, e.percentage-decPct);
     } else if(badPerf){
       // Already at the 0% floor — there's no percentage left to cut, so this placement's bad performance
       // can't be fixed here at all. Flagged as 'floor-bad' (not 'decrease') so the Bid Optimizer knows NOT
@@ -2149,7 +2145,7 @@ function renderOptPlacements(){
   const sel=selFor('optplace');
   const totals=agg(rows);
   const actionBadgePl=r=>{
-    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${st.decStep}pp</span>`;
+    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${(r.percentage-r.newPct).toFixed(1)}pp</span>`;
     // Compensation can push a 'push'/'increase' row's newPct further than its own base step, so the badge
     // always shows the REAL delta actually being applied, not just the rule's nominal step size.
     const delta=(r.newPct-r.percentage).toFixed(1);
@@ -2170,13 +2166,20 @@ function renderOptPlacements(){
     {key:'newPct',label:'New %',type:'num',cell:r=>(r.newPct>0?'+':'')+r.newPct+'%',cls:r=>r.newPct>r.percentage?'num-green':'num-red'},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optplace',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptPlacements});
-  $('#opt-placements').innerHTML=`
+  $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placement rules</h3>
       <div class="hint" style="margin-bottom:10px;">Decrease applies everywhere. Increase and Push only apply to single-keyword (SUP) campaigns — a multi-keyword campaign's placement % is shared across every keyword in it, so raising it based on one campaign-wide signal is ambiguous; those campaigns get bid-only fixes from the Bid Optimizer above instead.</div>
+      <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
       <div class="ctrls">
-        <div class="field"><label>Decrease if ACoS &gt;%</label><input type="number" id="op-hi" min="0" value="${st.highAcos}" style="width:90px;"></div>
-        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec" value="${st.decStep}" style="width:90px;"></div>
+        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="op-hi1" value="${st.hi1}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec1" value="${st.dec1}" style="width:90px;"></div>
+        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="op-hi2" value="${st.hi2}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec2" value="${st.dec2}" style="width:90px;"></div>
+        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="op-hi3" value="${st.hi3}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec3" value="${st.dec3}" style="width:90px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Increase if ACoS &lt;%</label><input type="number" id="op-lo" min="0" value="${st.lowAcos}" style="width:90px;"></div>
         <div class="field"><label>Increase by (points)</label><input type="number" id="op-inc" value="${st.incStep}" style="width:90px;"></div>
         <div class="field"><label>Min Clicks</label><input type="number" id="op-mc" value="${st.minClicks}" style="width:80px;"></div>
@@ -2189,9 +2192,14 @@ function renderOptPlacements(){
         <div class="field"><label>Push by (points)</label><input type="number" id="op-pushstep" value="${st.pushStep}" style="width:90px;"></div>
         <div class="hint" style="align-self:center;">Single-keyword campaigns only (see below) — a placement stuck below this % rarely gets enough auctions to ever build up the clicks/ACoS that would trigger the increase rule above, so this pushes it regardless of performance.</div>
       </div>
-      <div class="ctrls" style="margin-top:12px;">
-        <div class="field"><label>Cut placement if 0 orders at ≥ clicks</label><input type="number" id="op-zeroclicks" value="${st.zeroOrderClicks}" style="width:80px;"></div>
-        <div class="hint" style="align-self:center;">Below this many clicks a zero-order placement still gets the benefit of the doubt (push/increase can still apply). At or above it, spend with zero orders is treated as bad performance and gets decreased instead — even without enough sales to compute an ACoS.</div>
+      <div class="hint" style="margin:12px 0 4px;">0 orders — ACoS is undefined with no sales, so this runs on clicks instead, same graduated shape as above. Below the first threshold a zero-order placement still gets the benefit of the doubt (push/increase can still apply).</div>
+      <div class="ctrls">
+        <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="op-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-zerodec1" value="${st.zeroDec1}" style="width:90px;"></div>
+        <div class="field"><label>Tier 2: Clicks ≥</label><input type="number" id="op-zerohi2" value="${st.zeroHi2}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-zerodec2" value="${st.zeroDec2}" style="width:90px;"></div>
+        <div class="field"><label>Tier 3: Clicks ≥</label><input type="number" id="op-zerohi3" value="${st.zeroHi3}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by (points)</label><input type="number" id="op-zerodec3" value="${st.zeroDec3}" style="width:90px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-hidesingle" ${st.hideSingleKw?'checked':''}> Hide single-keyword (SUP) campaigns here</label>
@@ -2210,11 +2218,16 @@ function renderOptPlacements(){
     </div>`;
   tbl.wire($('#op-table'));
   const upd=()=>renderOptPlacements();
-  $('#op-hi').oninput=debounce(()=>{st.highAcos=+$('#op-hi').value||0; upd();},350);
   $('#op-lo').oninput=debounce(()=>{st.lowAcos=+$('#op-lo').value||0; upd();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
-  bind('op-dec','decStep',v=>+v||0); bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
-  bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0); bind('op-zeroclicks','zeroOrderClicks',v=>+v||0);
+  bind('op-hi1','hi1',v=>+v||0); bind('op-dec1','dec1',v=>+v||0);
+  bind('op-hi2','hi2',v=>+v||0); bind('op-dec2','dec2',v=>+v||0);
+  bind('op-hi3','hi3',v=>+v||0); bind('op-dec3','dec3',v=>+v||0);
+  bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
+  bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
+  bind('op-zerohi1','zeroHi1',v=>+v||0); bind('op-zerodec1','zeroDec1',v=>+v||0);
+  bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
+  bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
@@ -2281,7 +2294,7 @@ function renderOptBudget(){
     {key:'newBudget',label:'New Budget ($)',l:true,noSort:true,cell:r=>`<input type="number" step="0.01" min="1" value="${r.newBudget}" data-budget-edit="${esc(r._uid)}" style="width:92px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;">`},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbudget',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBudget});
-  $('#opt-budget').innerHTML=`
+  $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Budget rules</h3>
       <div class="ctrls">
