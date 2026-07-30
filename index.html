@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-28 18:25</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 10:51</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -400,9 +400,14 @@ function parseWorkbook(wb){
 }
 
 // existing target text sets for coverage checks
-const SETS={exact:new Set(),phrase:new Set(),broad:new Set(),product:new Set(),negated:new Set()};
+// negatedCampaign = "Campaign Negative Keyword" rows — these really do block the term in EVERY ad group of
+// that campaign. negatedAdGroup = plain "Negative keyword" rows — these only block it in that ONE ad group,
+// not the whole campaign. Conflating the two used to make an ad-group-only negative look like it covered the
+// entire campaign, so Negative Phrase's "already negated" check (and its export skip) both under-reported —
+// it thought a campaign was fully covered when really only one ad group in it was.
+const SETS={exact:new Set(),phrase:new Set(),broad:new Set(),product:new Set(),negatedCampaign:new Set(),negatedAdGroup:new Set()};
 function buildTargetSets(){
-  SETS.exact.clear();SETS.phrase.clear();SETS.broad.clear();SETS.product.clear();SETS.negated.clear();
+  SETS.exact.clear();SETS.phrase.clear();SETS.broad.clear();SETS.product.clear();SETS.negatedCampaign.clear();SETS.negatedAdGroup.clear();
   DATA.targets.forEach(t=>{
     const txt=(t.text||'').trim().toLowerCase(); if(!txt) return;
     if(t.kind==='keyword'){
@@ -411,9 +416,25 @@ function buildTargetSets(){
       else if(t.matchType==='broad') SETS.broad.add(txt);
     } else { const m=txt.match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i); if(m) SETS.product.add(m[1].toLowerCase()); }
   });
-  DATA.negatives.forEach(n=>{ if(n.text) SETS.negated.add(n.campaignId+'|'+n.text); });
+  DATA.negatives.forEach(n=>{
+    if(!n.text) return;
+    if(n.scope==='campaign') SETS.negatedCampaign.add(n.campaignId+'|'+n.text);
+    else SETS.negatedAdGroup.add(n.campaignId+'|'+n.adGroupId+'|'+n.text);
+  });
 }
-function isNegated(campaignId,term){ return SETS.negated.has(campaignId+'|'+String(term).trim().toLowerCase()); }
+// True campaign-wide coverage only — used wherever the question is "does EVERY ad group in this campaign
+// already have this negated" (Negative Phrase's status badge and export-skip, both scoped to the whole
+// campaign since they write a Campaign Negative Keyword).
+function isNegatedCampaignWide(campaignId,term){ return SETS.negatedCampaign.has(campaignId+'|'+String(term).trim().toLowerCase()); }
+// Ad-group-aware check — used wherever a specific ad group is known (the plain Negatives tab's "Already
+// Negated" column, one row per real ad group). Campaign-wide coverage still counts; an ad-group-scoped
+// negative only counts for that same ad group.
+function isNegated(campaignId,term,adGroupId){
+  const key=String(term).trim().toLowerCase();
+  if(SETS.negatedCampaign.has(campaignId+'|'+key)) return true;
+  if(adGroupId!=null && SETS.negatedAdGroup.has(campaignId+'|'+adGroupId+'|'+key)) return true;
+  return false;
+}
 
 /* classify a target into match-type bucket for Overview */
 function classifyTarget(t){
@@ -809,7 +830,18 @@ function renderNegatives(product){
   // "Exclude ASIN" toggle is on.
   const ownPTAsins=new Set();
   DATA.targets.forEach(t=>{ if(t.kind==='target'){ const m=(t.text||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i); if(m) ownPTAsins.add(t.campaignId+'|'+t.adGroupId+'|'+m[1].toLowerCase()); } });
-  let cand=src.map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm)}); })
+  // The same (campaign, ad group, search term, match type) can legitimately appear as more than one raw row
+  // in a bulk export (e.g. overlapping date ranges merged into one file) — left un-merged, each copy becomes
+  // its OWN candidate row with the same identity, so selecting/exporting "one" row actually exports every
+  // copy of it. That's exactly what Amazon's bulk importer rejects as "Duplicate Text" — and it kills the
+  // ENTIRE batch, not just that row. Merge duplicates (summing their metrics) before anything else runs.
+  const byRowKey=new Map();
+  src.forEach(s=>{
+    const k=s.campaignId+'|'+s.adGroupId+'|'+s.searchTerm.toLowerCase()+'|'+(s.matchType||'').toLowerCase();
+    if(!byRowKey.has(k)) byRowKey.set(k, Object.assign({}, s, {impressions:0,clicks:0,spend:0,sales:0,orders:0,units:0}));
+    const e=byRowKey.get(k); e.impressions+=s.impressions; e.clicks+=s.clicks; e.spend+=s.spend; e.sales+=s.sales; e.orders+=s.orders; e.units+=(s.units||0);
+  });
+  let cand=[...byRowKey.values()].map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm,s.adGroupId)}); })
     .filter(r=>{
       if(r.clicks < st.clicks) return false;
       if(r.spend < st.minSpend) return false;
@@ -943,7 +975,7 @@ function renderNgram(){
   });
   let rows=[...map.values()].map(e=>{
     const camps=new Set(e.terms.map(t=>t.campaignId));
-    const negCamps=[...camps].filter(cid=>isNegated(cid,e.root));
+    const negCamps=[...camps].filter(cid=>isNegatedCampaignWide(cid,e.root));
     return Object.assign(e,derive(e),{count:e.terms.length, allNegated: camps.size>0 && negCamps.length===camps.size, someNegated: negCamps.length>0 && negCamps.length<camps.size});
   });
   const totAll=derive(agg(src));
@@ -1024,7 +1056,10 @@ function renderNgram(){
   });
   ['mi','mc','ms','ma','mt'].forEach(k=>$('#ng-'+k).oninput=debounce(()=>{st[k==='mt'?'minTerms':k]=$('#ng-'+k).value; renderNgram();},250));
   $('#ng-text').oninput=debounce(()=>{st.text=$('#ng-text').value; renderNgram();},220);
-  $('.chips')&&document.querySelectorAll('#app .chip').forEach(c=>c.onclick=()=>{st.quick=c.dataset.q; renderNgram();});
+  // Switching the Quick lens clears the selection — otherwise rows selected under a DIFFERENT filter (e.g.
+  // "Wasted Spend") stay counted in the Export/Copy buttons after switching to "High ACOS", even though none
+  // of them are visible anymore. That silent carry-over is what made the button counts look "cumulated".
+  $('.chips')&&document.querySelectorAll('#app .chip').forEach(c=>c.onclick=()=>{st.quick=c.dataset.q; selFor('ngram').clear(); renderNgram();});
   $('#ng-csv').onclick=()=>exportCSV(cols,rows,'ngram');
   $('#ng-negtype').onchange=e=>{ st.negtype=e.target.value; };
   $('#ng-exexcamp').onchange=e=>{ st.exExactCamp=e.target.checked; };
@@ -1557,7 +1592,7 @@ function exportNgramNegatives(entries, matchType, excludeExact){
       // Already negated (as any match type) in this campaign — re-adding it is exactly what Amazon's bulk
       // importer rejects as "Invalid User Input" (duplicate negative), so skip it here instead of exporting
       // a row that's guaranteed to bounce.
-      if(isNegated(c.campaignId, e.root)){ skippedNegated++; return; }
+      if(isNegatedCampaignWide(c.campaignId, e.root)){ skippedNegated++; return; }
       const dk=c.campaignId+'|'+String(e.root).toLowerCase();
       if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
       out.push(bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
@@ -1571,6 +1606,11 @@ const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 function exportNegatives(product,rows){
   if(!rows.length){ alert('No candidates to export.'); return; }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  // Belt-and-suspenders: never emit the same (campaign, ad group, term) twice. A single duplicate row is
+  // enough for Amazon's bulk importer to reject the WHOLE batch as "Duplicate Text" — nothing gets created,
+  // not even the other 31 valid rows.
+  const seenNeg=new Set();
+  rows=rows.filter(r=>{ const k=r.campaignId+'|'+r.adGroupId+'|'+String(r.searchTerm||'').trim().toLowerCase(); if(seenNeg.has(k)) return false; seenNeg.add(k); return true; });
   const out=rows.map(r=>{
     const term=String(r.searchTerm||'').trim();
     if(ASIN_RE.test(term)){
