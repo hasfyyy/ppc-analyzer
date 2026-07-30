@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 11:18</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 11:32</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1775,6 +1775,16 @@ function increaseTierFor(acos, st){
   if(acos<st.incHi1) return st.incPct1;
   return null;
 }
+// ACoS is undefined at 0 orders (nothing to divide spend by), so a 0-order target can't go through the ACoS
+// tiers at all — it used to just fall through untouched. Graduated the same way, but keyed on CLICKS instead:
+// more clicks with zero orders is a stronger "this isn't converting" signal, so it earns a bigger cut, mirroring
+// the graduated ACoS logic above one axis over.
+function zeroOrderDecreaseTierFor(clicks, st){
+  if(clicks>=st.zeroHi3) return st.zeroDec3;
+  if(clicks>=st.zeroHi2) return st.zeroDec2;
+  if(clicks>=st.zeroHi1) return st.zeroDec1;
+  return null;
+}
 // A campaign with only one enabled target (the SUP_/single-keyword convention) behaves differently from a
 // multi-keyword campaign: there's exactly one lever, so it's worth a placement-aware nudge. Multi-keyword
 // campaigns share their placements across many keywords — compensating one keyword's cut on a shared
@@ -1795,6 +1805,13 @@ function renderOptBids(){
   if(st.incHi2===undefined) st.incHi2=10; if(st.incPct2===undefined) st.incPct2=20;
   if(st.incHi3===undefined) st.incHi3=5; if(st.incPct3===undefined) st.incPct3=35;
   if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
+  // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
+  // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
+  // needs the opposite: catching it early, before it burns through 10 clicks, is the whole point).
+  if(st.zeroLowClicks===undefined) st.zeroLowClicks=2; if(st.zeroIncPct===undefined) st.zeroIncPct=10;
+  if(st.zeroHi1===undefined) st.zeroHi1=3; if(st.zeroDec1===undefined) st.zeroDec1=10;
+  if(st.zeroHi2===undefined) st.zeroHi2=6; if(st.zeroDec2===undefined) st.zeroDec2=20;
+  if(st.zeroHi3===undefined) st.zeroHi3=10; if(st.zeroDec3===undefined) st.zeroDec3=30;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=optimizableCampaignIds(S.product);
@@ -1826,6 +1843,20 @@ function renderOptBids(){
       else if(t.orders>=st.minOrdersInc){
         const incPct=increaseTierFor(d.acos, st);
         if(incPct!=null){ action='increase'; pct=incPct; newBid=+(t.bid*(1+incPct/100)).toFixed(2); reason=`healthy ACoS (${fAcos(d.acos)})`; }
+      }
+    }
+    // 0 orders has no ACoS to grade against (nothing to divide spend by), so it runs on its own click-based
+    // ladder instead, independent of Min Clicks/Min Spend above: too little data yet (1 click, benefit of the
+    // doubt) gets a small bump; proven wasted clicks gets a graduated cut, same shape as the ACoS tiers just
+    // keyed on clicks. 0 clicks stays out of this — that's the "wake" rule below, a different problem (never
+    // winning an auction at all vs. losing money in the auctions it does win).
+    if(action==='none' && t.orders===0){
+      if(t.clicks>=1 && t.clicks<st.zeroLowClicks){
+        action='increase'; pct=st.zeroIncPct; newBid=+(t.bid*(1+st.zeroIncPct/100)).toFixed(2); reason=`0 orders but only ${t.clicks} click(s) — not enough data yet`;
+      } else {
+        let zdec=zeroOrderDecreaseTierFor(t.clicks, st);
+        if(zdec!=null && singleKw.has(t.campaignId)) zdec=scaleDecByPlacementCoverage(zdec, placementsByCamp[t.campaignId]||[]);
+        if(zdec!=null){ action='decrease'; pct=zdec; newBid=Math.max(0.02, +(t.bid*(1-zdec/100)).toFixed(2)); reason=`0 orders, ${t.clicks} wasted clicks`; }
       }
     }
     // Plenty of impressions but ZERO clicks means the bid is losing every auction it's even entered —
@@ -1904,6 +1935,19 @@ function renderOptBids(){
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
+      <div class="hint" style="margin:12px 0 4px;">0 orders — ACoS is undefined with no sales, so this runs on clicks instead. Too little data yet (below the first threshold) gets a small bump; each tier above it is a graduated cut for proven wasted spend. 0 clicks is handled separately below (Wake).</div>
+      <div class="ctrls">
+        <div class="field"><label>Give a chance if Clicks &lt;</label><input type="number" id="ob-zerolow" value="${st.zeroLowClicks}" style="width:90px;"></div>
+        <div class="field"><label>Increase by %</label><input type="number" id="ob-zeroinc" value="${st.zeroIncPct}" style="width:80px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:8px;">
+        <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-zerodec1" value="${st.zeroDec1}" style="width:80px;"></div>
+        <div class="field"><label>Tier 2: Clicks ≥</label><input type="number" id="ob-zerohi2" value="${st.zeroHi2}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-zerodec2" value="${st.zeroDec2}" style="width:80px;"></div>
+        <div class="field"><label>Tier 3: Clicks ≥</label><input type="number" id="ob-zerohi3" value="${st.zeroHi3}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-zerodec3" value="${st.zeroDec3}" style="width:80px;"></div>
+      </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
         <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;"></div>
@@ -1938,6 +1982,10 @@ function renderOptBids(){
   bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incPct3',v=>+v||0);
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
+  bind('ob-zerolow','zeroLowClicks',v=>+v||0); bind('ob-zeroinc','zeroIncPct',v=>+v||0);
+  bind('ob-zerohi1','zeroHi1',v=>+v||0); bind('ob-zerodec1','zeroDec1',v=>+v||0);
+  bind('ob-zerohi2','zeroHi2',v=>+v||0); bind('ob-zerodec2','zeroDec2',v=>+v||0);
+  bind('ob-zerohi3','zeroHi3',v=>+v||0); bind('ob-zerodec3','zeroDec3',v=>+v||0);
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
@@ -2048,6 +2096,10 @@ function computePlacementOptRows(product, filters){
   if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=20;
   if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=30;
   if(bst.minClicks===undefined) bst.minClicks=10; if(bst.minSpend===undefined) bst.minSpend=0;
+  if(bst.zeroLowClicks===undefined) bst.zeroLowClicks=2;
+  if(bst.zeroHi1===undefined) bst.zeroHi1=3; if(bst.zeroDec1===undefined) bst.zeroDec1=10;
+  if(bst.zeroHi2===undefined) bst.zeroHi2=6; if(bst.zeroDec2===undefined) bst.zeroDec2=20;
+  if(bst.zeroHi3===undefined) bst.zeroHi3=10; if(bst.zeroDec3===undefined) bst.zeroDec3=30;
   const byCampAll={};
   allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
   // Indexed once, not re-scanned per campaign — on a large account (tens of thousands of targets), doing a
@@ -2060,11 +2112,19 @@ function computePlacementOptRows(product, filters){
     const target=singleTargetByCamp.get(cid);
     if(!target) return;
     const td=derive(agg([target]));
-    if(!(target.clicks>=bst.minClicks && target.spend>=bst.minSpend && target.orders>=1)) return;
+    // Mirrors the Bid Optimizer's own decision exactly — same two paths (ACoS tiers when there's at least one
+    // order, click tiers when there are none), or compensation would protect placements against a cut that
+    // doesn't actually match what gets applied.
+    let decPct=null;
+    if(target.orders>=1){
+      if(target.clicks>=bst.minClicks && target.spend>=bst.minSpend) decPct=decreaseTierFor(td.acos, bst);
+    } else if(!(target.clicks>=1 && target.clicks<bst.zeroLowClicks)){
+      decPct=zeroOrderDecreaseTierFor(target.clicks, bst);
+    }
     // Same proportional scale-down as the Bid Optimizer uses to decide the ACTUAL cut that will land — compensate
     // based on that real number, not the raw tier value, or a fully-scaled-away cut would still bump placements
     // that don't need protecting.
-    let decPct=scaleDecByPlacementCoverage(decreaseTierFor(td.acos, bst), plc);
+    decPct=scaleDecByPlacementCoverage(decPct, plc);
     if(decPct==null) return;
     const factor=1/(1-decPct/100);
     plc.forEach(p=>{
