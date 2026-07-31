@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 22:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1470,16 +1470,25 @@ function renderNgRoots(){
 /* ============================ KEYWORD CHECKER ============================ */
 // Which campaigns already exist in this portfolio determines which SKUs a new campaign there should
 // advertise — there's no other signal for a keyword that's never appeared as a search term at all.
-function skusForPortfolio(portfolioName){
+function skusForPortfolio(portfolioName, topN){
   const campIds=DATA.campaigns.filter(c=>(c.portfolioName||'(No Portfolio)')===portfolioName).map(c=>c.campaignId);
   const skuSet=new Set();
   campIds.forEach(cid=>(DATA.skuByCampaign[cid]||[]).forEach(s=>{ if(s.sku) skuSet.add(s.sku); }));
-  return [...skuSet];
+  const skus=[...skuSet];
+  if(!topN || topN<=0 || topN>=skus.length) return skus;
+  // Ranks by summed Sales across every product ad of that SKU in this portfolio — the same signal an agent
+  // would eyeball manually when narrowing a multi-variation test down to whichever SKU is actually winning.
+  const salesBySku={};
+  campIds.forEach(cid=>{
+    (DATA.productAds||[]).filter(p=>p.campaignId===cid && p.sku).forEach(p=>{ salesBySku[p.sku]=(salesBySku[p.sku]||0)+(p.sales||0); });
+  });
+  return skus.sort((a,b)=>(salesBySku[b]||0)-(salesBySku[a]||0)).slice(0,topN);
 }
 function renderKwCheck(){
   const st=stFor('kwcheck');
   if(st.lPrefix===undefined) st.lPrefix='BSQ'; if(st.lCount===undefined) st.lCount=1; if(st.lBid===undefined) st.lBid='';
   if(st.lIgnoreNaming===undefined) st.lIgnoreNaming=false; if(st.lManualName===undefined) st.lManualName='';
+  if(st.lTopSkus===undefined) st.lTopSkus=2;
   const src=stByToggle().filter(s=>!st.port || (s.portfolioName||'(No Portfolio)')===st.port);
   const kws=(st.text||'').split('\n').map(x=>x.trim()).filter(Boolean);
   // Exact/Phrase/Broad here must answer "is this an actual KEYWORD TARGET (in this portfolio)", not "does it
@@ -1523,7 +1532,7 @@ function renderKwCheck(){
   const tbl=results.length?buildTable({columns:cols,rows:results,tab:'kwcheck',sortDef:{key:'count',dir:-1},onChange:renderKwCheck}):null;
   const byMatch={}; sel.forEach(k=>{ const i=k.lastIndexOf('|'); const mt=k.slice(i+1); (byMatch[mt]=byMatch[mt]||[]).push(k.slice(0,i)); });
   const matchTypesSel=Object.keys(byMatch);
-  const skuPreview = st.port? skusForPortfolio(st.port) : [];
+  const skuPreview = st.port? skusForPortfolio(st.port, +st.lTopSkus||0) : [];
   $('#app').innerHTML=`
     <div class="card pad">
       <div class="rowbar"><div class="field"><label>Portfolio</label><select id="kw-port">${portOptions(st.port)}</select></div><div class="spacer"></div><button class="btn ghost" id="kw-clear">Clear</button></div>
@@ -1542,6 +1551,7 @@ function renderKwCheck(){
         <div class="field"><label>Prefix (used only if no existing campaign found)</label><input type="text" id="kw-lprefix" value="${esc(st.lPrefix)}" style="width:110px;" ${st.lIgnoreNaming?'disabled':''}></div>
         <div class="field"><label>Keywords / campaign</label><input type="number" id="kw-lcount" min="1" value="${st.lCount}" style="width:110px;"></div>
         <div class="field"><label>Bid override ($, optional)</label><input type="number" id="kw-lbid" step="0.01" placeholder="auto" value="${esc(st.lBid)}" style="width:120px;"></div>
+        <div class="field"><label>Top SKUs by sales (0 = all)</label><input type="number" id="kw-ltopskus" min="0" value="${st.lTopSkus}" style="width:110px;"></div>
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="kw-lignore" ${st.lIgnoreNaming?'checked':''}> Ignore existing naming — type my own</label>
@@ -1550,7 +1560,7 @@ function renderKwCheck(){
       <div class="hint" style="margin-top:8px;">${st.lIgnoreNaming
         ? `Using your custom name as the base${matchTypesSel.length>1?' (match type appended to keep each campaign unique)':''} — no auto-detected naming applied.`
         : matchTypesSel.map(mt=>{ const t=detectNamingTemplate(st.port, mt, 'SP', st.lPrefix); return t? `Found existing naming for <b>${esc(mt)}</b> in this portfolio: <b>${esc(t.fullName)}</b> → next will be <b>${esc(t.prefix)}_${esc(mt)} ${t.num+1}_${esc(refreshDateToken(t.suffix))}</b>.` : `No existing <b>${esc(mt)}</b> campaign found in "${esc(st.port)}" to copy naming from — will fall back to <b>KWCHK_${esc(mt)} 1, 2, …</b>.`; }).join('<br>')}</div>
-      <div class="hint" style="margin-top:4px;">SKUs pulled from campaigns already in "${esc(st.port)}": ${skuPreview.length? esc(skuPreview.slice(0,6).join(', '))+(skuPreview.length>6?` +${skuPreview.length-6} more`:'') : '<span style="color:#dc2626;">none found — add products to this portfolio first.</span>'}</div>
+      <div class="hint" style="margin-top:4px;">${(+st.lTopSkus>0)?`Top ${st.lTopSkus} SKU(s) by sales`:'SKUs'} pulled from campaigns already in "${esc(st.port)}": ${skuPreview.length? esc(skuPreview.join(', ')) : '<span style="color:#dc2626;">none found — add products to this portfolio first.</span>'}</div>
       <div class="rowbar"><div class="spacer"></div>
         <button class="btn ghost" id="kw-copy" title="Copies the selected keyword(s) grouped by match type, one per line — paste into Campaign Builder or Amazon's own 'Add keywords' box to launch them yourself instead of the automatic bulk export.">Copy selected</button>
         <button class="btn grad" id="kw-launch" ${skuPreview.length?'':'disabled'}>Create campaigns</button>
@@ -1566,7 +1576,8 @@ function renderKwCheck(){
   const lb=$('#kw-lbid'); if(lb) lb.oninput=debounce(()=>{ st.lBid=lb.value; },300);
   const li=$('#kw-lignore'); if(li) li.onchange=e=>{ st.lIgnoreNaming=e.target.checked; renderKwCheck(); };
   const ln=$('#kw-lname'); if(ln) ln.oninput=debounce(()=>{ st.lManualName=ln.value; renderKwCheck(); },300);
-  const launchBtn=$('#kw-launch'); if(launchBtn) launchBtn.onclick=()=>exportKwCheckCampaigns(byMatch, st.port, {prefix:st.lPrefix, numPerGroup:st.lCount, bidOverride: st.lBid?+st.lBid:null, ignoreNaming:st.lIgnoreNaming, manualName:st.lManualName});
+  const lt=$('#kw-ltopskus'); if(lt) lt.oninput=debounce(()=>{ st.lTopSkus=+lt.value||0; renderKwCheck(); },250);
+  const launchBtn=$('#kw-launch'); if(launchBtn) launchBtn.onclick=()=>exportKwCheckCampaigns(byMatch, st.port, {prefix:st.lPrefix, numPerGroup:st.lCount, bidOverride: st.lBid?+st.lBid:null, ignoreNaming:st.lIgnoreNaming, manualName:st.lManualName, topSkus:+st.lTopSkus||0});
   const copyBtn=$('#kw-copy'); if(copyBtn) copyBtn.onclick=()=>{
     const text=Object.keys(byMatch).map(mt=>`${mt}:\n${[...new Set(byMatch[mt])].sort().join('\n')}`).join('\n\n');
     const done=()=>{ const old=copyBtn.textContent; copyBtn.textContent='Copied'; setTimeout(()=>{copyBtn.textContent=old;},1500); };
@@ -1575,7 +1586,7 @@ function renderKwCheck(){
   };
 }
 function exportKwCheckCampaigns(byMatch, portfolioName, settings){
-  const skus=skusForPortfolio(portfolioName);
+  const skus=skusForPortfolio(portfolioName, settings.topSkus||0);
   if(!skus.length){ alert('No SKUs found for this portfolio — add products to it first.'); return; }
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   const out=[]; let totalCamps=0;
