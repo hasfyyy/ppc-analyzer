@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:39</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:41</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -408,8 +408,14 @@ function parseWorkbook(wb){
 const SETS={exact:new Set(),phrase:new Set(),broad:new Set(),product:new Set(),negatedCampaign:new Set(),negatedAdGroup:new Set()};
 function buildTargetSets(){
   SETS.exact.clear();SETS.phrase.clear();SETS.broad.clear();SETS.product.clear();SETS.negatedCampaign.clear();SETS.negatedAdGroup.clear();
+  // A keyword sitting in a PAUSED target or a paused/archived campaign isn't actually live coverage — it
+  // shouldn't read as "already targeted" (Harvesting's badge, Negative Phrase's badge, etc.), the same way
+  // every other tab here treats a paused campaign as not currently in play. Otherwise a term launched once
+  // long ago and later paused elsewhere blocks you from ever relaunching it as a fresh opportunity.
+  const enabledCamp=new Set(DATA.campaigns.filter(c=>c.state==='enabled').map(c=>c.campaignId));
   DATA.targets.forEach(t=>{
     const txt=(t.text||'').trim().toLowerCase(); if(!txt) return;
+    if(t.state!=='enabled' || !enabledCamp.has(t.campaignId)) return;
     if(t.kind==='keyword'){
       if(t.matchType==='exact') SETS.exact.add(txt);
       else if(t.matchType==='phrase') SETS.phrase.add(txt);
