@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 13:29</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 13:40</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -690,6 +690,10 @@ const TABS=[
 // Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
 // correctly. Every other tab depends on a search-term report SD doesn't have.
 const OPT_TABS=new Set(['optbids','optplacements','optbudget','pausecamp']);
+// Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
+// SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
+// only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
+const FIXED_PRODUCT_TABS=new Set(['negatives','negatives-sb','targets','targets-sb','targets-sd']);
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
   $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{
@@ -701,7 +705,9 @@ function renderNav(){
   });
 }
 function renderToggle(){
-  const el=$('#ptToggle'); if(el) el.style.display='flex';
+  const el=$('#ptToggle'); if(!el) return;
+  if(FIXED_PRODUCT_TABS.has(S.tab)){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='flex';
   const nSP=stSP().length, nSB=stSB().length;
   $('#ptToggle').innerHTML =
     `<button class="pt-btn ${S.product==='SP'?'active':''}" data-p="SP">Sponsored Products (${fInt(nSP)})</button>`+
