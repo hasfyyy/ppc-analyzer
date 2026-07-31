@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:43</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:50</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1472,6 +1472,7 @@ function renderNgRoots(){
         <div class="field"><label>Min Spend</label><input type="number" id="hv-ngms" min="0" value="${st.ngMinSpend||0}" style="width:90px;"></div>
         <div class="field"><label>Portfolio</label><select id="hv-ngport">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Root</label><input type="text" id="hv-ngterm" placeholder="Filter root text…" value="${esc(st.term||'')}"></div>
+        <button class="btn ghost" id="hv-ngselall">${ngRows.length && ngRows.every(r=>sel.has(r._uid))?'Deselect all':'Select all'}</button>
         <button class="btn ghost" id="hv-ngdl">Export CSV</button>
       </div>
       <div class="ctrls" style="margin-top:8px;">
@@ -1499,6 +1500,11 @@ function renderNgRoots(){
   $('#hv-ngcombine').onchange=e=>{st.ngCombine=e.target.checked; renderNgRoots();};
   $('#hv-ngexclude').oninput=debounce(()=>{st.ngExclude=$('#hv-ngexclude').value; renderNgRoots();},250);
   $('#hv-ngdl').onclick=()=>exportCSV(ngCols.filter(c=>c.key!=='sel'),ngRows,'ngroots_low_acos');
+  $('#hv-ngselall').onclick=()=>{
+    const allSel = ngRows.length && ngRows.every(r=>sel.has(r._uid));
+    if(allSel) ngRows.forEach(r=>sel.delete(r._uid)); else ngRows.forEach(r=>sel.add(r._uid));
+    const y=window.scrollY; renderNgRoots(); window.scrollTo(0,y);
+  };
   wireLaunchPanel(st, ngSel, renderNgRoots);
 }
 
