@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-31 18:55</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-31 19:42</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -151,8 +151,8 @@ function linesOf(s){ return String(s||'').split('\n').map(x=>x.trim()).filter(Bo
 const BT_KEY='ppc_brandtable_v1';
 let BT={current:'',accounts:{}};   // accounts[name] = {products:[{brand,niche,name,asin,portfolioId,skus[]}], portfolios:[{name,id}]}
 function acctObj(name){ let a=BT.accounts[name]; if(a==null){ a=BT.accounts[name]={products:[],portfolios:[]}; } if(Array.isArray(a)){ a=BT.accounts[name]={products:a,portfolios:[]}; } if(!a.products)a.products=[]; if(!a.portfolios)a.portfolios=[]; return a; }
-function btLoad(){ try{ const d=JSON.parse(localStorage.getItem(BT_KEY)); if(d&&d.accounts) BT=d; }catch(e){} Object.keys(BT.accounts||{}).forEach(n=>acctObj(n)); }
-function btSave(){ try{ localStorage.setItem(BT_KEY, JSON.stringify(BT)); }catch(e){ alert('Could not save Brand Table (browser storage full?).'); } }
+function btLoad(){ /* intentionally no-op: Brand Table is no longer loaded from localStorage — upload a fresh bulk each session instead */ }
+function btSave(){ /* intentionally no-op: Brand Table is session-only now, never persisted to localStorage */ }
 function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
 // A "dedicated" portfolio (one product/parent) is numbered: "01. …", "24. …". Mixed/branded ones aren't.
 function isDedicatedPortfolio(name){ return /^\s*\d/.test(String(name||'')); }
