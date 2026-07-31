@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 19:42</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 22:02</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -992,7 +992,7 @@ const STOP=new Set([
 // splits on anything that ISN'T a Unicode letter/number, so "ü/ö/ä/ß" stay part of the word instead of being cut as delimiters
 function wordsOf(s){ return String(s||'').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); }
 function renderNgram(){
-  const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2;
+  const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2; if(st.lowAcosMax===undefined)st.lowAcosMax=15;
   // sidebar + product filter
   let src=stByToggle().filter(passesSidebar);
   const map=new Map();
@@ -1019,6 +1019,9 @@ function renderNgram(){
   rows=rows.filter(e=>e.impressions>=mi && e.clicks>=mc && e.spend>=ms && e.terms.length>=mt && (ma? (e.acos===Infinity||e.acos>=ma):true));
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
+  // Good-performing roots (low ACOS) aren't candidates for negation — they're candidates for a NEW campaign
+  // built around that root, since it's clearly converting well across multiple search terms already.
+  if(st.quick==='low') rows=rows.filter(e=>e.orders>0 && e.acos<(+st.lowAcosMax||15));
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
   rows.forEach(e=>e._uid=e.portfolioName+'|'+e.root); // stable identity — matches the portfolio+root aggregation key above
   const sel=selFor('ngram');
@@ -1062,6 +1065,8 @@ function renderNgram(){
             <span class="chip ${st.quick==='all'?'active':''}" data-q="all">All</span>
             <span class="chip ${st.quick==='wasted'?'active':''}" data-q="wasted">Wasted Spend</span>
             <span class="chip ${st.quick==='high'?'active':''}" data-q="high">High ACOS</span>
+            <span class="chip ${st.quick==='low'?'active':''}" data-q="low">Low ACOS</span>
+            ${st.quick==='low'?`<span style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted2);">under <input type="number" id="ng-lowacos" value="${st.lowAcosMax}" style="width:56px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;">%</span>`:''}
           </div>
           <div class="spacer"></div><span class="countnote">${fInt(rows.length)} n-grams</span>
         </div>
@@ -1095,6 +1100,7 @@ function renderNgram(){
   // "Wasted Spend") stay counted in the Export/Copy buttons after switching to "High ACOS", even though none
   // of them are visible anymore. That silent carry-over is what made the button counts look "cumulated".
   $('.chips')&&document.querySelectorAll('#app .chip').forEach(c=>c.onclick=()=>{st.quick=c.dataset.q; selFor('ngram').clear(); renderNgram();});
+  if($('#ng-lowacos')) $('#ng-lowacos').oninput=debounce(()=>{st.lowAcosMax=$('#ng-lowacos').value; renderNgram();},250);
   $('#ng-csv').onclick=()=>exportCSV(cols,rows,'ngram');
   $('#ng-negtype').onchange=e=>{ st.negtype=e.target.value; };
   $('#ng-exexcamp').onchange=e=>{ st.exExactCamp=e.target.checked; };
