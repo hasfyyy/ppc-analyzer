@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:31</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1403,6 +1403,7 @@ function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x
 // sub-section of Harvesting) since it's a different workflow: pick a root, launch a new campaign around it.
 function renderNgRoots(){
   const st=stFor('ngroots'); if(st.ngAcos===undefined) st.ngAcos=20; if(st.ngMinOrders===undefined) st.ngMinOrders=1;
+  if(st.ngCombine===undefined) st.ngCombine=false; if(st.ngExclude===undefined) st.ngExclude='';
   const src=stByToggle();
   const ngSrc = st.port? src.filter(s=>(s.portfolioName||'(No Portfolio)')===st.port) : src;
   const ngMap=new Map();
@@ -1410,14 +1411,21 @@ function renderNgRoots(){
     const pf=String(r.portfolioName||'(No Portfolio)');
     const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
     new Set(words).forEach(w=>{
-      const key=pf+'|'+w;
-      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
+      // Combining across portfolios collapses the same brand/root word into one row instead of one per
+      // portfolio it happens to show up in — the portfolio-scoped split still matters for a niche word that
+      // coincidentally repeats, but a brand name is the SAME signal everywhere, so splitting it is just noise.
+      const key = st.ngCombine? w : pf+'|'+w;
+      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:st.ngCombine?'(All Portfolios)':pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
       const e=ngMap.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders;
     });
   });
   let ngRows=[...ngMap.values()].map(e=>{ const d=derive(e); const term=e.root.toLowerCase(); return Object.assign(e,d,{searchTerm:e.root, exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term)}); });
   ngRows=ngRows.filter(e=>e.orders>=st.ngMinOrders && e.acos!==Infinity && e.acos<=st.ngAcos);
   if(st.term) ngRows=ngRows.filter(o=>o.root.toLowerCase().includes(st.term.toLowerCase()));
+  if(st.ngExclude){
+    const excl=st.ngExclude.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+    if(excl.length) ngRows=ngRows.filter(o=>!excl.some(x=>o.root.toLowerCase().includes(x)));
+  }
   ngRows.forEach(e=>e._uid='ng:'+e.portfolioName+'|'+e.root);
   const sel=selFor('ngroots');
   const ngSel=ngRows.filter(o=>sel.has(o._uid));
@@ -1449,6 +1457,10 @@ function renderNgRoots(){
         <div class="field"><label>Portfolio</label><select id="hv-ngport">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Root</label><input type="text" id="hv-ngterm" placeholder="Filter root text…" value="${esc(st.term||'')}"></div>
       </div>
+      <div class="ctrls" style="margin-top:8px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-ngcombine" ${st.ngCombine?'checked':''}> Combine same root across portfolios</label>
+        <div class="field grow"><label>Exclude words (comma-separated, e.g. brand name)</label><input type="text" id="hv-ngexclude" placeholder="e.g. lunakai, insiders" value="${esc(st.ngExclude)}"></div>
+      </div>
       <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword.</div>
       <div id="hv-ng-table">${ngTbl.html}</div>
     </div>
@@ -1464,6 +1476,8 @@ function renderNgRoots(){
   $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderNgRoots();},250);
   $('#hv-ngport').onchange=e=>{st.port=e.target.value; renderNgRoots();};
   $('#hv-ngterm').oninput=debounce(()=>{st.term=$('#hv-ngterm').value; renderNgRoots();},220);
+  $('#hv-ngcombine').onchange=e=>{st.ngCombine=e.target.checked; renderNgRoots();};
+  $('#hv-ngexclude').oninput=debounce(()=>{st.ngExclude=$('#hv-ngexclude').value; renderNgRoots();},250);
   wireLaunchPanel(st, ngSel);
 }
 
