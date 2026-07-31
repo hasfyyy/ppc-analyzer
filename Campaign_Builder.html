@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-01 00:41</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-01 00:53</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -496,7 +496,7 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; if(cfg.type==='sd') return ['SDPT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){
@@ -589,6 +589,8 @@ function buildCampaignRows(cfg){
       if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
       out.push(bulkRow(c));
       if(+cfg.tos>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Top','Percentage':cfg.tos}));
+      if(+cfg.pp>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Product Page','Percentage':cfg.pp}));
+      if(+cfg.ros>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Rest Of Search','Percentage':cfg.ros}));
       out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
       (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
       if(cfg.type==='auto'){
@@ -694,7 +696,9 @@ function renderCampaignCreate(){
         <div class="field"><label>Daily Budget ($)</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
         <div class="field"><label>Default Bid ($)</label><input type="number" id="cc-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
         <div class="field"><label>Bidding Strategy</label><select id="cc-strat">${strat.map(x=>`<option ${cfg.strategy===x?'selected':''}>${x}</option>`).join('')}</select></div>
-        <div class="field"><label>Top-of-Search boost %</label><input type="number" id="cc-tos" value="${esc(cfg.tos)}" style="width:90px;"></div>
+        <div class="field"><label>Top of Search %</label><input type="number" id="cc-tos" value="${esc(cfg.tos)}" style="width:90px;"></div>
+        <div class="field"><label>Product Pages %</label><input type="number" id="cc-pp" value="${esc(cfg.pp)}" style="width:90px;"></div>
+        <div class="field"><label>Rest of Search %</label><input type="number" id="cc-ros" value="${esc(cfg.ros)}" style="width:90px;"></div>
         <div class="field"><label>Portfolio ID (optional)</label><input type="text" id="cc-port" value="${esc(cfg.portfolioId)}" placeholder="numeric" style="width:140px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;align-items:stretch;">
@@ -719,7 +723,7 @@ function renderCampaignCreate(){
   const bindText=(id,key)=>{ const e=$('#'+id); e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
   bindText('cc-prefix','prefix'); bindText('cc-tip','tip'); bindText('cc-brand','brand'); bindText('cc-asin','asin');
   bindText('cc-agent','agent'); bindText('cc-budget','budget');
-  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-sep','separator'); bindText('cc-bid','bid'); bindText('cc-tos','tos');
+  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-sep','separator'); bindText('cc-bid','bid'); bindText('cc-tos','tos'); bindText('cc-pp','pp'); bindText('cc-ros','ros');
   bindText('cc-port','portfolioId'); bindText('cc-skus','skus'); bindText('cc-kw','keywords');
   bindText('cc-per','perCampaign');
   const ptAsinsEl=$('#cc-pt-asins'); if(ptAsinsEl) ptAsinsEl.oninput=()=>{ cfg.targetAsins=ptAsinsEl.value; upd(); };
@@ -808,7 +812,7 @@ function updateBuilderOutputs(){
 
 /* ============================ SINGLE KW CAMPAIGNS ============================ */
 let SKW=null;
-function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',separator:'_',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{},topSkus:2}; } return SKW; }
+function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',separator:'_',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{},topSkus:2}; } return SKW; }
 // Keeps the keyword's own spaces (instead of joining its words with "_") so it reads naturally in the
 // campaign name — only the segment separators around it (prefix/match/suffix) stay "_"-joined.
 function slugifyKeyword(kw){ return String(kw||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,40)||'keyword'; }
@@ -867,6 +871,8 @@ function buildSkwRows(cfg){
     if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
     out.push(bulkRow(c));
     if(+cfg.tos>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Top','Percentage':cfg.tos}));
+    if(+cfg.pp>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Product Page','Percentage':cfg.pp}));
+    if(+cfg.ros>0) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Create','Campaign ID':cname,'Placement':'Placement Rest Of Search','Percentage':cfg.ros}));
     out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
     (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
     out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':matchTypeCap,'Bid':cfg.bid}));
@@ -918,7 +924,9 @@ function renderSingleKw(){
         <div class="field"><label>Daily Budget ($)</label><input type="number" id="skw-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
         <div class="field"><label>Default Bid ($)</label><input type="number" id="skw-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
         <div class="field"><label>Bidding Strategy</label><select id="skw-strat">${strat.map(x=>`<option ${cfg.strategy===x?'selected':''}>${x}</option>`).join('')}</select></div>
-        <div class="field"><label>Top-of-Search boost %</label><input type="number" id="skw-tos" value="${esc(cfg.tos)}" style="width:90px;"></div>
+        <div class="field"><label>Top of Search %</label><input type="number" id="skw-tos" value="${esc(cfg.tos)}" style="width:90px;"></div>
+        <div class="field"><label>Product Pages %</label><input type="number" id="skw-pp" value="${esc(cfg.pp)}" style="width:90px;"></div>
+        <div class="field"><label>Rest of Search %</label><input type="number" id="skw-ros" value="${esc(cfg.ros)}" style="width:90px;"></div>
         <div class="field"><label>Portfolio ID (optional)</label><input type="text" id="skw-port" value="${esc(cfg.portfolioId)}" placeholder="numeric" style="width:140px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;align-items:stretch;">
@@ -942,7 +950,7 @@ function renderSingleKw(){
   const bindText=(id,key)=>{ const e=$('#'+id); e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
   bindText('skw-prefix','prefix'); bindText('skw-tip','tip'); bindText('skw-brand','brand'); bindText('skw-asin','asin');
   bindText('skw-agent','agent'); bindText('skw-my','monthyear'); bindText('skw-agency','agency'); bindText('skw-sep','separator');
-  bindText('skw-budget','budget'); bindText('skw-bid','bid'); bindText('skw-tos','tos');
+  bindText('skw-budget','budget'); bindText('skw-bid','bid'); bindText('skw-tos','tos'); bindText('skw-pp','pp'); bindText('skw-ros','ros');
   bindText('skw-port','portfolioId'); bindText('skw-skus','skus'); bindText('skw-kw','keywords');
   $('#skw-match').onchange=e=>{ cfg.matchType=e.target.value; upd(); };
   $('#skw-strat').onchange=e=>{ cfg.strategy=e.target.value; };
