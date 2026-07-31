@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 13:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 13:29</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -676,6 +676,7 @@ const TABS=[
   {id:'ngram',label:'Negative Phrase',ic:''},
   {id:'targets',label:'Targets SP',ic:''},
   {id:'targets-sb',label:'Targets SB',ic:''},
+  {id:'targets-sd',label:'Targets SD',ic:''},
   {id:'harvesting',label:'Harvesting',ic:''},
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
@@ -719,7 +720,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1131,7 +1132,7 @@ function optimizableCampaignIds(product){
   return new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled').map(c=>c.campaignId));
 }
 function renderTargets(product){
-  const tab = product==='SP'?'targets':'targets-sb';
+  const tab = product==='SP'?'targets':product==='SB'?'targets-sb':'targets-sd';
   const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
   const enabledCamps=optimizableCampaignIds(product);
   const singleKw=singleKwCampaigns(product);
@@ -1731,9 +1732,12 @@ function exportNegatives(product,rows){
 }
 function exportTargetsPause(product,rows){
   if(!rows.length){ alert('No targets selected.'); return; }
-  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
-  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
-  writeBulk(out, (product==='SB'?'sb_':'')+'targets_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  const prod=productLabel(product);
+  const out=rows.map(r=>{
+    if(product==='SD') return bulkRow({'Product':prod,'Entity':r.srcEntity||'Contextual Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Targeting ID':r.id,'State':'paused'});
+    return bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id}));
+  });
+  writeBulk(out, productFilePrefix(product)+'targets_pause_bulk.xlsx', productSheetName(product));
 }
 
 /* ============================ DUPLICATES (same target, competing across campaigns) ============================ */
