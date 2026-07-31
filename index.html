@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 11:47</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 11:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -683,6 +683,7 @@ const TABS=[
   {id:'optplacements',label:'Placement Optimizer',ic:''},
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
   {id:'duplicates',label:'Duplicates',ic:''},
+  {id:'pausecamp',label:'Pause Campaigns',ic:''},
 ];
 const OPT_TABS=new Set(['optbids','optplacements','optbudget']);
 function renderNav(){
@@ -715,7 +716,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1209,6 +1210,86 @@ function renderTargets(product){
   $('#tg-camp').oninput=debounce(()=>{st.camp=$('#tg-camp').value; upd();},220);
   $('#tg-dlall').onclick=()=>exportTargetsPause(product,rows);
   $('#tg-pause').onclick=()=>exportTargetsPause(product,rows.filter(r=>sel.has(r._uid)));
+}
+
+/* ============================ PAUSE CAMPAIGNS ============================ */
+// Same "No Sales" / "High ACoS" split as Targets, just one level up — a whole campaign that's burning spend
+// with nothing to show for it, not just one keyword in it. Campaign-level metrics are already sitting right
+// on the Campaign row itself (that's how Budget Rebalancing reads them too), no aggregation needed.
+function renderPauseCampaigns(){
+  const st=stFor('pausecamp');
+  if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
+  const src=DATA.campaigns.filter(c=>c.product===S.product && c.state==='enabled');
+  let rows=src.map(c=>{ const d=derive(c); let reason=null;
+    if(c.orders>=1 && (st.maxOrders<=0 || c.orders<=st.maxOrders) && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
+    else if(c.clicks>=st.clicks && c.orders===0) reason='No Sales';
+    return reason && c.spend>=st.minSpend ? Object.assign({reason},c,d):null; }).filter(Boolean);
+  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  // Stable identity — campaign ID is already unique on its own, no composite key needed like Targets does.
+  rows.forEach(r=>r._uid=r.campaignId);
+  const allRows=rows;
+  if(st.reasonFilter===undefined) st.reasonFilter='all';
+  if(st.reasonFilter!=='all') rows=rows.filter(r=>r.reason===st.reasonFilter);
+  const sel=selFor('pausecamp'); const totals=agg(rows);
+  const cols=[
+    {key:'reason',label:'Reason',l:true,noSort:true,cell:r=>`<span class="badge ${r.reason==='No Sales'?'nt':''}" style="${r.reason==='High ACoS'?'background:#fef3e2;color:#c2760a;':''}">${r.reason}</span>`},
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>esc(r.portfolioName||'(No Portfolio)')},
+    {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
+    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+    {key:'dailyBudget',label:'Daily Budget',type:'money'},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'pausecamp',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderPauseCampaigns});
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Filter Settings</h3>
+      <div class="ctrls">
+        <div class="field"><label>Min Clicks (0 sales) ≥</label><input type="number" id="pc-clicks" min="0" value="${st.clicks}" style="width:90px;"></div>
+        <div class="field"><label>ACoS Threshold (has sales) &gt;%</label><input type="number" id="pc-acos" min="0" value="${st.acos}" style="width:90px;"></div>
+        <div class="field"><label>Max Orders</label><input type="number" id="pc-mo" value="${st.maxOrders}"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="pc-ms" value="${st.minSpend}"></div>
+        <div class="field"><label>Portfolio</label><select id="pc-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Campaign</label><input type="text" id="pc-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
+        <div class="field"><label>Show</label><select id="pc-reasonf">
+          <option value="all" ${st.reasonFilter==='all'?'selected':''}>All (${allRows.length})</option>
+          <option value="No Sales" ${st.reasonFilter==='No Sales'?'selected':''}>No Sales (${allRows.filter(r=>r.reason==='No Sales').length})</option>
+          <option value="High ACoS" ${st.reasonFilter==='High ACoS'?'selected':''}>Has Sales / High ACoS (${allRows.filter(r=>r.reason==='High ACoS').length})</option>
+        </select></div>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('Underperforming Campaigns',fInt(rows.length))}${kpi('Wasted Spend',fMoney(rows.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0)),'red')}${kpi('Total Spend',fMoney(totals.spend))}${kpi('Selected to Pause',fInt(rows.filter(r=>sel.has(r._uid)).length),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Underperforming Campaigns (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn ghost" id="pc-dlall">Download All</button>
+        <button class="btn grad" id="pc-pause" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Pause (${rows.filter(r=>sel.has(r._uid)).length})</button>
+      </div>
+      <div id="pc-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#pc-table'));
+  const upd=()=>renderPauseCampaigns();
+  $('#pc-clicks').oninput=debounce(()=>{st.clicks=+$('#pc-clicks').value||0; upd();},350);
+  $('#pc-acos').oninput=debounce(()=>{st.acos=+$('#pc-acos').value||0; upd();},350);
+  $('#pc-mo').oninput=debounce(()=>{st.maxOrders=+$('#pc-mo').value; upd();},250);
+  $('#pc-ms').oninput=debounce(()=>{st.minSpend=+$('#pc-ms').value; upd();},250);
+  $('#pc-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
+  $('#pc-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#pc-camp').oninput=debounce(()=>{st.camp=$('#pc-camp').value; upd();},220);
+  $('#pc-dlall').onclick=()=>exportCampaignsPause(S.product,rows);
+  $('#pc-pause').onclick=()=>exportCampaignsPause(S.product,rows.filter(r=>sel.has(r._uid)));
+}
+function exportCampaignsPause(product,rows){
+  if(!rows.length){ alert('No campaigns selected.'); return; }
+  const prod=productLabel(product);
+  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'State':'paused'}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
+  writeBulk(out, productFilePrefix(product)+'campaigns_pause_bulk.xlsx', productSheetName(product));
+  alert(`Exported ${out.length} campaign pause update(s).`);
 }
 
 /* ============================ HARVESTING ============================ */
