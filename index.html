@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:34</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:39</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1404,7 +1404,19 @@ function renderHarvesting(){
     $('#hv-table').querySelectorAll('[data-huid]').forEach(s=>s.textContent='▸ '+oppMap[s.dataset.huid].searchTerm);
     span.textContent='▾ '+oppMap[uid].searchTerm;
     const term=oppMap[uid].searchTerm.toLowerCase();
-    const matches=DATA.targets.filter(t=>t.kind==='keyword' && t.product===S.product && (t.text||'').trim().toLowerCase()===term);
+    // Enabled campaigns first (a paused one isn't actually "already covering" this term right now), then
+    // within that, campaigns in the same portfolio you're currently focused on (the selected filter if one
+    // is set, otherwise the opportunity's own portfolio) — that's the group most relevant to "should I still
+    // launch a new campaign for this, or does an active one nearby already have it".
+    const wantPortfolio = st.port || oppMap[uid].portfolioName;
+    const matches=DATA.targets.filter(t=>t.kind==='keyword' && t.product===S.product && (t.text||'').trim().toLowerCase()===term)
+      .sort((a,b)=>{
+        const aEn=a.state==='enabled'?0:1, bEn=b.state==='enabled'?0:1;
+        if(aEn!==bEn) return aEn-bEn;
+        const aPf=(DATA.campById[a.campaignId]?.portfolio||'(No Portfolio)')===wantPortfolio?0:1;
+        const bPf=(DATA.campById[b.campaignId]?.portfolio||'(No Portfolio)')===wantPortfolio?0:1;
+        return aPf-bPf;
+      });
     const colspan=tr.children.length-1;
     const list=matches.length? matches.map(t=>{
       const cn=DATA.campById[t.campaignId]?.name||t.campaignId;
