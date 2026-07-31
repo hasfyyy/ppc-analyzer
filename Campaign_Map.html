@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-31 18:55</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-07-31 19:42</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -147,8 +147,8 @@ function linesOf(s){ return String(s||'').split(/[,;\n]/).map(x=>x.trim()).filte
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
 
 let CAMPS=[]; // flat list of enabled campaign summaries
-let BT={accounts:{}}; // read-only Brand Table, shared localStorage — for ASIN -> name/niche enrichment only
-function btLoadReadOnly(){ try{ const d=JSON.parse(localStorage.getItem('ppc_brandtable_v1')); if(d&&d.accounts) BT=d; }catch(e){} }
+let BT={accounts:{}}; // ASIN -> name/niche enrichment, populated fresh each session from whatever bulk is uploaded — never persisted, so a stale account's data never leaks into a different one
+function btLoadReadOnly(){ /* intentionally no-op: Brand Table is no longer loaded from localStorage */ }
 function asinInfoFromBrandTable(asin){
   if(!asin) return null;
   for(const accName of Object.keys(BT.accounts||{})){
