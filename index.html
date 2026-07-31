@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-30 16:58</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 11:47</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1133,8 +1133,16 @@ function renderTargets(product){
   const singleKw=singleKwCampaigns(product);
   const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{ const d=derive(agg([t])); let reason=null;
-    if(t.clicks>=st.clicks && t.orders<=st.maxOrders) reason='No Sales';
-    else if(t.orders>=1 && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
+    // High ACoS checked FIRST — a target with real orders is never a "No Sales" case, no matter what Max
+    // Order is set to, so this must win the tie before "No Sales" gets a chance to mislabel it. Max Order
+    // caps this branch too: a target that already converted MORE than Max Order times is doing fine enough
+    // that a "prune this" pass shouldn't touch it, even if its ACoS looks bad on paper. 0 (the default) keeps
+    // this branch uncapped, since "0 orders max" would otherwise make High ACoS (which requires orders≥1)
+    // impossible to ever trigger.
+    if(t.orders>=1 && (st.maxOrders<=0 || t.orders<=st.maxOrders) && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
+    // True zero-orders only — no longer influenced by Max Order (a target WITH orders is never "No Sales",
+    // regardless of how high Max Order is set).
+    else if(t.clicks>=st.clicks && t.orders===0) reason='No Sales';
     return reason && t.spend>=st.minSpend ? Object.assign({reason},t,d):null; }).filter(Boolean);
   if(st.exSup) rows=rows.filter(r=>!singleKw.has(r.campaignId));
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
