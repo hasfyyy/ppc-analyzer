@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 22:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 22:11</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1481,10 +1481,23 @@ function renderKwCheck(){
   if(st.lPrefix===undefined) st.lPrefix='BSQ'; if(st.lCount===undefined) st.lCount=1; if(st.lBid===undefined) st.lBid='';
   const src=stByToggle().filter(s=>!st.port || (s.portfolioName||'(No Portfolio)')===st.port);
   const kws=(st.text||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  // Exact/Phrase/Broad here must answer "is this an actual KEYWORD TARGET (in this portfolio)", not "does it
+  // show up as a search term" — the global SETS.exact/phrase/broad would leak a false YES from a keyword
+  // targeted somewhere else entirely in the account (different portfolio/product), which is exactly backwards
+  // for a portfolio-scoped check like this one.
+  const scopedExact=new Set(), scopedPhrase=new Set(), scopedBroad=new Set();
+  DATA.targets.forEach(t=>{
+    if(t.kind!=='keyword' || t.product!==S.product || t.state!=='enabled') return;
+    if(st.port && (DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)')!==st.port) return;
+    const txt=(t.text||'').trim().toLowerCase(); if(!txt) return;
+    if(t.matchType==='exact') scopedExact.add(txt);
+    else if(t.matchType==='phrase') scopedPhrase.add(txt);
+    else if(t.matchType==='broad') scopedBroad.add(txt);
+  });
   let results=[];
   if(kws.length){
     results=kws.map(kw=>{ const low=kw.toLowerCase(); const matches=src.filter(s=>s.searchTerm.toLowerCase().includes(low)); const d=derive(agg(matches));
-      return Object.assign({keyword:kw, found:matches.length>0, count:matches.length, inExact:SETS.exact.has(low), inPhrase:SETS.phrase.has(low), inBroad:SETS.broad.has(low)}, d); });
+      return Object.assign({keyword:kw, found:matches.length>0, count:matches.length, inExact:scopedExact.has(low), inPhrase:scopedPhrase.has(low), inBroad:scopedBroad.has(low)}, d); });
   }
   results.forEach((r,i)=>r._uid='kw'+i);
   const sel=selFor('kwcheck'); // keys are "keyword|MATCHTYPE" — only missing (NO) combos are selectable
