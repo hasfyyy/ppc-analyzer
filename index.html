@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:31</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:43</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1384,7 +1384,7 @@ function renderHarvesting(){
       ${renderLaunchPanel(st, selOpps)}
     </div>`;
   tbl.wire($('#hv-table'));
-  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderHarvesting(); });
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); const y=window.scrollY; renderHarvesting(); window.scrollTo(0,y); });
   $('#hv-acos').oninput=debounce(()=>{st.acos=+$('#hv-acos').value||0; renderHarvesting();},350);
   $('#hv-conv').oninput=debounce(()=>{st.minConv=+$('#hv-conv').value||1; renderHarvesting();},350);
   $('#hv-port').onchange=e=>{st.port=e.target.value; renderHarvesting();};
@@ -1394,7 +1394,7 @@ function renderHarvesting(){
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
-  wireLaunchPanel(st, selOpps);
+  wireLaunchPanel(st, selOpps, renderHarvesting);
 }
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
 // N-gram roots (Low ACOS) — same word-aggregation logic as Negative Phrase, but the opposite purpose: not
@@ -1406,22 +1406,35 @@ function renderNgRoots(){
   if(st.ngCombine===undefined) st.ngCombine=false; if(st.ngExclude===undefined) st.ngExclude='';
   const src=stByToggle();
   const ngSrc = st.port? src.filter(s=>(s.portfolioName||'(No Portfolio)')===st.port) : src;
+  // Always aggregated per portfolio+root FIRST, and the Max ACoS / Min Orders thresholds are always applied
+  // at that per-portfolio level too — a root that's genuinely good in one portfolio must survive on that
+  // portfolio's own numbers, not get dragged down by unrelated (and possibly bad) performance of the same
+  // word in a totally different portfolio. "Combine" only merges rows that already individually qualified,
+  // for display/launch purposes — it never re-tests the combined total against the thresholds.
   const ngMap=new Map();
   ngSrc.forEach(r=>{
     const pf=String(r.portfolioName||'(No Portfolio)');
     const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
     new Set(words).forEach(w=>{
-      // Combining across portfolios collapses the same brand/root word into one row instead of one per
-      // portfolio it happens to show up in — the portfolio-scoped split still matters for a niche word that
-      // coincidentally repeats, but a brand name is the SAME signal everywhere, so splitting it is just noise.
-      const key = st.ngCombine? w : pf+'|'+w;
-      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:st.ngCombine?'(All Portfolios)':pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
+      const key=pf+'|'+w;
+      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
       const e=ngMap.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders;
     });
   });
   let ngRows=[...ngMap.values()].map(e=>{ const d=derive(e); const term=e.root.toLowerCase(); return Object.assign(e,d,{searchTerm:e.root, exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term)}); });
   ngRows=ngRows.filter(e=>e.orders>=st.ngMinOrders && e.acos!==Infinity && e.acos<=st.ngAcos);
+  if(st.ngCombine){
+    const combined=new Map();
+    ngRows.forEach(e=>{
+      if(!combined.has(e.root)) combined.set(e.root,{root:e.root,portfolioName:'(All Portfolios)',campaignId:e.campaignId,campaignName:e.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
+      const c=combined.get(e.root); c.impressions+=e.impressions; c.clicks+=e.clicks; c.spend+=e.spend; c.sales+=e.sales; c.orders+=e.orders;
+    });
+    ngRows=[...combined.values()].map(e=>{ const d=derive(e); const term=e.root.toLowerCase(); return Object.assign(e,d,{searchTerm:e.root, exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term)}); });
+  }
   if(st.term) ngRows=ngRows.filter(o=>o.root.toLowerCase().includes(st.term.toLowerCase()));
+  if(+st.ngMinImpr>0) ngRows=ngRows.filter(o=>o.impressions>=+st.ngMinImpr);
+  if(+st.ngMinClicks>0) ngRows=ngRows.filter(o=>o.clicks>=+st.ngMinClicks);
+  if(+st.ngMinSpend>0) ngRows=ngRows.filter(o=>o.spend>=+st.ngMinSpend);
   if(st.ngExclude){
     const excl=st.ngExclude.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
     if(excl.length) ngRows=ngRows.filter(o=>!excl.some(x=>o.root.toLowerCase().includes(x)));
@@ -1454,14 +1467,18 @@ function renderNgRoots(){
       <div class="ctrls">
         <div class="field"><label>Max ACoS &lt;%</label><input type="number" id="hv-ngacos" min="0" value="${st.ngAcos}" style="width:90px;"></div>
         <div class="field"><label>Min Orders</label><input type="number" id="hv-ngmo" min="1" value="${st.ngMinOrders}" style="width:90px;"></div>
+        <div class="field"><label>Min Impressions</label><input type="number" id="hv-ngmi" min="0" value="${st.ngMinImpr||0}" style="width:100px;"></div>
+        <div class="field"><label>Min Clicks</label><input type="number" id="hv-ngmc" min="0" value="${st.ngMinClicks||0}" style="width:90px;"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="hv-ngms" min="0" value="${st.ngMinSpend||0}" style="width:90px;"></div>
         <div class="field"><label>Portfolio</label><select id="hv-ngport">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Root</label><input type="text" id="hv-ngterm" placeholder="Filter root text…" value="${esc(st.term||'')}"></div>
+        <button class="btn ghost" id="hv-ngdl">Export CSV</button>
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-ngcombine" ${st.ngCombine?'checked':''}> Combine same root across portfolios</label>
         <div class="field grow"><label>Exclude words (comma-separated, e.g. brand name)</label><input type="text" id="hv-ngexclude" placeholder="e.g. lunakai, insiders" value="${esc(st.ngExclude)}"></div>
       </div>
-      <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword.</div>
+      <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword. Column headers (▾) also support per-column sort/filter, same as every other table.</div>
       <div id="hv-ng-table">${ngTbl.html}</div>
     </div>
     <div class="card pad">
@@ -1471,14 +1488,18 @@ function renderNgRoots(){
       ${renderLaunchPanel(st, ngSel)}
     </div>`;
   ngTbl.wire($('#hv-ng-table'));
-  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderNgRoots(); });
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); const y=window.scrollY; renderNgRoots(); window.scrollTo(0,y); });
   $('#hv-ngacos').oninput=debounce(()=>{st.ngAcos=+$('#hv-ngacos').value||0; renderNgRoots();},350);
   $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderNgRoots();},250);
+  $('#hv-ngmi').oninput=debounce(()=>{st.ngMinImpr=+$('#hv-ngmi').value||0; renderNgRoots();},250);
+  $('#hv-ngmc').oninput=debounce(()=>{st.ngMinClicks=+$('#hv-ngmc').value||0; renderNgRoots();},250);
+  $('#hv-ngms').oninput=debounce(()=>{st.ngMinSpend=+$('#hv-ngms').value||0; renderNgRoots();},250);
   $('#hv-ngport').onchange=e=>{st.port=e.target.value; renderNgRoots();};
   $('#hv-ngterm').oninput=debounce(()=>{st.term=$('#hv-ngterm').value; renderNgRoots();},220);
   $('#hv-ngcombine').onchange=e=>{st.ngCombine=e.target.checked; renderNgRoots();};
   $('#hv-ngexclude').oninput=debounce(()=>{st.ngExclude=$('#hv-ngexclude').value; renderNgRoots();},250);
-  wireLaunchPanel(st, ngSel);
+  $('#hv-ngdl').onclick=()=>exportCSV(ngCols.filter(c=>c.key!=='sel'),ngRows,'ngroots_low_acos');
+  wireLaunchPanel(st, ngSel, renderNgRoots);
 }
 
 /* ============================ KEYWORD CHECKER ============================ */
@@ -2630,15 +2651,24 @@ function renderLaunchPanel(st, selOpps){
   </div>
   <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">Create ${numCampaigns} campaign(s)</button></div>`;
 }
-function wireLaunchPanel(st, selOpps){
+function wireLaunchPanel(st, selOpps, renderFn){
+  // renderFn defaults to renderHarvesting for backward compat, but MUST be passed explicitly by any other
+  // caller (e.g. renderNgRoots) — hardcoding renderHarvesting here was a real bug: typing into any field of
+  // this shared panel from a different tab silently re-rendered Harvesting into #app instead, which looked
+  // like the page randomly "redirecting" away from whatever tab the user was actually on.
+  renderFn = renderFn || renderHarvesting;
   if(!selOpps.length) return;
-  $('#hv-lport').onchange=e=>{ st.launchPortfolio=e.target.value; renderHarvesting(); };
-  $('#hv-lprefix').oninput=debounce(()=>{ st.launchPrefix=$('#hv-lprefix').value; renderHarvesting(); },300);
-  $('#hv-lmatch').onchange=e=>{ st.launchMatch=e.target.value; renderHarvesting(); };
-  $('#hv-lcount').oninput=debounce(()=>{ st.launchCount=+$('#hv-lcount').value||1; st.launchCountTouched=true; renderHarvesting(); },250);
+  // Every keystroke here triggers a full #app innerHTML rebuild — without restoring scroll position, the
+  // page visually jumps back to the top on each edit, which reads as "it keeps kicking me out" while typing
+  // or while ticking multiple selection toggles down a long list.
+  const keepScroll=fn=>()=>{ const y=window.scrollY; fn(); window.scrollTo(0,y); };
+  $('#hv-lport').onchange=e=>{ st.launchPortfolio=e.target.value; keepScroll(renderFn)(); };
+  $('#hv-lprefix').oninput=debounce(()=>{ st.launchPrefix=$('#hv-lprefix').value; keepScroll(renderFn)(); },300);
+  $('#hv-lmatch').onchange=e=>{ st.launchMatch=e.target.value; keepScroll(renderFn)(); };
+  $('#hv-lcount').oninput=debounce(()=>{ st.launchCount=+$('#hv-lcount').value||1; st.launchCountTouched=true; keepScroll(renderFn)(); },250);
   $('#hv-lbid').oninput=debounce(()=>{ st.launchBid=$('#hv-lbid').value; },300);
-  $('#hv-lignore').onchange=e=>{ st.launchIgnoreNaming=e.target.checked; renderHarvesting(); };
-  const suffixEl=$('#hv-lsuffix'); if(suffixEl) suffixEl.oninput=debounce(()=>{ st.launchManualSuffix=$('#hv-lsuffix').value; renderHarvesting(); },300);
+  $('#hv-lignore').onchange=e=>{ st.launchIgnoreNaming=e.target.checked; keepScroll(renderFn)(); };
+  const suffixEl=$('#hv-lsuffix'); if(suffixEl) suffixEl.oninput=debounce(()=>{ st.launchManualSuffix=$('#hv-lsuffix').value; keepScroll(renderFn)(); },300);
   $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, numCampaigns:st.launchCount, bidOverride: st.launchBid?+st.launchBid:null, ignoreNaming:st.launchIgnoreNaming, manualSuffix:st.launchManualSuffix});
 }
 function exportNewCampaigns(opps, settings){
