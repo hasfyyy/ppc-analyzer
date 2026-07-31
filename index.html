@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 22:02</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 22:08</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -678,6 +678,7 @@ const TABS=[
   {id:'targets-sb',label:'Targets SB',ic:''},
   {id:'targets-sd',label:'Targets SD',ic:''},
   {id:'harvesting',label:'Harvesting',ic:''},
+  {id:'ngroots',label:'Low ACOS Roots',ic:''},
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
   {id:'optbids',label:'Bid Optimizer',ic:''},
@@ -726,7 +727,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -992,7 +993,7 @@ const STOP=new Set([
 // splits on anything that ISN'T a Unicode letter/number, so "ü/ö/ä/ß" stay part of the word instead of being cut as delimiters
 function wordsOf(s){ return String(s||'').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); }
 function renderNgram(){
-  const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2; if(st.lowAcosMax===undefined)st.lowAcosMax=15;
+  const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2;
   // sidebar + product filter
   let src=stByToggle().filter(passesSidebar);
   const map=new Map();
@@ -1019,9 +1020,6 @@ function renderNgram(){
   rows=rows.filter(e=>e.impressions>=mi && e.clicks>=mc && e.spend>=ms && e.terms.length>=mt && (ma? (e.acos===Infinity||e.acos>=ma):true));
   if(st.quick==='wasted') rows=rows.filter(e=>e.orders===0 && e.spend>0);
   if(st.quick==='high') rows=rows.filter(e=>e.orders>0 && e.acos>30);
-  // Good-performing roots (low ACOS) aren't candidates for negation — they're candidates for a NEW campaign
-  // built around that root, since it's clearly converting well across multiple search terms already.
-  if(st.quick==='low') rows=rows.filter(e=>e.orders>0 && e.acos<(+st.lowAcosMax||15));
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
   rows.forEach(e=>e._uid=e.portfolioName+'|'+e.root); // stable identity — matches the portfolio+root aggregation key above
   const sel=selFor('ngram');
@@ -1065,8 +1063,6 @@ function renderNgram(){
             <span class="chip ${st.quick==='all'?'active':''}" data-q="all">All</span>
             <span class="chip ${st.quick==='wasted'?'active':''}" data-q="wasted">Wasted Spend</span>
             <span class="chip ${st.quick==='high'?'active':''}" data-q="high">High ACOS</span>
-            <span class="chip ${st.quick==='low'?'active':''}" data-q="low">Low ACOS</span>
-            ${st.quick==='low'?`<span style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted2);">under <input type="number" id="ng-lowacos" value="${st.lowAcosMax}" style="width:56px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;">%</span>`:''}
           </div>
           <div class="spacer"></div><span class="countnote">${fInt(rows.length)} n-grams</span>
         </div>
@@ -1100,7 +1096,6 @@ function renderNgram(){
   // "Wasted Spend") stay counted in the Export/Copy buttons after switching to "High ACOS", even though none
   // of them are visible anymore. That silent carry-over is what made the button counts look "cumulated".
   $('.chips')&&document.querySelectorAll('#app .chip').forEach(c=>c.onclick=()=>{st.quick=c.dataset.q; selFor('ngram').clear(); renderNgram();});
-  if($('#ng-lowacos')) $('#ng-lowacos').oninput=debounce(()=>{st.lowAcosMax=$('#ng-lowacos').value; renderNgram();},250);
   $('#ng-csv').onclick=()=>exportCSV(cols,rows,'ngram');
   $('#ng-negtype').onchange=e=>{ st.negtype=e.target.value; };
   $('#ng-exexcamp').onchange=e=>{ st.exExactCamp=e.target.checked; };
@@ -1339,29 +1334,7 @@ function renderHarvesting(){
   opps.forEach(o=>o._uid=o.searchTerm.toLowerCase());
   const totals=agg(opps); const tot=derive(totals);
   const sel=selFor('harvesting');
-  // N-gram roots (Low ACOS) — same word-aggregation logic as Negative Phrase, but the opposite purpose: not
-  // negating, but finding a root that's ALREADY converting well and deserves its own dedicated campaign
-  // instead of staying buried inside whatever broad/auto campaign happened to surface it. Threshold is
-  // editable (unlike a fixed cutoff) since "good enough to launch" varies a lot by niche/ACoS target.
-  if(st.ngAcos===undefined) st.ngAcos=20; if(st.ngMinOrders===undefined) st.ngMinOrders=1;
-  const ngSrc = st.port? src.filter(s=>(s.portfolioName||'(No Portfolio)')===st.port) : src;
-  const ngMap=new Map();
-  ngSrc.forEach(r=>{
-    const pf=String(r.portfolioName||'(No Portfolio)');
-    const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
-    new Set(words).forEach(w=>{
-      const key=pf+'|'+w;
-      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
-      const e=ngMap.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders;
-    });
-  });
-  let ngRows=[...ngMap.values()].map(e=>{ const d=derive(e); const term=e.root.toLowerCase(); return Object.assign(e,d,{searchTerm:e.root, exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term)}); });
-  ngRows=ngRows.filter(e=>e.orders>=st.ngMinOrders && e.acos!==Infinity && e.acos<=st.ngAcos);
-  ngRows.forEach(e=>e._uid='ng:'+e.portfolioName+'|'+e.root);
-  const ngSel=ngRows.filter(o=>sel.has(o._uid));
-  // One shared launch panel below covers both tables — a root selected here and a search term selected
-  // above can be launched together in the same batch of new campaigns.
-  const selOpps=[...opps.filter(o=>sel.has(o._uid)), ...ngSel];
+  const selOpps=opps.filter(o=>sel.has(o._uid));
   const selTot=derive(agg(selOpps));
   const badge=(v)=>v?'<span class="badge tg">TARGETED</span>':'<span class="badge nt">NOT TARGETED</span>';
   const cols=[
@@ -1381,20 +1354,6 @@ function renderHarvesting(){
     {key:'broad',label:'Broad',l:true,noSort:true,cell:r=>badge(r.broad)},
   ];
   const tbl=buildTable({columns:cols,rows:opps,tab:'harvesting',totals,sortDef:{key:'orders',dir:-1},onChange:renderHarvesting});
-  const ngCols=[
-    {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
-    {key:'root',label:'N-gram',l:true,type:'text'},
-    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
-    {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
-    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
-    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
-    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
-    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
-    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
-    {key:'cvr',label:'CVR',type:'pct'},
-    {key:'cpc',label:'CPC',type:'money'},
-  ];
-  const ngTbl=buildTable({columns:ngCols,rows:ngRows,tab:'harvesting-ng',totals:agg(ngRows),sortDef:{key:'orders',dir:-1},onChange:renderHarvesting});
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Harvesting Criteria</h3>
@@ -1419,22 +1378,12 @@ function renderHarvesting(){
       <div id="hv-table">${tbl.html}</div>
     </div>
     <div class="card pad">
-      <h3 class="sectitle">N-gram Roots — Low ACOS</h3>
-      <div class="ctrls">
-        <div class="field"><label>Max ACoS &lt;%</label><input type="number" id="hv-ngacos" min="0" value="${st.ngAcos}" style="width:90px;"></div>
-        <div class="field"><label>Min Orders</label><input type="number" id="hv-ngmo" min="1" value="${st.ngMinOrders}" style="width:90px;"></div>
-      </div>
-      <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword.</div>
-      <div id="hv-ng-table">${ngTbl.html}</div>
-    </div>
-    <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
         <span class="countnote">${selOpps.length} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
       </div>
       ${renderLaunchPanel(st, selOpps)}
     </div>`;
   tbl.wire($('#hv-table'));
-  ngTbl.wire($('#hv-ng-table'));
   document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderHarvesting(); });
   $('#hv-acos').oninput=debounce(()=>{st.acos=+$('#hv-acos').value||0; renderHarvesting();},350);
   $('#hv-conv').oninput=debounce(()=>{st.minConv=+$('#hv-conv').value||1; renderHarvesting();},350);
@@ -1444,12 +1393,79 @@ function renderHarvesting(){
   $('#hv-ex').onchange=e=>{st.exStat=e.target.value; renderHarvesting();};
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
-  $('#hv-ngacos').oninput=debounce(()=>{st.ngAcos=+$('#hv-ngacos').value||0; renderHarvesting();},350);
-  $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderHarvesting();},250);
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
   wireLaunchPanel(st, selOpps);
 }
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
+// N-gram roots (Low ACOS) — same word-aggregation logic as Negative Phrase, but the opposite purpose: not
+// negating, but finding a root that's ALREADY converting well and deserves its own dedicated campaign
+// instead of staying buried inside whatever broad/auto campaign happened to surface it. Own tab (not a
+// sub-section of Harvesting) since it's a different workflow: pick a root, launch a new campaign around it.
+function renderNgRoots(){
+  const st=stFor('ngroots'); if(st.ngAcos===undefined) st.ngAcos=20; if(st.ngMinOrders===undefined) st.ngMinOrders=1;
+  const src=stByToggle();
+  const ngSrc = st.port? src.filter(s=>(s.portfolioName||'(No Portfolio)')===st.port) : src;
+  const ngMap=new Map();
+  ngSrc.forEach(r=>{
+    const pf=String(r.portfolioName||'(No Portfolio)');
+    const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
+    new Set(words).forEach(w=>{
+      const key=pf+'|'+w;
+      if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
+      const e=ngMap.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders;
+    });
+  });
+  let ngRows=[...ngMap.values()].map(e=>{ const d=derive(e); const term=e.root.toLowerCase(); return Object.assign(e,d,{searchTerm:e.root, exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term)}); });
+  ngRows=ngRows.filter(e=>e.orders>=st.ngMinOrders && e.acos!==Infinity && e.acos<=st.ngAcos);
+  if(st.term) ngRows=ngRows.filter(o=>o.root.toLowerCase().includes(st.term.toLowerCase()));
+  ngRows.forEach(e=>e._uid='ng:'+e.portfolioName+'|'+e.root);
+  const sel=selFor('ngroots');
+  const ngSel=ngRows.filter(o=>sel.has(o._uid));
+  const selTot=derive(agg(ngSel));
+  const badge=(v)=>v?'<span class="badge tg">TARGETED</span>':'<span class="badge nt">NOT TARGETED</span>';
+  const ngCols=[
+    {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
+    {key:'root',label:'N-gram',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
+    {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
+    {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+    {key:'cvr',label:'CVR',type:'pct'},
+    {key:'cpc',label:'CPC',type:'money'},
+    {key:'exact',label:'Exact',l:true,noSort:true,cell:r=>badge(r.exact)},
+    {key:'phrase',label:'Phrase',l:true,noSort:true,cell:r=>badge(r.phrase)},
+    {key:'broad',label:'Broad',l:true,noSort:true,cell:r=>badge(r.broad)},
+  ];
+  const ngTbl=buildTable({columns:ngCols,rows:ngRows,tab:'ngroots',totals:agg(ngRows),sortDef:{key:'orders',dir:-1},onChange:renderNgRoots});
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">N-gram Roots — Low ACOS</h3>
+      <div class="ctrls">
+        <div class="field"><label>Max ACoS &lt;%</label><input type="number" id="hv-ngacos" min="0" value="${st.ngAcos}" style="width:90px;"></div>
+        <div class="field"><label>Min Orders</label><input type="number" id="hv-ngmo" min="1" value="${st.ngMinOrders}" style="width:90px;"></div>
+        <div class="field"><label>Portfolio</label><select id="hv-ngport">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Root</label><input type="text" id="hv-ngterm" placeholder="Filter root text…" value="${esc(st.term||'')}"></div>
+      </div>
+      <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword.</div>
+      <div id="hv-ng-table">${ngTbl.html}</div>
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Launch Selected as New Campaign(s)</h3><div class="spacer"></div>
+        <span class="countnote">${ngSel.length} selected · ${fInt(selTot.impressions)} impr · ${fInt(selTot.clicks)} clicks · ${fMoney(selTot.spend)} spend · ${fInt(selTot.orders)} orders · ${fMoney(selTot.sales)} sales</span>
+      </div>
+      ${renderLaunchPanel(st, ngSel)}
+    </div>`;
+  ngTbl.wire($('#hv-ng-table'));
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); renderNgRoots(); });
+  $('#hv-ngacos').oninput=debounce(()=>{st.ngAcos=+$('#hv-ngacos').value||0; renderNgRoots();},350);
+  $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderNgRoots();},250);
+  $('#hv-ngport').onchange=e=>{st.port=e.target.value; renderNgRoots();};
+  $('#hv-ngterm').oninput=debounce(()=>{st.term=$('#hv-ngterm').value; renderNgRoots();},220);
+  wireLaunchPanel(st, ngSel);
+}
 
 /* ============================ KEYWORD CHECKER ============================ */
 // Which campaigns already exist in this portfolio determines which SKUs a new campaign there should
