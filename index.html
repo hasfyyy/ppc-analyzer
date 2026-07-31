@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 23:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:07</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1327,6 +1327,10 @@ function renderHarvesting(){
   if(st.port) opps=opps.filter(o=>(o.portfolioName||'(No Portfolio)')===st.port);
   if(st.term) opps=opps.filter(o=>o.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
   if(st.camp) opps=opps.filter(o=>(o.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  if(st.hvExclude){
+    const excl=st.hvExclude.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+    if(excl.length) opps=opps.filter(o=>!excl.some(x=>o.searchTerm.toLowerCase().includes(x)));
+  }
   const statusF=(o,key,val)=>{ if(!val||val==='all')return true; const has=o[key]; return val==='targeted'?has:val==='not'? !has:true; };
   opps=opps.filter(o=>statusF(o,'exact',st.exStat)&&statusF(o,'phrase',st.phStat)&&statusF(o,'broad',st.brStat));
   // Stable identity — the lowercased search term is already the aggregation key above, so it's unique and
@@ -1367,12 +1371,16 @@ function renderHarvesting(){
         <div class="field"><label>Phrase Status</label><select id="hv-ph">${statOpts(st.phStat)}</select></div>
         <div class="field"><label>Broad Status</label><select id="hv-br">${statOpts(st.brStat)}</select></div>
       </div>
+      <div class="ctrls" style="margin-top:8px;">
+        <div class="field grow"><label>Exclude words (comma-separated, e.g. brand name)</label><input type="text" id="hv-exclude" placeholder="e.g. lunakai, insiders" value="${esc(st.hvExclude||'')}"></div>
+      </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
       ${kpi('Opportunities',fInt(opps.length),'green')}${kpi('Total Orders',fInt(tot.orders))}${kpi('Revenue Potential',fMoney(tot.sales),'green')}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Harvesting Opportunities (${opps.length})</h3><div class="spacer"></div>
+        <button class="btn ghost" id="hv-selall">${opps.length && opps.every(r=>sel.has(r._uid))?'Deselect all':'Select all'}</button>
         <button class="btn ghost" id="hv-dl">Download</button>
       </div>
       <div id="hv-table">${tbl.html}</div>
@@ -1393,7 +1401,13 @@ function renderHarvesting(){
   $('#hv-ex').onchange=e=>{st.exStat=e.target.value; renderHarvesting();};
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
+  $('#hv-exclude').oninput=debounce(()=>{st.hvExclude=$('#hv-exclude').value; renderHarvesting();},250);
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
+  $('#hv-selall').onclick=()=>{
+    const allSel = opps.length && opps.every(r=>sel.has(r._uid));
+    if(allSel) opps.forEach(r=>sel.delete(r._uid)); else opps.forEach(r=>sel.add(r._uid));
+    const y=window.scrollY; renderHarvesting(); window.scrollTo(0,y);
+  };
   wireLaunchPanel(st, selOpps, renderHarvesting);
 }
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
