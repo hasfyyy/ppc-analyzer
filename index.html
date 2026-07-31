@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 11:58</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 13:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -685,7 +685,10 @@ const TABS=[
   {id:'duplicates',label:'Duplicates',ic:''},
   {id:'pausecamp',label:'Pause Campaigns',ic:''},
 ];
-const OPT_TABS=new Set(['optbids','optplacements','optbudget']);
+// Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
+// Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
+// correctly. Every other tab depends on a search-term report SD doesn't have.
+const OPT_TABS=new Set(['optbids','optplacements','optbudget','pausecamp']);
 function renderNav(){
   $('#nav').innerHTML = TABS.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
   $('#nav').querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{
