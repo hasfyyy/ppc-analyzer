@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 13:40</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-07-31 18:55</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -852,7 +852,16 @@ function renderNegatives(product){
   // that target directly (Targets tab), so these are dropped from Negatives entirely, not just when the
   // "Exclude ASIN" toggle is on.
   const ownPTAsins=new Set();
-  DATA.targets.forEach(t=>{ if(t.kind==='target'){ const m=(t.text||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i); if(m) ownPTAsins.add(t.campaignId+'|'+t.adGroupId+'|'+m[1].toLowerCase()); } });
+  // An ad group is either keyword-based OR product-attribute-based, never both — Amazon rejects ANY negative
+  // keyword targeting an ad group that already has product targeting ("Ad group cannot have both keyword(theme)
+  // and product attribute"), regardless of whether the search term text itself looks like an ASIN/category.
+  // Common on SB PAT/category ad groups reporting real shopper query text in the search term report.
+  const ptAdGroups=new Set();
+  DATA.targets.forEach(t=>{ if(t.kind==='target'){
+    const m=(t.text||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i);
+    if(m) ownPTAsins.add(t.campaignId+'|'+t.adGroupId+'|'+m[1].toLowerCase());
+    if(/asin\s*=|category\s*=/i.test(t.text||'')) ptAdGroups.add(t.campaignId+'|'+t.adGroupId);
+  }});
   // The same (campaign, ad group, search term, match type) can legitimately appear as more than one raw row
   // in a bulk export (e.g. overlapping date ranges merged into one file) — left un-merged, each copy becomes
   // its OWN candidate row with the same identity, so selecting/exporting "one" row actually exports every
@@ -876,6 +885,7 @@ function renderNegatives(product){
       if(st.exExact && (r.matchType||'').toLowerCase()==='exact') return false;
       if(st.exExact && isExactCampaign(r.campaignName)) return false;
       if(ownPTAsins.has(r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm.trim().toLowerCase())) return false;
+      if(ptAdGroups.has(r.campaignId+'|'+r.adGroupId)) return false;
       // Any ASIN "search term" from a MANUAL/Product-Targeting (non-Auto) campaign is that campaign's own
       // target reporting itself, paused or not — negating it is never the right move there, the fix is
       // always to pause/adjust the target directly in Targets. Only an Auto campaign's own expansion
