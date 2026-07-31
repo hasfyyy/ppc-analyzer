@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:07</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:34</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1343,7 +1343,7 @@ function renderHarvesting(){
   const badge=(v)=>v?'<span class="badge tg">TARGETED</span>':'<span class="badge nt">NOT TARGETED</span>';
   const cols=[
     {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tog="${esc(r._uid)}"></span>`},
-    {key:'searchTerm',label:'Search Term',l:true,type:'text'},
+    {key:'searchTerm',label:'Search Term',l:true,type:'text',sortVal:r=>r.searchTerm,cell:r=>`<span class="ng-root link" data-huid="${esc(r._uid)}">▸ ${esc(r.searchTerm)}</span>`},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
     {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
@@ -1392,6 +1392,28 @@ function renderHarvesting(){
       ${renderLaunchPanel(st, selOpps)}
     </div>`;
   tbl.wire($('#hv-table'));
+  // Click a search term to see exactly which campaigns already target it (and how) — the Exact/Phrase/Broad
+  // badges only say whether it's targeted ANYWHERE in the account, not which specific campaign(s)/match
+  // type/bid, which is what you actually need before deciding to launch a new campaign around it.
+  const oppMap={}; opps.forEach(o=>oppMap[o._uid]=o);
+  $('#hv-table').querySelectorAll('[data-huid]').forEach(span=>span.onclick=ev=>{
+    ev.stopPropagation();
+    const uid=span.dataset.huid, tr=span.closest('tr'), nxt=tr.nextElementSibling;
+    if(nxt&&nxt.classList.contains('hv-detail')){ nxt.remove(); span.textContent='▸ '+oppMap[uid].searchTerm; return; }
+    $('#hv-table').querySelectorAll('.hv-detail').forEach(d=>d.remove());
+    $('#hv-table').querySelectorAll('[data-huid]').forEach(s=>s.textContent='▸ '+oppMap[s.dataset.huid].searchTerm);
+    span.textContent='▾ '+oppMap[uid].searchTerm;
+    const term=oppMap[uid].searchTerm.toLowerCase();
+    const matches=DATA.targets.filter(t=>t.kind==='keyword' && t.product===S.product && (t.text||'').trim().toLowerCase()===term);
+    const colspan=tr.children.length-1;
+    const list=matches.length? matches.map(t=>{
+      const cn=DATA.campById[t.campaignId]?.name||t.campaignId;
+      return `<div style="display:flex;justify-content:space-between;gap:16px;padding:4px 0;border-bottom:1px solid #f0eef6;"><span>${esc(cn)}</span><span class="muted" style="white-space:nowrap;font-size:11.5px;">${esc((t.matchType||'').toUpperCase())} · ${esc(t.state||'')} · bid $${(t.bid||0).toFixed(2)}</span></div>`;
+    }).join('') : `<div class="muted">Not targeted as a keyword in any ${esc(S.product)} campaign — this term is only appearing via Auto/broad discovery.</div>`;
+    const detail=document.createElement('tr'); detail.className='hv-detail';
+    detail.innerHTML=`<td></td><td colspan="${colspan}" class="l" style="background:#fbfaff;padding:10px 14px;"><div style="font-weight:600;margin-bottom:6px;">${matches.length} campaign(s) already targeting “${esc(oppMap[uid].searchTerm)}”:</div>${list}</td>`;
+    tr.after(detail);
+  });
   document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); const y=window.scrollY; renderHarvesting(); window.scrollTo(0,y); });
   $('#hv-acos').oninput=debounce(()=>{st.acos=+$('#hv-acos').value||0; renderHarvesting();},350);
   $('#hv-conv').oninput=debounce(()=>{st.minConv=+$('#hv-conv').value||1; renderHarvesting();},350);
