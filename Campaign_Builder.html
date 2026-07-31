@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-31 23:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-07-31 23:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -150,7 +150,7 @@ function linesOf(s){ return String(s||'').split('\n').map(x=>x.trim()).filter(Bo
 /* ============================ Brand Table storage (shared with PPC Analyzer via localStorage) ============================ */
 const BT_KEY='ppc_brandtable_v1';
 let BT={current:'',accounts:{}};   // accounts[name] = {products:[{brand,niche,name,asin,portfolioId,skus[]}], portfolios:[{name,id}]}
-function acctObj(name){ let a=BT.accounts[name]; if(a==null){ a=BT.accounts[name]={products:[],portfolios:[]}; } if(Array.isArray(a)){ a=BT.accounts[name]={products:a,portfolios:[]}; } if(!a.products)a.products=[]; if(!a.portfolios)a.portfolios=[]; return a; }
+function acctObj(name){ let a=BT.accounts[name]; if(a==null){ a=BT.accounts[name]={products:[],portfolios:[]}; } if(Array.isArray(a)){ a=BT.accounts[name]={products:a,portfolios:[]}; } if(!a.products)a.products=[]; if(!a.portfolios)a.portfolios=[]; if(!a.skuSales)a.skuSales={}; return a; }
 function btLoad(){ /* intentionally no-op: Brand Table is no longer loaded from localStorage — upload a fresh bulk each session instead */ }
 function btSave(){ /* intentionally no-op: Brand Table is session-only now, never persisted to localStorage */ }
 function btAccountOptions(sel){ const names=Object.keys(BT.accounts); return `<option value="">— none —</option>`+names.map(n=>`<option ${sel===n?'selected':''}>${esc(n)}</option>`).join(''); }
@@ -240,13 +240,14 @@ function extractBrandDataFromBulk(wb){
     const cSku=headers.find(h=>normH(h)==='sku');
     const cAsin=headers.find(h=>normH(h).indexOf('asin')!==-1);
     const cState=headers.find(h=>normH(h)==='state');
+    const cSales=headers.find(h=>normH(h)==='sales');
     json.forEach(row=>{
       const ent=String(row[cEntity]||'').trim().toLowerCase();
       const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':/display/i.test(row[cProduct])?'SD':'SP') : (/brand/i.test(sn)?'SB':/display/i.test(sn)?'SD':'SP');
       const campaignId=String(cCampId?row[cCampId]:'').trim();
       const state=String(cState?row[cState]:'').trim().toLowerCase();
       if(ent==='campaign') campaigns.push({campaignId, portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod, state});
-      else if(ent==='product ad') productAds.push({campaignId, asin:String(cAsin?row[cAsin]:'').trim(), sku:String(cSku?row[cSku]:'').trim(), state});
+      else if(ent==='product ad') productAds.push({campaignId, asin:String(cAsin?row[cAsin]:'').trim(), sku:String(cSku?row[cSku]:'').trim(), state, sales:cSales?(+row[cSales]||0):0});
     });
   });
   // Only campaigns actually running (State=enabled) count for portfolio mapping / product extraction —
@@ -257,14 +258,18 @@ function extractBrandDataFromBulk(wb){
   campaigns.forEach(c=>{ if(!c.portfolioId || !campEnabled[c.campaignId]) return; if(!pfMap.has(c.portfolioId) || (!pfMap.get(c.portfolioId) && c.portfolioName)) pfMap.set(c.portfolioId, c.portfolioName); });
   const portfolios=[...pfMap.entries()].map(([id,name])=>({id,name}));
   const byKey=new Map();
+  // Summed per SKU (not per ASIN) — when several SKUs are variations under the same ASIN being A/B tested,
+  // this is what lets a later "top N by sales" pick keep the actual winning variation(s), not just the parent.
+  const skuSales={};
   productAds.forEach(a=>{
     if(a.state!=='enabled' || !campEnabled[a.campaignId]) return;
     const key=(a.asin||a.sku||'').toLowerCase(); if(!key) return;
     if(!byKey.has(key)) byKey.set(key,{asin:a.asin,skus:new Set(),portfolioId:campToPortfolio[a.campaignId]||''});
     const e=byKey.get(key); if(a.sku) e.skus.add(a.sku); if(!e.asin && a.asin) e.asin=a.asin; if(!e.portfolioId && campToPortfolio[a.campaignId]) e.portfolioId=campToPortfolio[a.campaignId];
+    if(a.sku) skuSales[a.sku]=(skuSales[a.sku]||0)+(a.sales||0);
   });
   const products=[...byKey.values()].map(e=>({brand:'',niche:'',name:'',asin:e.asin,portfolioId:e.portfolioId,skus:[...e.skus]}));
-  return {products, portfolios};
+  return {products, portfolios, skuSales};
 }
 // Copying an existing campaign's naming verbatim would also copy its stale month/year (e.g. IAN26 from January).
 // Find a month-abbreviation+2-digit-year token (English or Romanian) and swap it for the current month.
@@ -415,7 +420,7 @@ function renderBrandTable(){
     const i=+inp.dataset.pi, f=inp.dataset.pf, p=A.portfolios[i]; if(!p) return; p[f]=inp.value.trim(); btSave();
   });
 }
-function mergeImportedIntoAccount(acc, prods, portfoliosIn){
+function mergeImportedIntoAccount(acc, prods, portfoliosIn, skuSalesIn){
   const A=acctObj(acc);
   if(A.products.length){
     const rep=confirm(`"${acc}" already has ${A.products.length} product(s).\n\nOK = REPLACE with ${prods.length} imported\nCancel = APPEND the ${prods.length} imported`);
@@ -424,6 +429,9 @@ function mergeImportedIntoAccount(acc, prods, portfoliosIn){
   const have=new Set(A.portfolios.map(p=>String(p.id)));
   (portfoliosIn||[]).forEach(pf=>{ if(pf.id && !have.has(String(pf.id))){ have.add(String(pf.id)); A.portfolios.push({name:pf.name||'',id:String(pf.id)}); } });
   A.products.forEach(p=>{ const id=String(p.portfolioId||'').trim(); if(id && !have.has(id)){ have.add(id); A.portfolios.push({name:'',id}); } });
+  // Session-only (never persisted) — same reasoning as the rest of the Brand Table: a fresh bulk should be
+  // uploaded each time rather than trusting stale sales numbers from a previous session.
+  if(skuSalesIn) A.skuSales=Object.assign({}, A.skuSales, skuSalesIn);
   btSave(); renderBrandTable();
   return A;
 }
@@ -473,7 +481,7 @@ function importBrandTable(file){
         if(!bd.products.length && !bd.portfolios.length){ alert('This looks like a Bulk Operations file, but no Product ad / Campaign rows with ASIN, SKU or Portfolio data were found in it.'); return; }
         let acc=BT.current;
         if(!acc){ acc=(prompt('Import into which account? (name):', file.name.replace(/\.[^.]+$/,''))||'').trim()||'Imported'; BT.current=acc; }
-        const A=mergeImportedIntoAccount(acc, bd.products, bd.portfolios);
+        const A=mergeImportedIntoAccount(acc, bd.products, bd.portfolios, bd.skuSales);
         parseReferenceBulk(wb); // bonus: same file also sets up naming detection for this session
         alert(`Imported from your Bulk Operations file: ${bd.products.length} product(s), ${bd.portfolios.length} portfolio(s) into "${acc}". Naming detection is also set up from this file (${REF.campaigns.length} campaign(s)).`);
         return;
@@ -488,7 +496,7 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; if(cfg.type==='sd') return ['SDPT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){
@@ -538,6 +546,15 @@ function recomputeSkusFromChildren(cfg){
   const children=getPortfolioChildren(cfg.btAccount, cfg.portfolioId);
   const skus=[];
   children.forEach(c=>{ if(cfg.childSel[c.idx]!==false){ (c.p.skus||[]).forEach(s=>{ if(s && !skus.includes(s)) skus.push(s); }); } });
+  const topN=+cfg.topSkus||0;
+  if(topN>0 && topN<skus.length){
+    // Same "keep the winning variation(s)" logic as the Keyword Checker's launch panel — ranks by Sales
+    // pulled from the reference bulk you uploaded (Import in the Brand Table tab), summed per SKU.
+    const A = cfg.btAccount && BT.accounts[cfg.btAccount] ? acctObj(cfg.btAccount) : null;
+    const sales = A? (A.skuSales||{}) : {};
+    skus.sort((a,b)=>(sales[b]||0)-(sales[a]||0));
+    skus.length=topN;
+  }
   cfg.skus=skus.join('\n');
 }
 function buildCampaignRows(cfg){
@@ -634,6 +651,10 @@ function renderCampaignCreate(){
       ${children.length? `<div style="margin-bottom:14px;">
         <label style="font-size:11px;color:var(--muted2);font-weight:500;">Products in this portfolio — uncheck any you don't want advertised</label>
         <div class="flist" id="cc-children">${childrenHtml}</div>
+        <div class="ctrls" style="margin-top:8px;">
+          <div class="field"><label>Top SKUs by sales (0 = all)</label><input type="number" id="cc-topskus" min="0" value="${esc(cfg.topSkus)}" style="width:110px;"></div>
+          <div class="field grow" style="align-self:center;"><div class="hint">Ranks by Sales from your last imported bulk (Brand Table → Import) and keeps only the top performer(s) per checked product — useful when testing several SKU variations and narrowing down to the winner(s).</div></div>
+        </div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
       <div class="ctrls" id="cc-matches" style="${cfg.type==='auto'?'display:none;':''}">
         <div class="field" id="cc-matchtypes-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'display:none;':''}"><label>Match types (one campaign each)</label>
@@ -732,6 +753,12 @@ function renderCampaignCreate(){
     $('#cc-skus').value=cfg.skus;
     updateBuilderOutputs();
   });
+  const topSkusEl=$('#cc-topskus'); if(topSkusEl) topSkusEl.oninput=debounce(()=>{
+    cfg.topSkus=+topSkusEl.value||0;
+    recomputeSkusFromChildren(cfg);
+    $('#cc-skus').value=cfg.skus;
+    updateBuilderOutputs();
+  },300);
   $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
   $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
@@ -781,7 +808,7 @@ function updateBuilderOutputs(){
 
 /* ============================ SINGLE KW CAMPAIGNS ============================ */
 let SKW=null;
-function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',separator:'_',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{}}; } return SKW; }
+function ensureSkwInit(){ if(!SKW){ SKW={prefix:'SUP',matchType:'EXACT',tip:'BRND',brand:'',asin:'',agent:'',monthyear:currentMonthYear(),agency:'Insiders®',separator:'_',budget:'10',bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',portfolioId:'',skus:'',keywords:'',btAccount:'',childSel:{},topSkus:2}; } return SKW; }
 // Keeps the keyword's own spaces (instead of joining its words with "_") so it reads naturally in the
 // campaign name — only the segment separators around it (prefix/match/suffix) stay "_"-joined.
 function slugifyKeyword(kw){ return String(kw||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim().slice(0,40)||'keyword'; }
@@ -870,6 +897,10 @@ function renderSingleKw(){
       ${children.length? `<div style="margin-bottom:14px;">
         <label style="font-size:11px;color:var(--muted2);font-weight:500;">Products in this portfolio — uncheck any you don't want advertised</label>
         <div class="flist" id="skw-children">${childrenHtml}</div>
+        <div class="ctrls" style="margin-top:8px;">
+          <div class="field"><label>Top SKUs by sales (0 = all)</label><input type="number" id="skw-topskus" min="0" value="${esc(cfg.topSkus)}" style="width:110px;"></div>
+          <div class="field grow" style="align-self:center;"><div class="hint">Ranks by Sales from your last imported bulk (Brand Table → Import) and keeps only the top performer(s) per checked product.</div></div>
+        </div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
       <div class="banner" id="skw-naming-banner" style="margin:4px 0 12px;">${skwNamingBannerHtml(cfg)}</div>
       <div class="ctrls">
@@ -938,6 +969,12 @@ function renderSingleKw(){
     $('#skw-skus').value=cfg.skus;
     updateSkwOutputs();
   });
+  const skwTopSkusEl=$('#skw-topskus'); if(skwTopSkusEl) skwTopSkusEl.oninput=debounce(()=>{
+    cfg.topSkus=+skwTopSkusEl.value||0;
+    recomputeSkusFromChildren(cfg);
+    $('#skw-skus').value=cfg.skus;
+    updateSkwOutputs();
+  },300);
   $('#skw-export').onclick=exportSkwCampaigns;
   updateSkwOutputs();
 }
