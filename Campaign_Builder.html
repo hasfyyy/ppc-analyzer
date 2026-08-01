@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-01 00:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-01 19:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -290,7 +290,12 @@ function detectNamingTemplate(portfolioName, matchType, product, prefix){
   const mt=String(matchType||'').toUpperCase();
   const prod=product||'SP';
   const pfx=String(prefix||'BSQ');
-  const re=new RegExp('^'+pfx+'_'+mt+'(?:_(\\d+))?_(.*)$','i');
+  // Optional underscore before the number handles both conventions: existing real campaigns in the account
+  // typically use "BROAD_1_" (underscore-number-underscore), while newly generated names here now use
+  // "BROAD1_" (no separator) — this must still recognize the account's OWN existing numbering either way,
+  // or every tool that continues numbering from the highest existing campaign would silently restart at 1
+  // and create duplicate-looking names.
+  const re=new RegExp('^'+pfx+'_'+mt+'_?(\\d+)?_(.*)$','i');
   let best=null;
   REF.campaigns.forEach(c=>{
     if(c.product!==prod) return;
@@ -503,7 +508,9 @@ function manualName(cfg,match,num){
   // Product Targeting (SP or SD) campaigns use "PREFIX 1", "PREFIX 2" (prefix + space + number, no duplicate
   // match segment) instead of the usual "PREFIX_MATCH_NUM" pattern.
   const first = (cfg.type==='pt'||cfg.type==='sd')? (num!=null? `${cfg.prefix} ${num}` : String(cfg.prefix)) : null;
-  const parts = first!=null? [first] : (()=>{ const p=[cfg.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
+  // Number goes directly onto the match segment (BROAD1, PHRASE2) — not as its own underscore-separated
+  // token (BROAD_1) — matching the account's own naming convention.
+  const parts = first!=null? [first] : [cfg.prefix, num!=null? `${match}${num}` : match];
   parts.push(cfg.tip,cfg.brand,cfg.asin,cfg.agent,cfg.monthyear,cfg.agency);
   return parts.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(cfg.separator||'_');
 }
@@ -523,7 +530,7 @@ function buildName(cfg,match,num){
   if(tmpl){
     const suffix=refreshDateToken(tmpl.suffix);
     const first = (cfg.type==='pt'||cfg.type==='sd')? (num!=null? `${tmpl.prefix} ${num}` : String(tmpl.prefix)) : null;
-    const parts = first!=null? [first] : (()=>{ const p=[tmpl.prefix,match]; if(num!=null) p.push(String(num)); return p; })();
+    const parts = first!=null? [first] : [tmpl.prefix, num!=null? `${match}${num}` : match];
     parts.push(suffix);
     return parts.filter(x=>x!=='').join(cfg.separator||'_');
   }
