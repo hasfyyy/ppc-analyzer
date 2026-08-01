@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 00:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 19:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2656,7 +2656,10 @@ function detectNamingTemplate(portfolioName, matchType, product, prefix){
   const mt=String(matchType||'').toUpperCase();
   const prod=product||'SP';
   const pfx=String(prefix||'BSQ');
-  const re=new RegExp('^'+pfx+'_'+mt+'(?:_(\\d+))?_(.*)$','i');
+  // Optional underscore before the number handles both conventions: existing real campaigns typically use
+  // "BROAD_1_" while newly generated Campaign Builder names now use "BROAD1_" (no separator) — must recognize
+  // the account's existing numbering either way, or numbering would silently restart at 1.
+  const re=new RegExp('^'+pfx+'_'+mt+'_?(\\d+)?_(.*)$','i');
   let best=null;
   DATA.campaigns.forEach(c=>{
     if(c.product!==prod) return; // don't let an SB (SBV_...) campaign match while building SP naming, or vice versa
