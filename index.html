@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 12:55</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 13:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2049,9 +2049,12 @@ function decreaseTierFor(acos, st){
 // (or stuck at the 0% floor, unfixable at the placement level) → the full tiered cut still applies.
 function scaleDecByPlacementCoverage(decPct, placements){
   if(decPct==null) return null;
-  const hasFloorBad = placements.some(p=>p.action==='floor-bad');
+  // ineffectiveFloor is a decrease in name only — it landed at 0% but the shared base bid alone already
+  // clears that placement's real cost, so nothing actually changes there. Treated exactly like floor-bad:
+  // doesn't count as "handled", and forces the full base-bid cut since that's genuinely the only lever left.
+  const hasFloorBad = placements.some(p=>p.action==='floor-bad' || p.ineffectiveFloor);
   if(hasFloorBad) return decPct;
-  const decreasedSpend = placements.filter(p=>p.action==='decrease').reduce((s,p)=>s+p.spend,0);
+  const decreasedSpend = placements.filter(p=>p.action==='decrease' && !p.ineffectiveFloor).reduce((s,p)=>s+p.spend,0);
   const totalSpend = placements.reduce((s,p)=>s+p.spend,0);
   const coverage = totalSpend>0 ? Math.min(1, decreasedSpend/totalSpend) : 0;
   const scaled = +(decPct*(1-coverage)).toFixed(1);
@@ -2220,7 +2223,7 @@ function renderOptBids(){
     {key:'placementChanges',label:'Placement (this campaign)',l:true,noSort:true,cell:r=>{
       if(r.placementChanges===null) return '<span class="muted">multi-kw — see below</span>';
       if(!r.placementChanges.length) return '<span class="muted">no change suggested</span>';
-      return r.placementChanges.map(p=>`${esc(p.placementName)} ${p.action==='decrease'?'↓':'↑'} ${p.percentage}%→${p.newPct}%`).join(', ');
+      return r.placementChanges.map(p=>`${esc(p.placementName)} ${p.action==='decrease'?'↓':'↑'} ${p.percentage}%→${p.newPct}%${p.ineffectiveFloor?' <span class="muted" title="Base bid alone still clears this placement\'s CPC — won\'t stop spend by itself.">(won\'t stop spend alone)</span>':''}`).join(', ');
     }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
@@ -2382,6 +2385,13 @@ function computePlacementOptRows(product, filters){
   // keeps the 1:1 correlation the logic actually needs — multi-keyword campaigns still get bid-only fixes
   // from the Bid Optimizer, and DEcreasing an overspending placement stays safe everywhere either way.
   const singleKw=singleKwCampaigns(product);
+  // Needed up front (not just in the compensation pass below) — a placement can hit its 0% floor THIS round
+  // and still keep winning auctions at the SAME cost, if the shared base bid alone already clears what that
+  // placement actually costs. Cutting % to 0% only removes the boost on top of the base bid; it can't drop
+  // the effective bid below the base bid itself, so it does nothing further once the base bid is already the
+  // real floor for that placement's cost.
+  const singleTargetByCamp=new Map();
+  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && !singleTargetByCamp.has(t.campaignId)) singleTargetByCamp.set(t.campaignId, t); });
   let rowsRaw=DATA.placements.filter(p=>p.product===product && enabledCamps.has(p.campaignId));
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
@@ -2401,8 +2411,17 @@ function computePlacementOptRows(product, filters){
     // even though there's no ACoS to compute (division by zero sales).
     const decPct = (e.clicks>=st.minClicks && e.orders>=1) ? decreaseTierFor(d.acos, st) : (e.orders===0 ? zeroOrderDecreaseTierFor(e.clicks, st) : null);
     const badPerf = decPct!=null;
+    let ineffectiveFloor=false;
     if(badPerf && e.percentage>0){
       action='decrease'; newPct=Math.max(0, e.percentage-decPct);
+      // Landing at 0% doesn't mean the spend actually stops — 0% just means "no boost", the shared base bid
+      // is still the effective bid there. If that base bid alone already clears this placement's own real
+      // cost (CPC), the cut changed the number on screen but won't meaningfully change what gets spent; the
+      // ONLY lever left is the base bid itself, so this doesn't count as "handled" for the coverage check below.
+      if(isSingle && newPct<=0){
+        const target=singleTargetByCamp.get(e.campaignId);
+        if(target && d.cpc>0 && target.bid>=d.cpc) ineffectiveFloor=true;
+      }
     } else if(badPerf){
       // Already at the 0% floor — there's no percentage left to cut, so this placement's bad performance
       // can't be fixed here at all. Flagged as 'floor-bad' (not 'decrease') so the Bid Optimizer knows NOT
@@ -2418,7 +2437,7 @@ function computePlacementOptRows(product, filters){
     } else if(isSingle && e.clicks>=st.minClicks && e.orders>=1 && d.acos<st.lowAcos){
       action='increase'; newPct=Math.min(900, e.percentage+st.incStep);
     }
-    return Object.assign({action,newPct,isSingle},e,d);
+    return Object.assign({action,newPct,isSingle,ineffectiveFloor},e,d);
   });
   // Compensation pass: a floor-bad placement (0%, bad performance) can't be fixed here, so the Bid Optimizer
   // will cut the shared bid instead. That bid cut also drags down every OTHER placement's effective bid
@@ -2437,11 +2456,9 @@ function computePlacementOptRows(product, filters){
   if(bst.zeroHi3===undefined) bst.zeroHi3=10; if(bst.zeroDec3===undefined) bst.zeroDec3=30;
   const byCampAll={};
   allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
-  // Indexed once, not re-scanned per campaign — on a large account (tens of thousands of targets), doing a
-  // DATA.targets.find() inside this per-campaign loop is O(campaigns × targets) and is exactly what made the
-  // tab lock up the tab/browser on bigger accounts.
-  const singleTargetByCamp=new Map();
-  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && !singleTargetByCamp.has(t.campaignId)) singleTargetByCamp.set(t.campaignId, t); });
+  // singleTargetByCamp built up front now (needed by the ineffective-floor check above too) — indexed once,
+  // not re-scanned per campaign, since a DATA.targets.find() inside this per-campaign loop is O(campaigns ×
+  // targets) and is exactly what made the tab lock up the tab/browser on bigger accounts.
   Object.keys(byCampAll).forEach(cid=>{
     const plc=byCampAll[cid];
     const target=singleTargetByCamp.get(cid);
@@ -2484,6 +2501,7 @@ function renderOptPlacements(){
   const sel=selFor('optplace');
   const totals=agg(rows);
   const actionBadgePl=r=>{
+    if(r.action==='decrease' && r.ineffectiveFloor) return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Hits the 0% floor, but the shared base bid alone already clears this placement's own CPC (${fMoney(r.cpc)}) — spend here won't actually drop until the base bid itself gets cut too.">↓ -${(r.percentage-r.newPct).toFixed(1)}pp (won't stop spend alone)</span>`;
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${(r.percentage-r.newPct).toFixed(1)}pp</span>`;
     // Compensation can push a 'push'/'increase' row's newPct further than its own base step, so the badge
     // always shows the REAL delta actually being applied, not just the rule's nominal step size.
