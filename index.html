@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 12:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 12:55</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1322,18 +1322,24 @@ function exportCampaignsPause(product,rows){
 /* ============================ HARVESTING ============================ */
 function renderHarvesting(){
   const st=stFor('harvesting'); if(st.acos===undefined)st.acos=30; if(st.minConv===undefined)st.minConv=2;
-  if(st.hvIncludeAsin===undefined) st.hvIncludeAsin=false;
+  if(st.hvAsinMode===undefined) st.hvAsinMode='exclude';
   const src=stByToggle();
   // ASIN-shaped search terms come from Auto/PT campaigns matching a specific product, not a real customer
   // query — excluded by default since they're not launchable as a keyword, but a good-converting one is a
-  // real Product Targeting opportunity, so the checkbox below lets them back in instead of throwing them away.
+  // real Product Targeting opportunity, so the Type filter below can bring them back (mixed in, or ASINs only).
   let rows=src.map(s=>{ const d=derive(agg([s])); return Object.assign({},s,d); })
-    .filter(r=>r.orders>=st.minConv && (r.acos!==Infinity && r.acos<=st.acos) && (st.hvIncludeAsin || !ASIN_RE.test(r.searchTerm.trim())));
+    .filter(r=>{
+      if(r.orders<st.minConv || r.acos===Infinity || r.acos>st.acos) return false;
+      const isAsin=ASIN_RE.test(r.searchTerm.trim());
+      if(st.hvAsinMode==='exclude') return !isAsin;
+      if(st.hvAsinMode==='only') return isAsin;
+      return true;
+    });
   // aggregate identical search terms across ad groups
   const byTerm=new Map();
   rows.forEach(r=>{ const k=r.searchTerm.toLowerCase(); if(!byTerm.has(k)) byTerm.set(k,{searchTerm:r.searchTerm,portfolioName:r.portfolioName,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0}); const e=byTerm.get(k); e.impressions+=r.impressions;e.clicks+=r.clicks;e.spend+=r.spend;e.sales+=r.sales;e.orders+=r.orders; });
   let opps=[...byTerm.values()].map(e=>{ const term=e.searchTerm.toLowerCase(); return Object.assign(e,derive(e),{
-    exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term), targetedP:false, isAsin:ASIN_RE.test(e.searchTerm.trim()) }); });
+    exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term), pt:SETS.product.has(term), targetedP:false, isAsin:ASIN_RE.test(e.searchTerm.trim()) }); });
   if(st.port) opps=opps.filter(o=>(o.portfolioName||'(No Portfolio)')===st.port);
   if(st.term) opps=opps.filter(o=>o.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
   if(st.camp) opps=opps.filter(o=>(o.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
@@ -1342,7 +1348,7 @@ function renderHarvesting(){
     if(excl.length) opps=opps.filter(o=>!excl.some(x=>o.searchTerm.toLowerCase().includes(x)));
   }
   const statusF=(o,key,val)=>{ if(!val||val==='all')return true; const has=o[key]; return val==='targeted'?has:val==='not'? !has:true; };
-  opps=opps.filter(o=>statusF(o,'exact',st.exStat)&&statusF(o,'phrase',st.phStat)&&statusF(o,'broad',st.brStat));
+  opps=opps.filter(o=>statusF(o,'exact',st.exStat)&&statusF(o,'phrase',st.phStat)&&statusF(o,'broad',st.brStat)&&statusF(o,'pt',st.ptStat));
   // Stable identity — the lowercased search term is already the aggregation key above, so it's unique and
   // consistent across renders (unlike a positional index, which shifts whenever the filters change the set).
   opps.forEach(o=>o._uid=o.searchTerm.toLowerCase());
@@ -1366,6 +1372,7 @@ function renderHarvesting(){
     {key:'exact',label:'Exact',l:true,noSort:true,cell:r=>badge(r.exact)},
     {key:'phrase',label:'Phrase',l:true,noSort:true,cell:r=>badge(r.phrase)},
     {key:'broad',label:'Broad',l:true,noSort:true,cell:r=>badge(r.broad)},
+    {key:'pt',label:'Product Targeting',l:true,noSort:true,cell:r=>r.isAsin?badge(r.pt):'<span class="muted">—</span>'},
   ];
   const tbl=buildTable({columns:cols,rows:opps,tab:'harvesting',totals,sortDef:{key:'orders',dir:-1},onChange:renderHarvesting});
   $('#app').innerHTML=`
@@ -1380,14 +1387,17 @@ function renderHarvesting(){
         <div class="field"><label>Exact Status</label><select id="hv-ex">${statOpts(st.exStat)}</select></div>
         <div class="field"><label>Phrase Status</label><select id="hv-ph">${statOpts(st.phStat)}</select></div>
         <div class="field"><label>Broad Status</label><select id="hv-br">${statOpts(st.brStat)}</select></div>
+        <div class="field"><label>Product Targeting Status</label><select id="hv-pt">${statOpts(st.ptStat)}</select></div>
+        <div class="field"><label>ASINs</label><select id="hv-asinmode">
+          <option value="exclude" ${st.hvAsinMode==='exclude'?'selected':''}>Exclude (keywords only)</option>
+          <option value="all" ${st.hvAsinMode==='all'?'selected':''}>Include (mixed with keywords)</option>
+          <option value="only" ${st.hvAsinMode==='only'?'selected':''}>ASINs only</option>
+        </select></div>
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <div class="field grow"><label>Exclude words (comma-separated, e.g. brand name)</label><input type="text" id="hv-exclude" placeholder="e.g. lunakai, insiders" value="${esc(st.hvExclude||'')}"></div>
       </div>
-      <div class="ctrls" style="margin-top:8px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-includeasin" ${st.hvIncludeAsin?'checked':''}> Include ASINs (product targeting opportunities)</label>
-        <div class="hint" style="align-self:center;">A converting ASIN in the search term report means an Auto/PT campaign matched that specific product well — worth its own Product Targeting campaign, same as a converting keyword. Off by default since an ASIN can't be launched as a keyword.</div>
-      </div>
+      <div class="hint" style="margin-top:6px;">A converting ASIN in the search term report means an Auto/PT campaign matched that specific product well — worth its own Product Targeting campaign, same as a converting keyword. Excluded by default since an ASIN can't be launched as a keyword.</div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
       ${kpi('Opportunities',fInt(opps.length),'green')}${kpi('Total Orders',fInt(tot.orders))}${kpi('Revenue Potential',fMoney(tot.sales),'green')}
@@ -1450,8 +1460,9 @@ function renderHarvesting(){
   $('#hv-ex').onchange=e=>{st.exStat=e.target.value; renderHarvesting();};
   $('#hv-ph').onchange=e=>{st.phStat=e.target.value; renderHarvesting();};
   $('#hv-br').onchange=e=>{st.brStat=e.target.value; renderHarvesting();};
+  $('#hv-pt').onchange=e=>{st.ptStat=e.target.value; renderHarvesting();};
   $('#hv-exclude').oninput=debounce(()=>{st.hvExclude=$('#hv-exclude').value; renderHarvesting();},250);
-  $('#hv-includeasin').onchange=e=>{st.hvIncludeAsin=e.target.checked; renderHarvesting();};
+  $('#hv-asinmode').onchange=e=>{st.hvAsinMode=e.target.value; renderHarvesting();};
   $('#hv-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='sel'),opps,'harvesting');
   $('#hv-selall').onclick=()=>{
     const allSel = opps.length && opps.every(r=>sel.has(r._uid));
@@ -2734,7 +2745,7 @@ function renderLaunchPanel(st, selOpps){
   const numCampaigns=Math.max(1,Math.min(+st.launchCount||1, selOpps.length));
   if(st.launchIgnoreNaming===undefined) st.launchIgnoreNaming=false;
   if(st.launchManualSuffix===undefined) st.launchManualSuffix='';
-  if(st.launchNegateOwn===undefined) st.launchNegateOwn=true;
+  if(st.launchNegateOwn===undefined) st.launchNegateOwn=false;
   const template=st.launchIgnoreNaming? null : detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix);
   const nextNum=template?template.num+1:1;
   const suffix=template?refreshDateToken(template.suffix):st.launchManualSuffix;
