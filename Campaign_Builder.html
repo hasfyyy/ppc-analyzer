@@ -111,7 +111,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-10 09:37</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-10 12:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -501,7 +501,7 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2,negateOwn:true}; } return CFG; }
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; if(cfg.type==='sd') return ['SDPT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){
@@ -604,7 +604,15 @@ function buildCampaignRows(cfg){
         AUTO_GROUPS.forEach(g=>{ if(cfg[g.key]) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':g.expr})); });
       } else if(cfg.type==='pt'){
         grp.forEach(asin=>{ const a=String(asin).trim().toUpperCase(); if(!a) return; const expr=cfg.ptExpanded?`asin-expanded="${a}"`:`asin="${a}"`; out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':expr})); });
-      } else grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase(),'Bid':cfg.bid})));
+      } else {
+        grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase(),'Bid':cfg.bid})));
+        // Phrase/Broad only: negate the same keywords, scoped to this new ad group, so the campaign spends
+        // its impressions discovering OTHER queries instead of re-matching the exact terms it was launched
+        // around — those stay covered wherever they're already targeted (e.g. an Exact campaign elsewhere).
+        if(cfg.negateOwn && match!=='EXACT'){
+          grp.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Negative keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':'Negative Exact'})));
+        }
+      }
     });
   });
   return out;
@@ -713,6 +721,10 @@ function renderCampaignCreate(){
         <div class="field grow" id="cc-kw-field" style="${cfg.type==='manual'?'':'display:none;'}"><label>Keywords (one per line)</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="blue widget&#10;widget for desk">${esc(cfg.keywords)}</textarea></div>
         <div class="field grow" id="cc-pt-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'':'display:none;'}"><label>${cfg.type==='sd'?'Competitor ASINs to target (one per line)':'ASINs to target (one per line)'}</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
       </div>
+      ${cfg.type==='manual' && (cfg.m_phrase||cfg.m_broad)? `<div class="ctrls" style="margin-top:10px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-negateown" ${cfg.negateOwn?'checked':''}> Add these same keywords as Negative Exact in the Phrase/Broad campaign(s)</label>
+        <div class="hint" style="align-self:center;">So Phrase/Broad discovers OTHER queries instead of re-matching the exact terms you're already launching — Exact campaigns from this same batch are never negated.</div>
+      </div>` : ''}
     </div>
     <div class="card pad">
       <h3 class="sectitle">Campaign Name Preview</h3>
@@ -771,8 +783,11 @@ function renderCampaignCreate(){
     updateBuilderOutputs();
   },300);
   $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
-  $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; updateBuilderOutputs(); };
-  $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; updateBuilderOutputs(); };
+  // Phrase/Broad, unlike Exact, re-render the whole card — checking either toggles the "negate own
+  // keywords" checkbox's visibility, which only exists in the full render, not the lightweight preview patch.
+  $('#cc-m-phrase').onchange=e=>{ cfg.m_phrase=e.target.checked; renderCampaignCreate(); };
+  $('#cc-m-broad').onchange=e=>{ cfg.m_broad=e.target.checked; renderCampaignCreate(); };
+  const negateEl=$('#cc-negateown'); if(negateEl) negateEl.onchange=e=>{ cfg.negateOwn=e.target.checked; updateBuilderOutputs(); };
   document.querySelectorAll('.cc-auto-g').forEach(cb=>cb.onchange=()=>{ cfg[cb.dataset.g]=cb.checked; updateBuilderOutputs(); });
   const ignoreEl=$('#cc-ignore-naming'); if(ignoreEl) ignoreEl.onchange=()=>{ cfg.ignoreNaming=ignoreEl.checked; renderCampaignCreate(); };
   $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{
