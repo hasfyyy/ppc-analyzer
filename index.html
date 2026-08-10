@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 13:28</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 14:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2089,7 +2089,10 @@ function zeroOrderDecreaseTierFor(clicks, st){
 // stays at the baseline bar. Branded gets the strictest bar — there's no real competition to win there, so
 // there's no upside to pushing bids, only downside.
 function bidCategoryFor(t, brandTermsArr){
-  const hay=((t.campaignName||'')+' '+(t.portfolioName||'')).toLowerCase();
+  // Checked against the campaign/portfolio name AND the targeting text itself — a keyword like "visse visual
+  // timer" is branded even sitting in a generic-named campaign, since the brand term is right there in what's
+  // actually being targeted.
+  const hay=((t.campaignName||'')+' '+(t.portfolioName||'')+' '+(t.text||'')).toLowerCase();
   if(brandTermsArr.length ? brandTermsArr.some(term=>term && hay.includes(term)) : /brand/.test(hay)) return 'branded';
   if(t.kind==='keyword' && t.matchType==='exact') return 'exact';
   return 'discovery';
@@ -2230,12 +2233,12 @@ function renderOptBids(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Bid rules</h3>
-      <div class="hint" style="margin-bottom:8px;">ACoS allowance by category — shifts the ACoS fed into the tiers below, so the SAME tiers end up stricter or looser depending on what's being targeted. Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A campaign/portfolio name is Branded if it contains one of the terms below (or the word "brand" if left empty).</div>
+      <div class="hint" style="margin-bottom:8px;">ACoS allowance by category — shifts the ACoS fed into the tiers below, so the SAME tiers end up stricter or looser depending on what's being targeted. Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A target is Branded if the campaign name, the portfolio name, OR the keyword/targeting text itself contains one of the terms below (or the word "brand" if left empty) — e.g. term "visse" catches a keyword like "visse visual timer" even inside a generically-named campaign.</div>
       <div class="ctrls" style="margin-bottom:12px;">
         <div class="field"><label>Exact: ACoS allowance (pp)</label><input type="number" id="ob-catexact" value="${st.acosAdjExact}" style="width:90px;"></div>
         <div class="field"><label>Discovery: ACoS allowance (pp)</label><input type="number" id="ob-catdisc" value="${st.acosAdjDiscovery}" style="width:90px;"></div>
         <div class="field"><label>Branded: ACoS allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
-        <div class="field grow"><label>Brand terms (comma-separated, matched against campaign/portfolio name)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}"></div>
+        <div class="field grow"><label>Brand terms (comma-separated, matched against campaign name, portfolio name, AND the keyword/target text itself)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}"></div>
       </div>
       <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
       <div class="ctrls">
