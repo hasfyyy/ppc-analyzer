@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-01 19:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 09:37</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2059,6 +2059,20 @@ function zeroOrderDecreaseTierFor(clicks, st){
 // multi-keyword campaign: there's exactly one lever, so it's worth a placement-aware nudge. Multi-keyword
 // campaigns share their placements across many keywords — compensating one keyword's cut on a shared
 // placement made no sense there, so that cross-linked logic only applies here, to single-target campaigns.
+// Not every target should be graded against the same ACoS bar. Exact keywords earn their keep partly
+// through ranking/relevancy signal, not just direct ROI, so they can tolerate a higher ACoS before getting
+// cut. Discovery (Phrase/Broad/Auto/PT) is pure prospecting — no ranking benefit to justify overspend, so it
+// stays at the baseline bar. Branded gets the strictest bar — there's no real competition to win there, so
+// there's no upside to pushing bids, only downside.
+function bidCategoryFor(t, brandTermsArr){
+  const hay=((t.campaignName||'')+' '+(t.portfolioName||'')).toLowerCase();
+  if(brandTermsArr.length ? brandTermsArr.some(term=>term && hay.includes(term)) : /brand/.test(hay)) return 'branded';
+  if(t.kind==='keyword' && t.matchType==='exact') return 'exact';
+  return 'discovery';
+}
+function bidCategoryAdj(cat, st){
+  return cat==='exact'? st.acosAdjExact : cat==='branded'? st.acosAdjBranded : st.acosAdjDiscovery;
+}
 function singleKwCampaigns(product){
   const enabledCamps=optimizableCampaignIds(product);
   const counts={};
@@ -2083,6 +2097,14 @@ function renderOptBids(){
   if(st.zeroHi2===undefined) st.zeroHi2=6; if(st.zeroDec2===undefined) st.zeroDec2=20;
   if(st.zeroHi3===undefined) st.zeroHi3=10; if(st.zeroDec3===undefined) st.zeroDec3=30;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
+  // ACoS allowance per target category — shifts the ACoS fed into the tiers above, not a separate rule set.
+  // +15 for Exact means it takes 15pp more ACoS to trigger the same cut (and 15pp less to trigger the same
+  // bump) versus baseline; -15 for Branded means the opposite — the bar tightens instead of loosening.
+  if(st.acosAdjExact===undefined) st.acosAdjExact=15;
+  if(st.acosAdjDiscovery===undefined) st.acosAdjDiscovery=0;
+  if(st.acosAdjBranded===undefined) st.acosAdjBranded=-15;
+  if(st.brandTerms===undefined) st.brandTerms='';
+  const brandTermsArr=st.brandTerms.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
   const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=optimizableCampaignIds(S.product);
   // Single-keyword campaigns get their placement suggestions folded right into this same table — one bid
@@ -2098,9 +2120,12 @@ function renderOptBids(){
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
+    const category=bidCategoryFor(t, brandTermsArr);
+    const acosAdj=bidCategoryAdj(category, st);
+    const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
     let action='none', newBid=t.bid, pct=null, reason=null;
     if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
-      let decPct = t.orders>=1? decreaseTierFor(d.acos, st) : null;
+      let decPct = t.orders>=1? decreaseTierFor(effAcos, st) : null;
       // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
       // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
       // — a proportional scale-down instead of an all-or-nothing suppression, so a partially-fixed campaign
@@ -2111,7 +2136,7 @@ function renderOptBids(){
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc){
-        const incPct=increaseTierFor(d.acos, st);
+        const incPct=increaseTierFor(effAcos, st);
         if(incPct!=null){ action='increase'; pct=incPct; newBid=+(t.bid*(1+incPct/100)).toFixed(2); reason=`healthy ACoS (${fAcos(d.acos)})`; }
       }
     }
@@ -2135,7 +2160,7 @@ function renderOptBids(){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
     }
     if(action==='none') return null;
-    const row=Object.assign({action,pct,newBid,reason},t,d);
+    const row=Object.assign({action,pct,newBid,reason,category},t,d);
     // Only the real, exportable placement moves — a 'floor-bad' entry has no percentage change to show.
     row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad') : null;
     return row;
@@ -2161,6 +2186,7 @@ function renderOptBids(){
     {key:'text',label:'Target',l:true,type:'text'},
     {key:'kind',label:'Type',l:true,type:'text',cell:r=>r.kind==='keyword'?'Keyword':'Product'},
     {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(targetDetailLabel(r))},
+    {key:'category',label:'Category',l:true,type:'text',cell:r=>({exact:'Exact',discovery:'Discovery',branded:'Branded'})[r.category]||r.category},
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
     {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
@@ -2180,6 +2206,13 @@ function renderOptBids(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Bid rules</h3>
+      <div class="hint" style="margin-bottom:8px;">ACoS allowance by category — shifts the ACoS fed into the tiers below, so the SAME tiers end up stricter or looser depending on what's being targeted. Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A campaign/portfolio name is Branded if it contains one of the terms below (or the word "brand" if left empty).</div>
+      <div class="ctrls" style="margin-bottom:12px;">
+        <div class="field"><label>Exact: ACoS allowance (pp)</label><input type="number" id="ob-catexact" value="${st.acosAdjExact}" style="width:90px;"></div>
+        <div class="field"><label>Discovery: ACoS allowance (pp)</label><input type="number" id="ob-catdisc" value="${st.acosAdjDiscovery}" style="width:90px;"></div>
+        <div class="field"><label>Branded: ACoS allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
+        <div class="field grow"><label>Brand terms (comma-separated, matched against campaign/portfolio name)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}"></div>
+      </div>
       <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
@@ -2244,6 +2277,8 @@ function renderOptBids(){
   tbl.wire($('#ob-table'));
   const upd=()=>renderOptBids();
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
+  bind('ob-brandterms','brandTerms',v=>v);
   bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
   bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
