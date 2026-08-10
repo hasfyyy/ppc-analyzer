@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 14:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 18:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2746,6 +2746,21 @@ function detectNamingTemplate(portfolioName, matchType, product, prefix){
   });
   return best;
 }
+// Product Targeting has no match type, so its existing-campaign naming never has a "_EXACT_"-style segment —
+// mirrors Campaign Builder's own PT convention ("PREFIX 1_suffix", prefix + space + number, no extra segment).
+function detectPTNamingTemplate(portfolioName, product, prefix){
+  const prod=product||'SP';
+  const pfx=String(prefix||'BSQ');
+  const re=new RegExp('^'+pfx+'\\s*(\\d+)?_(.*)$','i');
+  let best=null;
+  DATA.campaigns.forEach(c=>{
+    if(c.product!==prod) return;
+    if(portfolioName && (c.portfolioName||'(No Portfolio)')!==portfolioName) return;
+    const m=(c.campaignName||'').match(re);
+    if(m){ const num=m[1]?parseInt(m[1],10):0; if(!best||num>=best.num) best={prefix:pfx,num,suffix:m[2],fullName:c.campaignName}; }
+  });
+  return best;
+}
 function splitIntoGroups(arr, n){
   n=Math.max(1,Math.min(Math.round(n)||1,arr.length));
   const groups=Array.from({length:n},()=>[]);
@@ -2767,32 +2782,39 @@ function renderLaunchPanel(st, selOpps){
   if(st.launchIgnoreNaming===undefined) st.launchIgnoreNaming=false;
   if(st.launchManualSuffix===undefined) st.launchManualSuffix='';
   if(st.launchNegateOwn===undefined) st.launchNegateOwn=false;
-  const template=st.launchIgnoreNaming? null : detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix);
+  // ASIN opportunities become Product Targeting, not keywords — no match type applies to them at all, so
+  // naming drops the "_EXACT_"-style segment entirely, matching Campaign Builder's own PT convention.
+  const allAsin=selOpps.every(o=>o.isAsin);
+  const template=st.launchIgnoreNaming? null : (allAsin
+    ? detectPTNamingTemplate(st.launchPortfolio, 'SP', st.launchPrefix)
+    : detectNamingTemplate(st.launchPortfolio, st.launchMatch, 'SP', st.launchPrefix));
   const nextNum=template?template.num+1:1;
   const suffix=template?refreshDateToken(template.suffix):st.launchManualSuffix;
+  const nameLabel=allAsin? '' : `_${esc(st.launchMatch)}`;
+  const fallbackLabel=allAsin? 'HARVEST_PAT' : `HARVEST_${esc(st.launchMatch)}`;
   return `
   <div class="ctrls">
     <div class="field grow"><label>Portfolio (naming copied from here)</label><select id="hv-lport">${portOptions(st.launchPortfolio)}</select></div>
     <div class="field"><label>Prefix (used only if no existing campaign found)</label><input type="text" id="hv-lprefix" value="${esc(st.launchPrefix)}" style="width:90px;"></div>
-    <div class="field"><label>Match Type</label><select id="hv-lmatch">${['EXACT','PHRASE','BROAD'].map(x=>`<option ${st.launchMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>
+    ${allAsin? `<div class="field"><label>Match Type</label><div class="hint" style="padding:8px 0;">Product Targeting — no match type</div></div>` : `<div class="field"><label>Match Type</label><select id="hv-lmatch">${['EXACT','PHRASE','BROAD'].map(x=>`<option ${st.launchMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>`}
     <div class="field"><label>Number of campaigns</label><input type="number" id="hv-lcount" min="1" max="${selOpps.length}" value="${numCampaigns}" style="width:90px;"></div>
     <div class="field"><label>Bid override ($, optional)</label><input type="number" id="hv-lbid" step="0.01" placeholder="auto (from CPC)" value="${esc(st.launchBid||'')}" style="width:130px;"></div>
   </div>
   <div class="ctrls" style="margin-top:8px;">
     <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-lignore" ${st.launchIgnoreNaming?'checked':''}> Ignore existing naming in this portfolio — type my own suffix</label>
-    ${st.launchIgnoreNaming? `<div class="field grow"><label>Custom suffix (appended after ${esc(st.launchPrefix)}_${esc(st.launchMatch)} ${nextNum}_)</label><input type="text" id="hv-lsuffix" value="${esc(st.launchManualSuffix)}" placeholder="e.g. MyBrand_B0XXXXXXX_Alex_JUL26_Insiders"></div>` : ''}
+    ${st.launchIgnoreNaming? `<div class="field grow"><label>Custom suffix (appended after ${esc(st.launchPrefix)}${nameLabel} ${nextNum}_)</label><input type="text" id="hv-lsuffix" value="${esc(st.launchManualSuffix)}" placeholder="e.g. MyBrand_B0XXXXXXX_Alex_JUL26_Insiders"></div>` : ''}
   </div>
-  ${st.launchMatch!=='EXACT'? `<div class="ctrls" style="margin-top:8px;">
+  ${(!allAsin && st.launchMatch!=='EXACT')? `<div class="ctrls" style="margin-top:8px;">
     <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-lnegate" ${st.launchNegateOwn?'checked':''}> Add these same terms as Negative Exact in the new campaign(s)</label>
     <div class="hint" style="align-self:center;">So this ${esc(st.launchMatch)} campaign discovers OTHER queries instead of re-matching the exact terms you already know convert — those stay covered by wherever they're targeted today.</div>
   </div>` : ''}
-  <div class="hint" style="margin-top:8px;">${selOpps.length} keyword(s) selected → split into ${numCampaigns} campaign(s) (${numCampaigns===1?'all keywords together':numCampaigns===selOpps.length?'1 keyword each':'~'+Math.ceil(selOpps.length/numCampaigns)+' keywords each'}).</div>
+  <div class="hint" style="margin-top:8px;">${selOpps.length} ${allAsin?'ASIN':'keyword'}(s) selected → split into ${numCampaigns} campaign(s) (${numCampaigns===1?'all together':numCampaigns===selOpps.length?'1 each':'~'+Math.ceil(selOpps.length/numCampaigns)+' each'}).</div>
   <div class="banner" style="margin-top:12px;">
     ${st.launchIgnoreNaming
-      ? `Ignoring existing naming — campaigns will be named <b>${esc(st.launchPrefix)}_${esc(st.launchMatch)} ${nextNum}_${esc(suffix)}</b> onward (your custom suffix, current month/year is not auto-inserted here — include it yourself if needed).`
+      ? `Ignoring existing naming — campaigns will be named <b>${esc(st.launchPrefix)}${nameLabel} ${nextNum}_${esc(suffix)}</b> onward (your custom suffix, current month/year is not auto-inserted here — include it yourself if needed).`
       : template
-      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}_${esc(st.launchMatch)} ${nextNum}_${esc(suffix)}</b> onward — month/year refreshed to the current one, no duplicates.`
-      : `No existing ${esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>HARVEST_${esc(st.launchMatch)} 1, 2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
+      ? `Found existing naming in this portfolio: <b>${esc(template.fullName)}</b> → next campaign(s) will be numbered from <b>${esc(template.prefix)}${nameLabel} ${nextNum}_${esc(suffix)}</b> onward — month/year refreshed to the current one, no duplicates.`
+      : `No existing ${allAsin?'Product Targeting':esc(st.launchMatch)} campaign found in "${esc(st.launchPortfolio||'—')}" to copy naming from — will fall back to <b>${fallbackLabel} 1, 2, …</b>. Tip: pick the right portfolio above, or launch the first one manually so future harvests can copy its naming.`}
   </div>
   <div class="rowbar"><div class="spacer"></div><button class="btn grad" id="hv-launch">Create ${numCampaigns} campaign(s)</button></div>`;
 }
@@ -2809,28 +2831,36 @@ function wireLaunchPanel(st, selOpps, renderFn){
   const keepScroll=fn=>()=>{ const y=window.scrollY; fn(); window.scrollTo(0,y); };
   $('#hv-lport').onchange=e=>{ st.launchPortfolio=e.target.value; keepScroll(renderFn)(); };
   $('#hv-lprefix').oninput=debounce(()=>{ st.launchPrefix=$('#hv-lprefix').value; keepScroll(renderFn)(); },300);
-  $('#hv-lmatch').onchange=e=>{ st.launchMatch=e.target.value; keepScroll(renderFn)(); };
+  const matchEl=$('#hv-lmatch'); if(matchEl) matchEl.onchange=e=>{ st.launchMatch=e.target.value; keepScroll(renderFn)(); };
   $('#hv-lcount').oninput=debounce(()=>{ st.launchCount=+$('#hv-lcount').value||1; st.launchCountTouched=true; keepScroll(renderFn)(); },250);
   $('#hv-lbid').oninput=debounce(()=>{ st.launchBid=$('#hv-lbid').value; },300);
   $('#hv-lignore').onchange=e=>{ st.launchIgnoreNaming=e.target.checked; keepScroll(renderFn)(); };
   const suffixEl=$('#hv-lsuffix'); if(suffixEl) suffixEl.oninput=debounce(()=>{ st.launchManualSuffix=$('#hv-lsuffix').value; keepScroll(renderFn)(); },300);
   const negateEl=$('#hv-lnegate'); if(negateEl) negateEl.onchange=e=>{ st.launchNegateOwn=e.target.checked; };
-  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, numCampaigns:st.launchCount, bidOverride: st.launchBid?+st.launchBid:null, ignoreNaming:st.launchIgnoreNaming, manualSuffix:st.launchManualSuffix, negateOwn: st.launchMatch!=='EXACT' && st.launchNegateOwn});
+  $('#hv-launch').onclick=()=>exportNewCampaigns(selOpps, {portfolioName:st.launchPortfolio, prefix:st.launchPrefix, matchType:st.launchMatch, numCampaigns:st.launchCount, bidOverride: st.launchBid?+st.launchBid:null, ignoreNaming:st.launchIgnoreNaming, manualSuffix:st.launchManualSuffix, negateOwn: !selOpps.every(o=>o.isAsin) && st.launchMatch!=='EXACT' && st.launchNegateOwn});
 }
 function exportNewCampaigns(opps, settings){
   if(!opps.length){ alert('Select at least one opportunity (toggle the switch).'); return; }
   settings=settings||{}; const matchType=(settings.matchType||'EXACT').toUpperCase();
   const matchTypeCap=matchType.charAt(0)+matchType.slice(1).toLowerCase();
-  const template=settings.ignoreNaming? null : detectNamingTemplate(settings.portfolioName, matchType, 'SP', settings.prefix);
+  // A pure-ASIN batch becomes Product Targeting, which has no match type at all — naming drops the
+  // "_EXACT_"-style segment entirely (matches Campaign Builder's own PT convention) instead of gluing on a
+  // fake "PAT" match-type word next to a prefix that's often already "PAT" itself.
+  const allAsin=opps.every(o=>o.isAsin);
+  const template=settings.ignoreNaming? null : (allAsin
+    ? detectPTNamingTemplate(settings.portfolioName, 'SP', settings.prefix)
+    : detectNamingTemplate(settings.portfolioName, matchType, 'SP', settings.prefix));
   const suffix = template? refreshDateToken(template.suffix) : (settings.manualSuffix||'');
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   let nextNum=template?template.num+1:1;
   // Number gets a space before it ("BSQ_EXACT 1_...") rather than an underscore — matches the account's
   // own convention better than "_1_" and keeps it visually distinct from the suffix that follows.
-  function nextFreeName(label){
-    label = label || matchType;
-    let name = (template||settings.ignoreNaming)? `${settings.prefix||(template&&template.prefix)}_${label} ${nextNum}_${suffix}` : `HARVEST_${label} ${nextNum}`;
-    while(existingNames.has(name)){ nextNum++; name = (template||settings.ignoreNaming)? `${settings.prefix||template.prefix}_${label} ${nextNum}_${suffix}` : `HARVEST_${label} ${nextNum}`; }
+  function nextFreeName(){
+    const build=()=> allAsin
+      ? ((template||settings.ignoreNaming)? `${settings.prefix||(template&&template.prefix)} ${nextNum}_${suffix}` : `HARVEST_PAT ${nextNum}`)
+      : ((template||settings.ignoreNaming)? `${settings.prefix||(template&&template.prefix)}_${matchType} ${nextNum}_${suffix}` : `HARVEST_${matchType} ${nextNum}`);
+    let name=build();
+    while(existingNames.has(name)){ nextNum++; name=build(); }
     existingNames.add(name); nextNum++;
     return name;
   }
@@ -2871,7 +2901,7 @@ function exportNewCampaigns(opps, settings){
     }
   }
   const groups=splitIntoGroups(opps, settings.numCampaigns||opps.length);
-  groups.forEach(g=>addCampaign(nextFreeName(g.every(o=>o.isAsin)?'PAT':null), g));
+  groups.forEach(g=>addCampaign(nextFreeName(), g));
   writeBulk(out,'harvest_new_campaigns_bulk.xlsx');
   const negatedCount=opps.filter(o=>!o.isAsin).length;
   alert(`Created ${groups.length} campaign(s)${template?` using the naming pattern from "${template.fullName}"`:' (no matching naming pattern found — used a fallback name)'}.${settings.negateOwn && matchType!=='EXACT' && negatedCount?` Added ${negatedCount} term(s) as Negative Exact in their own new ad group.`:''}${missingSku?` Note: ${missingSku} campaign(s) had no SKU found in the source campaign — fill the SKU column before uploading.`:''}`);
