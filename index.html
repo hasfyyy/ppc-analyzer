@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 18:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 19:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -353,8 +353,12 @@ function parseWorkbook(wb){
         DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
       } else if(ent==='product ad'){
         const sku=String(g('sku')||''), asin=String(g('asin')||''), adId=String(g('adId')||'').trim();
-        DATA.productAds.push(Object.assign({product,campaignId,adGroupId,adId,sku,asin,state:String(g('state')||'').toLowerCase()},met));
-        (DATA.skuByCampaign[campaignId]=DATA.skuByCampaign[campaignId]||[]).push({sku,asin});
+        const paState=String(g('state')||'').toLowerCase();
+        DATA.productAds.push(Object.assign({product,campaignId,adGroupId,adId,sku,asin,state:paState},met));
+        // Only ENABLED product ads feed a new campaign's SKU list — a paused/archived one may have gone
+        // ineligible (discontinued, suppressed listing) since it was turned off, and Amazon rejects it wholesale
+        // when Harvesting/Low ACOS Roots reuses the source campaign's SKUs to build a new campaign around it.
+        if(paState==='enabled') (DATA.skuByCampaign[campaignId]=DATA.skuByCampaign[campaignId]||[]).push({sku,asin});
       } else if(ent==='keyword'){
         DATA.targets.push(Object.assign({kind:'keyword',product,campaignId,adGroupId,id:String(g('keywordId')||''),text:String(g('keywordText')||''),matchType:String(g('matchType')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
       } else if(ent==='product targeting'){
