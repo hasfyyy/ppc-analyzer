@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-10 19:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-11 13:52</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1615,9 +1615,13 @@ function renderKwCheck(){
   // show up as a search term" — the global SETS.exact/phrase/broad would leak a false YES from a keyword
   // targeted somewhere else entirely in the account (different portfolio/product), which is exactly backwards
   // for a portfolio-scoped check like this one.
+  // A keyword sitting in a PAUSED campaign isn't real coverage — it's not delivering, so it shouldn't read as
+  // "already have this" and block launching a fresh one. Both the keyword's own state AND its campaign's
+  // state must be enabled.
+  const enabledCampsForCheck=new Set(DATA.campaigns.filter(c=>c.product===S.product && c.state==='enabled').map(c=>c.campaignId));
   const scopedExact=new Set(), scopedPhrase=new Set(), scopedBroad=new Set();
   DATA.targets.forEach(t=>{
-    if(t.kind!=='keyword' || t.product!==S.product || t.state!=='enabled') return;
+    if(t.kind!=='keyword' || t.product!==S.product || t.state!=='enabled' || !enabledCampsForCheck.has(t.campaignId)) return;
     if(st.port && (DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)')!==st.port) return;
     const txt=(t.text||'').trim().toLowerCase(); if(!txt) return;
     if(t.matchType==='exact') scopedExact.add(txt);
@@ -1638,7 +1642,6 @@ function renderKwCheck(){
   };
   const cols=[
     {key:'keyword',label:'Keyword',l:true,type:'text'},
-    {key:'found',label:'In Search Terms',l:true,noSort:true,cell:r=>r.found?`<span class="badge tg">FOUND (${r.count})</span>`:'<span class="badge nt">NOT FOUND</span>'},
     {key:'inExact',label:'Exact',l:true,noSort:true,cell:r=>missBadge(r,'inExact','EXACT')},
     {key:'inPhrase',label:'Phrase',l:true,noSort:true,cell:r=>missBadge(r,'inPhrase','PHRASE')},
     {key:'inBroad',label:'Broad',l:true,noSort:true,cell:r=>missBadge(r,'inBroad','BROAD')},
