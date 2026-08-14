@@ -1096,7 +1096,7 @@ function renderPlacements(){
     const c=LAST_BY_CAMPAIGN[r.campaignId]||{};
     const targets=(c.targetBids||[]).filter(t=>t.id).slice().sort((a,b)=>b.bid-a.bid);
     if(!targets.length) return;
-    reviveSeen[r.campaignId]={campaignId:r.campaignId, campaignName:c.campaignName||r.campaignId, portfolioName:c.portfolioName||'(No Portfolio)', spend:r.spend, acos:r.acos, top:targets[0]};
+    reviveSeen[r.campaignId]={campaignId:r.campaignId, campaignName:c.campaignName||r.campaignId, portfolioName:c.portfolioName||'(No Portfolio)', spend:r.spend, acos:r.acos, top:targets[0], bleedingVs:r.bleedingVs, bleedingVsKey:r.bleedingVsKey};
   });
   const reviveCandidates=Object.values(reviveSeen).sort((a,b)=>b.spend-a.spend);
   reviveCandidates.forEach(x=>{ PL_KW_META[x.top.id]={campaignId:x.campaignId, adGroupId:x.top.adGroupId, entity:x.top.entity}; });
@@ -1106,9 +1106,12 @@ function renderPlacements(){
       <div class="rowbar" style="margin:0 0 8px;">
         <h3 class="sectitle" style="margin:0;">Multi-keyword bid check (${reviveCandidates.length})</h3>
         <div class="spacer"></div>
+        <div class="field"><label>Cut bid by %</label><input type="number" id="kw-cutpct" value="45" style="width:70px;"></div>
+        <div class="field"><label>Raise placement by pts</label><input type="number" id="kw-raisepts" value="100" style="width:80px;"></div>
+        <button class="btn ghost" id="kw-apply-all">Apply to ${reviveCandidates.length} shown row(s)</button>
         <button class="btn grad" id="kw-export" ${kwEditedCount?'':'disabled'}>Export Keyword Bid Update (${kwEditedCount})</button>
       </div>
-      <div class="hint" style="margin-bottom:10px;">These campaigns have a placement already at ~0% and still bleeding, with more than one keyword/target — so there's no single shared bid to lower. Shown is each campaign's single highest-bid keyword/target, the most likely one winning cheap Product Pages auctions regardless of placement %. Type a new bid where you want a cut; this exports as its own Bulk Operations file, separate from the placement update above.</div>
+      <div class="hint" style="margin-bottom:10px;">These campaigns have a placement already at ~0% and still bleeding, with more than one keyword/target — so there's no single shared bid to lower. Shown is each campaign's single highest-bid keyword/target, the most likely one winning cheap Product Pages auctions regardless of placement %. "Apply" cuts that bid by the % above and raises the campaign's better-performing sibling placement's % by the points above (both editable per-row afterward) — this exports separately from the placement update above, and the placement-% raise also needs including in that export, so run both before uploading.</div>
       <div class="tablewrap"><table>
         <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Top keyword/target</th><th class="l">Match</th><th>Current Bid</th><th>PP Spend</th><th>PP ACoS</th><th class="l">New Bid</th></tr></thead>
         <tbody>${reviveCandidates.map(x=>`<tr>
@@ -1216,6 +1219,20 @@ function renderPlacements(){
   },300));
   const kwExportBtn=$('#kw-export');
   if(kwExportBtn) kwExportBtn.onclick=exportKeywordBidUpdate;
+  const kwApplyAllBtn=$('#kw-apply-all');
+  if(kwApplyAllBtn) kwApplyAllBtn.onclick=()=>{
+    const cutPct=+$('#kw-cutpct').value||0;
+    const raisePts=+$('#kw-raisepts').value||0;
+    reviveCandidates.forEach(x=>{
+      const newBid=+(x.top.bid*(1-cutPct/100)).toFixed(2);
+      PL_KW_EDITS[x.top.id]=String(Math.max(0.02,newBid));
+      if(x.bleedingVsKey){
+        const target=PL_ALL_ROWS.find(rr=>(rr.campaignId+'|'+rr.placement)===x.bleedingVsKey);
+        if(target) PL_EDITS[x.bleedingVsKey]=String(Math.min(900, Math.round((target.percentage||0)+raisePts)));
+      }
+    });
+    renderPlacements();
+  };
   const nudgeBtn=$('#pl-nudge-apply');
   if(nudgeBtn) nudgeBtn.onclick=()=>{
     const step=+$('#pl-nudge').value||0;
