@@ -92,8 +92,7 @@
   <div class="topbar">
     <h1>Account Tools</h1>
     <div class="seg" id="cm-mode">
-      <button data-mode="placements" class="active">Placements</button>
-      <button data-mode="bidding">Bidding Strategy</button>
+      <button data-mode="bidding" class="active">Bidding Strategy</button>
       <button data-mode="weekly">Weekly</button>
     </div>
     <div class="links"></div>
@@ -675,11 +674,10 @@ function buildAsinGroups(rows){
 let LAST_ROWS=[];
 let LAST_BY_CAMPAIGN={};
 let LAST_PLACEMENTS=[];
-let APP_MODE='placements'; // 'rename' (unused, kept for the old renaming code below) | 'bidding' | 'placements'
+let APP_MODE='bidding'; // 'rename' (unused, kept for the old renaming code below) | 'bidding' | 'weekly'
 function renderApp(rows){
   LAST_ROWS=rows;
   if(APP_MODE==='bidding'){ renderBiddingStrategy(); return; }
-  if(APP_MODE==='placements'){ renderPlacements(); return; }
   if(APP_MODE==='weekly'){ renderWeekly(); return; }
   if(!rows.length){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>No enabled campaigns found in this file.</p></div></div>`;
@@ -959,265 +957,6 @@ function renderBiddingStrategy(){
 // with a plain editable "New %" box per row. Only rows you actually typed a number into get exported —
 // leaving a row blank means "not touching this one".
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
-let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1};
-let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
-let PL_KW_EDITS={}; // keyword/target id -> typed new bid value (string), for the Bid Optimizer panel
-let PL_KW_META={}; // keyword/target id -> {campaignId, adGroupId, entity} needed to build its bulk export row
-let PL_LAST_ROWS=[]; // rows currently shown after filters
-let PL_ALL_ROWS=[]; // every placement row before Portfolio/Campaign/Placement/ACoS filters — the Bid Optimizer scans this account-wide, independent of what's currently filtered into view
-let BID_OPT={goal:50, buffer:15, bonusGap:25, bonusPct:10};
-// The account's actual playbook, reduced to two rules:
-// 1) Every placement performing worse than the ACoS goal gets a shared bid low enough to clear
-//    (1 - buffer%) of its OWN cpc — the worst-CPC one among them sets the campaign's new bid, since
-//    Amazon has no negative placement % to push a placement's effective bid any lower than the shared bid.
-// 2) Every placement performing better than goal gets a placement-% raise so its effective bid returns to
-//    the campaign's old bid (its proven working level) — plus a further +bonusPct% if it's beating goal by
-//    more than bonusGap points, since that much headroom means it can absorb a more aggressive push.
-// Multi-keyword campaigns use the single highest-bid keyword as the "shared bid" proxy — Amazon doesn't
-// report placement performance per keyword, so the top bidder is the best available guess at fault.
-function computeBidOptCandidates(allRows, opt){
-  const byCampaign={};
-  allRows.forEach(r=>{ (byCampaign[r.campaignId]=byCampaign[r.campaignId]||[]).push(r); });
-  const out=[];
-  Object.keys(byCampaign).forEach(cid=>{
-    const siblings=byCampaign[cid].filter(r=>r.clicks>0);
-    if(siblings.length<2) return;
-    const c=LAST_BY_CAMPAIGN[cid]||{};
-    const targets=(c.targetBids||[]).filter(t=>t.id).slice().sort((a,b)=>b.bid-a.bid);
-    if(!targets.length) return;
-    const topBid=targets[0].bid;
-    const bad=siblings.filter(r=>r.acos===Infinity||r.acos>opt.goal);
-    const good=siblings.filter(r=>r.acos!==Infinity&&r.acos<=opt.goal);
-    if(!bad.length||!good.length) return; // only act when the campaign has a clear split — otherwise there's nothing to anchor the bid cut against
-    const badTargets=bad.map(r=>({r, target:Math.max(0.02, r.cpc*(1-opt.buffer/100))}));
-    const newBaseBid=Math.min(...badTargets.map(x=>x.target));
-    const placements=siblings.map(r=>{
-      const isBad=bad.includes(r);
-      let target;
-      if(isBad){ target=badTargets.find(x=>x.r===r).target; }
-      else { const gap=opt.goal-r.acos; const bonus=gap>=opt.bonusGap?(1+opt.bonusPct/100):1; target=topBid*bonus; }
-      const pct=Math.max(0, Math.min(900, Math.round((target/newBaseBid-1)*100)));
-      return {key:r.campaignId+'|'+r.placement, placeLabel:r.placeLabel, acos:r.acos, cpc:r.cpc, oldPct:r.percentage||0, newPct:pct, role:isBad?'bad':'good'};
-    });
-    out.push({
-      campaignId:cid, campaignName:c.campaignName||cid, portfolioName:c.portfolioName||'(No Portfolio)',
-      topTarget:targets[0], newBid:+newBaseBid.toFixed(2), placements,
-      spend:siblings.reduce((s,r)=>s+r.spend,0)
-    });
-  });
-  return out.sort((a,b)=>b.spend-a.spend);
-}
-function renderPlacements(){
-  const st=PL_STATE;
-  const campsById=LAST_BY_CAMPAIGN;
-  let rows=LAST_PLACEMENTS.map(p=>{
-    const c=campsById[p.campaignId]||{};
-    const acos = p.sales>0 ? p.spend/p.sales*100 : (p.spend>0? Infinity : 0);
-    const cpc = p.clicks>0 ? p.spend/p.clicks : 0;
-    const singleBid = c.singleBid!=null ? c.singleBid : null;
-    return Object.assign({}, p, {
-      campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)',
-      state:c.state||'', placeLabel:placeName(p.placement), acos, cpc, singleBid
-    });
-  });
-  if(!rows.length){
-    $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload a Bulk Operations export with placement performance data (Bidding Adjustment rows) to see this.</p></div></div>`;
-    return;
-  }
-  // Computed on the pre-filter set so isolating one campaign (by clicking its name, or typing its full
-  // name) still finds every one of its placement rows even if a Placement/ACoS/Min Spend filter would
-  // otherwise have hidden some of them from the main table.
-  let campDetail=null;
-  if(st.camp){
-    const matchIds=[...new Set(rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase())).map(r=>r.campaignId))];
-    if(matchIds.length===1){
-      const cid=matchIds[0];
-      const c=campsById[cid]||{};
-      const campRows=rows.filter(r=>r.campaignId===cid);
-      const totalSpend=campRows.reduce((s,r)=>s+r.spend,0);
-      const totalSales=campRows.reduce((s,r)=>s+r.sales,0);
-      campDetail={
-        campaignName:c.campaignName||cid, portfolioName:c.portfolioName||'(No Portfolio)',
-        totalSpend, totalSales, acos: totalSales>0?totalSpend/totalSales*100:(totalSpend>0?Infinity:0),
-        placements:campRows.slice().sort((a,b)=>b.spend-a.spend),
-        targets:(c.targetBids||[]).slice().sort((a,b)=>b.bid-a.bid)
-      };
-    }
-  }
-  PL_ALL_ROWS=rows;
-  if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
-  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
-  if(st.minOrders>0) rows=rows.filter(r=>r.orders>=st.minOrders);
-  if(st.place) rows=rows.filter(r=>r.placeLabel===st.place);
-  if(st.acosMin!==''&&st.acosMin!=null) rows=rows.filter(r=>r.acos===Infinity||r.acos>=+st.acosMin);
-  if(st.acosMax!==''&&st.acosMax!=null) rows=rows.filter(r=>r.acos!==Infinity&&r.acos<=+st.acosMax);
-  const sortAccessors={percentage:r=>r.percentage||0, clicks:r=>r.clicks||0, spend:r=>r.spend||0, sales:r=>r.sales||0, acos:r=>r.acos===Infinity?Number.MAX_VALUE:(r.acos||0), bid:r=>r.singleBid==null?-1:r.singleBid, cpc:r=>r.cpc||0};
-  const sortFn=sortAccessors[st.sortKey]||sortAccessors.spend;
-  rows.sort((a,b)=>(sortFn(a)-sortFn(b))*st.sortDir);
-  PL_LAST_ROWS=rows;
-  const portfolios=[...new Set(LAST_PLACEMENTS.map(p=>(campsById[p.campaignId]||{}).portfolioName||'(No Portfolio)'))].sort();
-  const fMoney=n=>'$'+(n||0).toFixed(2);
-  const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
-  const sortableHeaders=[
-    {key:'percentage',label:'Current %'}, {key:'clicks',label:'Clicks'}, {key:'spend',label:'Spend'},
-    {key:'sales',label:'Sales'}, {key:'acos',label:'ACoS'}, {key:'bid',label:'Bid'}, {key:'cpc',label:'CPC'}
-  ];
-  const rowHtml=r=>{
-    const key=r.campaignId+'|'+r.placement;
-    const editVal=PL_EDITS[key]!=null?PL_EDITS[key]:'';
-    return `<tr>
-      <td class="l"><a href="#" class="camp-link" data-camp="${esc(r.campaignName)}" title="Click to see every placement and keyword/target bid for this campaign">${esc(r.campaignName)}</a></td>
-      <td class="l">${esc(r.portfolioName)}</td>
-      <td class="l">${esc(r.placeLabel)}</td>
-      <td>${(r.percentage||0)}%</td>
-      <td>${fInt(r.clicks)}</td>
-      <td>${fMoney(r.spend)}</td>
-      <td>${fMoney(r.sales)}</td>
-      <td style="color:${r.acos===Infinity||r.acos>50?'#b91c1c':r.acos>25?'#c2760a':'#15803d'}">${fAcos(r.acos)}</td>
-      <td>${r.singleBid!=null?fMoney(r.singleBid):'<span class="muted" title="This campaign targets more than one keyword/product, each with its own bid, so there\'s no single shared bid to show here.">multi-kw</span>'}</td>
-      <td>${fMoney(r.cpc)}</td>
-      <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
-    </tr>`;
-  };
-  const editedCount=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
-  const bidOptCandidates=computeBidOptCandidates(PL_ALL_ROWS, BID_OPT);
-  bidOptCandidates.forEach(x=>{ PL_KW_META[x.topTarget.id]={campaignId:x.campaignId, adGroupId:x.topTarget.adGroupId, entity:x.topTarget.entity}; });
-  const kwEditedCount=Object.keys(PL_KW_EDITS).filter(k=>PL_KW_EDITS[k]!==''&&PL_KW_EDITS[k]!=null&&PL_KW_META[k]).length;
-  const bidOptHtml = !bidOptCandidates.length ? '' : `
-    <div class="card pad">
-      <div class="rowbar" style="margin:0 0 8px;">
-        <h3 class="sectitle" style="margin:0;">Bid Optimizer (${bidOptCandidates.length} campaigns)</h3>
-        <div class="spacer"></div>
-        <button class="btn ghost" id="bo-apply-all">Apply to ${bidOptCandidates.length} shown row(s)</button>
-        <button class="btn grad" id="kw-export" ${kwEditedCount?'':'disabled'}>Export Keyword Bid Update (${kwEditedCount})</button>
-      </div>
-      <div class="hint" style="margin-bottom:10px;">Campaigns with a clear split — at least one placement above ACoS goal, at least one at or below it. Bid = (worst-performing placement's own CPC) × (1 − buffer%); placements below goal get a % raise back to the old bid (plus a bonus if they're beating goal by a wide margin). Multi-keyword campaigns use their single highest-bid keyword as the bid to change. Still editable before export.</div>
-      <div class="ctrls" style="margin-bottom:10px;">
-        <div class="field"><label>ACoS Goal %</label><input type="number" id="bo-goal" value="${BID_OPT.goal}" style="width:80px;"></div>
-        <div class="field"><label>Buffer % under CPC</label><input type="number" id="bo-buffer" value="${BID_OPT.buffer}" style="width:80px;"></div>
-        <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="bo-bonusgap" value="${BID_OPT.bonusGap}" style="width:80px;"></div>
-        <div class="field"><label>Bonus %</label><input type="number" id="bo-bonuspct" value="${BID_OPT.bonusPct}" style="width:80px;"></div>
-      </div>
-      <div class="tablewrap"><table>
-        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Top keyword/target</th><th>New Bid</th><th class="l">Placement</th><th>ACoS</th><th>CPC</th><th>Old %</th><th>New %</th></tr></thead>
-        <tbody>${bidOptCandidates.map(x=>x.placements.map((p,i)=>`<tr>
-          <td class="l">${i===0?`<a href="#" class="camp-link" data-camp="${esc(x.campaignName)}">${esc(x.campaignName)}</a>`:''}</td>
-          <td class="l">${i===0?esc(x.portfolioName):''}</td>
-          <td class="l">${i===0?esc(x.topTarget.text):''}</td>
-          <td>${i===0?`<b>${fMoney(x.newBid)}</b>`:''}</td>
-          <td class="l">${esc(p.placeLabel)} <span class="muted">(${p.role})</span></td>
-          <td style="color:${p.acos===Infinity||p.acos>50?'#b91c1c':p.acos>25?'#c2760a':'#15803d'}">${fAcos(p.acos)}</td>
-          <td>${fMoney(p.cpc)}</td>
-          <td>${p.oldPct}%</td>
-          <td><b>${p.newPct}%</b></td>
-        </tr>`).join('')).join('')}</tbody>
-      </table></div>
-    </div>`;
-  const campDetailHtml = !campDetail ? '' : `
-    <div class="card pad">
-      <div class="rowbar" style="margin:0 0 8px;">
-        <h3 class="sectitle" style="margin:0;">${esc(campDetail.campaignName)}</h3>
-        <div class="spacer"></div>
-        <span class="hint">${esc(campDetail.portfolioName)} · ${fMoney(campDetail.totalSpend)} spend · ${fMoney(campDetail.totalSales)} sales · ${fAcos(campDetail.acos)} ACoS overall</span>
-      </div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:280px;">
-          <div class="hint" style="margin-bottom:6px;"><b>Placements in this campaign</b></div>
-          <table style="width:100%;"><thead><tr><th class="l">Placement</th><th>Bid</th><th>CPC</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th><th class="l">New %</th></tr></thead><tbody>
-            ${campDetail.placements.map(p=>{ const pkey=p.campaignId+'|'+p.placement; return `<tr><td class="l">${esc(p.placeLabel)}</td><td><b>${p.singleBid!=null?fMoney(p.singleBid):'<span class="muted" title="Multiple keywords/targets — see the list on the right, each bids independently.">multi-kw</span>'}</b></td><td><b>${p.clicks>0?fMoney(p.cpc):'<span class="muted">—</span>'}</b></td><td>${(p.percentage||0)}%</td><td>${fInt(p.clicks)}</td><td>${fMoney(p.spend)}</td><td>${fMoney(p.sales)}</td><td style="color:${p.acos===Infinity||p.acos>50?'#b91c1c':p.acos>25?'#c2760a':'#15803d'}">${fAcos(p.acos)}</td><td><input type="number" step="1" placeholder="—" value="${esc(PL_EDITS[pkey]!=null?PL_EDITS[pkey]:'')}" data-pledit="${esc(pkey)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td></tr>`; }).join('')}
-          </tbody></table>
-          <div class="hint" style="margin-top:6px;">CPC is this placement's actual cost-per-click so far — a rough ceiling for what a single bid needs to clear to keep winning it. With multi-kw, CPC still tells you the going rate on that placement even though no single bid decides it.</div>
-        </div>
-        <div style="flex:1;min-width:280px;">
-          <div class="hint" style="margin-bottom:6px;"><b>Keywords / targets in this campaign (${campDetail.targets.length})</b> — this is what "multi-kw" is spreading the bid across; each one bids independently within the placement % above.</div>
-          <div style="max-height:260px;overflow:auto;">
-          <table style="width:100%;"><thead><tr><th class="l">Text</th><th class="l">Match</th><th class="l">State</th><th>Bid</th><th class="l">New Bid</th></tr></thead><tbody>
-            ${campDetail.targets.length ? campDetail.targets.map(t=>{ if(t.id) PL_KW_META[t.id]={campaignId:campDetail.campaignId, adGroupId:t.adGroupId, entity:t.entity}; return `<tr><td class="l">${esc(t.text)}</td><td class="l">${esc(t.matchType)}</td><td class="l">${esc(t.state)}</td><td>${fMoney(t.bid)}</td><td>${t.id?`<input type="number" step="0.01" placeholder="—" value="${esc(PL_KW_EDITS[t.id]!=null?PL_KW_EDITS[t.id]:'')}" data-kwedit="${esc(t.id)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;">`:'<span class="muted" title="No keyword/target ID in the export for this row — can&#39;t build a bulk update without it.">—</span>'}</td></tr>`; }).join('') : '<tr><td colspan="5" class="l muted">No keyword/target rows found for this campaign in the export.</td></tr>'}
-          </tbody></table>
-          </div>
-        </div>
-      </div>
-    </div>`;
-  $('#app').innerHTML=`
-    <div class="card pad">
-      <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid). Type a new % only where you want a change; leave blank to leave it alone. See the Bid Optimizer panel below for an account-wide, ACoS-goal-driven bid + placement % calculation.</div>
-      <div class="ctrls">
-        <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
-        <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
-        <div class="field"><label>Placement</label><select id="pl-place">
-          <option value="" ${!st.place?'selected':''}>All</option>
-          <option ${st.place==='Top of Search'?'selected':''}>Top of Search</option>
-          <option ${st.place==='Rest of Search'?'selected':''}>Rest of Search</option>
-          <option ${st.place==='Product Pages'?'selected':''}>Product Pages</option>
-        </select></div>
-        <div class="field"><label>ACoS ≥</label><input type="number" id="pl-acosmin" value="${esc(st.acosMin)}" placeholder="—" style="width:80px;"></div>
-        <div class="field"><label>ACoS ≤</label><input type="number" id="pl-acosmax" value="${esc(st.acosMax)}" placeholder="—" style="width:80px;"></div>
-        <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
-        <div class="field"><label>Min Orders</label><input type="number" id="pl-minorders" value="${st.minOrders}" style="width:90px;"></div>
-      </div>
-    </div>
-    ${campDetailHtml}
-    <div class="card pad">
-      <div class="rowbar" style="margin:0 0 10px;">
-        <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
-        <div class="spacer"></div>
-        <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
-      </div>
-      <div class="tablewrap"><table>
-        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th>${sortableHeaders.map(h=>`<th class="sortable" data-sortkey="${h.key}" style="cursor:pointer;user-select:none;" title="Click to sort">${h.label}${st.sortKey===h.key?(st.sortDir===1?' ▲':' ▼'):''}</th>`).join('')}<th>New %</th></tr></thead>
-        <tbody>${rows.map(rowHtml).join('')}</tbody>
-      </table></div>
-    </div>
-    ${bidOptHtml}`;
-  $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
-  $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
-  $('#pl-place').onchange=e=>{st.place=e.target.value; renderPlacements();};
-  document.querySelectorAll('.camp-link').forEach(a=>a.onclick=e=>{
-    e.preventDefault(); st.camp=a.dataset.camp; renderPlacements();
-  });
-  $('#pl-acosmin').oninput=debounce(()=>{st.acosMin=$('#pl-acosmin').value; renderPlacements();},300);
-  $('#pl-acosmax').oninput=debounce(()=>{st.acosMax=$('#pl-acosmax').value; renderPlacements();},300);
-  $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
-  $('#pl-minorders').oninput=debounce(()=>{st.minOrders=+$('#pl-minorders').value||0; renderPlacements();},300);
-  document.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
-    const key=th.dataset.sortkey;
-    if(st.sortKey===key){ st.sortDir=-st.sortDir; } else { st.sortKey=key; st.sortDir=-1; }
-    renderPlacements();
-  });
-  document.querySelectorAll('[data-pledit]').forEach(inp=>inp.oninput=debounce(()=>{
-    const key=inp.dataset.pledit;
-    if(inp.value===''){ delete PL_EDITS[key]; } else { PL_EDITS[key]=inp.value; }
-    const btn=$('#pl-export'); const n=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
-    btn.disabled=!n; btn.textContent=`Export Placement Update (${n})`;
-  },300));
-  $('#pl-export').onclick=exportPlacements;
-  document.querySelectorAll('[data-kwedit]').forEach(inp=>inp.oninput=debounce(()=>{
-    const id=inp.dataset.kwedit;
-    if(inp.value===''){ delete PL_KW_EDITS[id]; } else { PL_KW_EDITS[id]=inp.value; }
-    const btn=$('#kw-export'); if(!btn) return;
-    const n=Object.keys(PL_KW_EDITS).filter(k=>PL_KW_EDITS[k]!==''&&PL_KW_EDITS[k]!=null&&PL_KW_META[k]).length;
-    btn.disabled=!n; btn.textContent=`Export Keyword Bid Update (${n})`;
-  },300));
-  const kwExportBtn=$('#kw-export');
-  if(kwExportBtn) kwExportBtn.onclick=exportKeywordBidUpdate;
-  ['bo-goal','bo-buffer','bo-bonusgap','bo-bonuspct'].forEach(id=>{
-    const el=$('#'+id); if(!el) return;
-    el.oninput=debounce(()=>{
-      BID_OPT={goal:+$('#bo-goal').value||0, buffer:+$('#bo-buffer').value||0, bonusGap:+$('#bo-bonusgap').value||0, bonusPct:+$('#bo-bonuspct').value||0};
-      renderPlacements();
-    },300);
-  });
-  const boApplyBtn=$('#bo-apply-all');
-  if(boApplyBtn) boApplyBtn.onclick=()=>{
-    bidOptCandidates.forEach(x=>{
-      PL_KW_EDITS[x.topTarget.id]=String(x.newBid);
-      x.placements.forEach(p=>{ PL_EDITS[p.key]=String(p.newPct); });
-    });
-    renderPlacements();
-  };
-}
 function fInt(n){ return Math.round(n||0).toLocaleString(); }
 
 /* ============================ WEEKLY TRACKING ============================
@@ -1422,36 +1161,6 @@ async function renderWeekly(){
   }
 }
 
-function exportPlacements(){
-  const out=[];
-  Object.keys(PL_EDITS).forEach(key=>{
-    const val=PL_EDITS[key]; if(val===''||val==null) return;
-    const i=key.indexOf('|'); const cid=key.slice(0,i), raw=key.slice(i+1);
-    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':cid,'Placement':raw,'Percentage':+val}));
-  });
-  if(!out.length){ alert('No placements edited — type a new % in at least one row.'); return; }
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...out]);
-  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
-  XLSX.writeFile(wb, 'placement_update_bulk.xlsx');
-  alert(`Exported ${out.length} placement update(s).`);
-}
-function exportKeywordBidUpdate(){
-  const out=[];
-  Object.keys(PL_KW_EDITS).forEach(id=>{
-    const val=PL_KW_EDITS[id]; if(val===''||val==null) return;
-    const meta=PL_KW_META[id]; if(!meta) return;
-    const row={'Product':'Sponsored Products','Entity':meta.entity,'Operation':'Update','Campaign ID':meta.campaignId,'Ad Group ID':meta.adGroupId,'Bid':+val};
-    if(meta.entity==='Keyword') row['Keyword ID']=id; else row['Product Targeting ID']=id;
-    out.push(bulkRow(row));
-  });
-  if(!out.length){ alert('No keyword/target bids edited — type a new bid in at least one row.'); return; }
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...out]);
-  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
-  XLSX.writeFile(wb, 'keyword_bid_update_bulk.xlsx');
-  alert(`Exported ${out.length} keyword/target bid update(s).`);
-}
 function exportBiddingStrategy(rows, target){
   if(!rows.length){ alert('No campaigns selected.'); return; }
   const out=rows.map(r=>bulkRow(Object.assign({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Bidding Strategy':target}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
