@@ -1232,10 +1232,7 @@ function weekTotals(camp){
   const ppSpend=camp&&camp.placements['Product Pages']?camp.placements['Product Pages'].spend:0;
   return {spend, sales, ppShare: spend>0?ppSpend/spend:0, acos: sales>0?spend/sales*100:(spend>0?Infinity:0)};
 }
-function compareWeeksHtml(a,b,labelA,labelB){
-  const fMoney=n=>'$'+(n||0).toFixed(2);
-  const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
-  const fPct=n=>Math.round((n||0)*100)+'%';
+function computeCompareRows(a,b){
   const ids=new Set([...Object.keys(a.campaigns), ...Object.keys(b.campaigns)]);
   let rows=[...ids].map(cid=>{
     const ca=a.campaigns[cid], cb=b.campaigns[cid];
@@ -1247,7 +1244,13 @@ function compareWeeksHtml(a,b,labelA,labelB){
     };
   }).filter(r=>r.ta.spend>0||r.tb.spend>0);
   rows.sort((x,y)=>(y.wentDark-x.wentDark) || (Math.abs(y.ta.ppShare-y.tb.ppShare)-Math.abs(x.ta.ppShare-x.tb.ppShare)));
-  if(!rows.length) return '<div class="hint" style="margin-top:10px;">No overlapping campaigns between these two weeks.</div>';
+  return rows;
+}
+function compareTableHtml(rows,labelA,labelB){
+  const fMoney=n=>'$'+(n||0).toFixed(2);
+  const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
+  const fPct=n=>Math.round((n||0)*100)+'%';
+  if(!rows.length) return '<div class="hint" style="margin-top:10px;">No campaigns match these filters.</div>';
   return `<div style="max-height:520px;overflow:auto;margin-top:10px;"><table style="width:100%;"><thead><tr>
     <th class="l">Campaign</th><th class="l">Portfolio</th>
     <th>PP share ${esc(labelA)}</th><th>PP share ${esc(labelB)}</th>
@@ -1342,7 +1345,34 @@ async function renderWeekly(){
     renderWeekly();
   });
   if(weeks.length>=2){
-    const renderCompare=()=>{ $('#wk-compare').innerHTML=compareWeeksHtml(store[$('#wk-from').value], store[$('#wk-to').value], $('#wk-from').value, $('#wk-to').value); };
+    const renderCompare=()=>{
+      const labelA=$('#wk-from').value, labelB=$('#wk-to').value;
+      const allRows=computeCompareRows(store[labelA], store[labelB]);
+      const portfolios=[...new Set(allRows.map(r=>r.portfolio))].sort();
+      $('#wk-compare').innerHTML=`
+        <div class="ctrls" style="margin:10px 0;">
+          <div class="field"><label>Portfolio</label><select id="wk-cmp-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option>${esc(p)}</option>`).join('')}</select></div>
+          <div class="field"><label>Spend change</label><select id="wk-cmp-dir">
+            <option value="">All</option>
+            <option value="down">Decreased</option>
+            <option value="up">Increased</option>
+            <option value="dark">Went dark only</option>
+          </select></div>
+        </div>
+        <div id="wk-cmp-table">${compareTableHtml(allRows, labelA, labelB)}</div>
+      `;
+      const applyFilter=()=>{
+        const port=$('#wk-cmp-port').value, dir=$('#wk-cmp-dir').value;
+        let filtered=allRows;
+        if(port) filtered=filtered.filter(r=>r.portfolio===port);
+        if(dir==='down') filtered=filtered.filter(r=>r.spendDeltaPct!=null&&r.spendDeltaPct<0);
+        if(dir==='up') filtered=filtered.filter(r=>r.spendDeltaPct!=null&&r.spendDeltaPct>0);
+        if(dir==='dark') filtered=filtered.filter(r=>r.wentDark);
+        $('#wk-cmp-table').innerHTML=compareTableHtml(filtered, labelA, labelB);
+      };
+      $('#wk-cmp-port').onchange=applyFilter;
+      $('#wk-cmp-dir').onchange=applyFilter;
+    };
     $('#wk-from').onchange=renderCompare;
     $('#wk-to').onchange=renderCompare;
     renderCompare();
