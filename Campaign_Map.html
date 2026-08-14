@@ -1136,9 +1136,10 @@ function renderPlacements(){
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
         <div style="flex:1;min-width:280px;">
           <div class="hint" style="margin-bottom:6px;"><b>Placements in this campaign</b></div>
-          <table style="width:100%;"><thead><tr><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th></tr></thead><tbody>
-            ${campDetail.placements.map(p=>`<tr><td class="l">${esc(p.placeLabel)}</td><td>${(p.percentage||0)}%</td><td>${fInt(p.clicks)}</td><td>${fMoney(p.spend)}</td><td>${fMoney(p.sales)}</td><td style="color:${p.acos===Infinity||p.acos>50?'#b91c1c':p.acos>25?'#c2760a':'#15803d'}">${fAcos(p.acos)}</td></tr>`).join('')}
+          <table style="width:100%;"><thead><tr><th class="l">Placement</th><th>Bid</th><th>CPC</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th></tr></thead><tbody>
+            ${campDetail.placements.map(p=>`<tr><td class="l">${esc(p.placeLabel)}</td><td><b>${p.singleBid!=null?fMoney(p.singleBid):'<span class="muted" title="Multiple keywords/targets — see the list on the right, each bids independently.">multi-kw</span>'}</b></td><td><b>${p.clicks>0?fMoney(p.cpc):'<span class="muted">—</span>'}</b></td><td>${(p.percentage||0)}%</td><td>${fInt(p.clicks)}</td><td>${fMoney(p.spend)}</td><td>${fMoney(p.sales)}</td><td style="color:${p.acos===Infinity||p.acos>50?'#b91c1c':p.acos>25?'#c2760a':'#15803d'}">${fAcos(p.acos)}</td></tr>`).join('')}
           </tbody></table>
+          <div class="hint" style="margin-top:6px;">CPC is this placement's actual cost-per-click so far — a rough ceiling for what a single bid needs to clear to keep winning it. With multi-kw, CPC still tells you the going rate on that placement even though no single bid decides it.</div>
         </div>
         <div style="flex:1;min-width:280px;">
           <div class="hint" style="margin-bottom:6px;"><b>Keywords / targets in this campaign (${campDetail.targets.length})</b> — this is what "multi-kw" is spreading the bid across; each one bids independently within the placement % above.</div>
