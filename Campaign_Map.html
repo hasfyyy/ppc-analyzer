@@ -100,13 +100,9 @@
   <div class="card pad">
     <div class="rowbar" style="margin:0;">
       <label class="btn grad" style="cursor:pointer;">⬆ Upload Bulk Operations export<input type="file" id="cm-file" accept=".xlsx,.xls,.csv" class="hidden"></label>
-      <label class="btn ghost" style="cursor:pointer;">⬆ Parent/Child ASIN map (optional)<input type="file" id="cm-parentmap" accept=".xlsx,.xls,.csv" class="hidden"></label>
-      <div class="field"><label>Brand terms (comma-separated — used to tell BRND EXACT apart from generic EXACT)</label><input type="text" id="cm-brandterms" placeholder="e.g. odofit, odo fit" style="width:280px;"></div>
       <div class="spacer"></div>
       <span class="hint" id="cm-status">No file loaded yet — upload a bulk export to build the map. Only <b>enabled</b> campaigns are analyzed.</span>
     </div>
-    <div class="rowbar" style="margin:6px 0 0;">
-      <span class="hint" id="cm-parentmap-status">No Parent/Child ASIN map loaded — a campaign is flagged <b>MIXED</b> if it advertises &gt;1 distinct ASIN, even if they're just variations of the same product. Upload a sheet with columns like "Portfolio name / (Parent) ASIN / Product ASIN" so variations of the same parent don't get flagged as mixed.</span>
     </div>
   </div>
 
@@ -960,7 +956,7 @@ function renderBiddingStrategy(){
 // with a plain editable "New %" box per row. Only rows you actually typed a number into get exported —
 // leaving a row blank means "not touching this one".
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
-let PL_STATE={port:'', camp:'', minSpend:1};
+let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false};
 let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
 function renderPlacements(){
   const st=PL_STATE;
@@ -985,16 +981,38 @@ function renderPlacements(){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload a Bulk Operations export with placement performance data (Bidding Adjustment rows) to see this.</p></div></div>`;
     return;
   }
+  // Flag placements that are hogging a campaign's spend while performing meaningfully worse than a
+  // sibling placement in the same campaign that already has real spend behind it — this is the "bleeding
+  // into Product Pages while TOS/ROS convert better" pattern, computed on the full unfiltered set so it
+  // still sees siblings even when the placement filter narrows what's displayed.
+  const byCampaign={};
+  rows.forEach(r=>{ (byCampaign[r.campaignId]=byCampaign[r.campaignId]||[]).push(r); });
+  rows.forEach(r=>{
+    const siblings=byCampaign[r.campaignId];
+    const campaignSpend=siblings.reduce((s,x)=>s+x.spend,0);
+    const share=campaignSpend>0?r.spend/campaignSpend:0;
+    const better=siblings.find(x=>x!==r && x.spend>=Math.max(10, campaignSpend*0.1) && x.acos!==Infinity && (r.acos===Infinity || x.acos<=r.acos*0.7));
+    r.bleeding = campaignSpend>=15 && share>=0.55 && !!better;
+    r.bleedingVs = better?better.placeLabel:null; r.bleedingVsAcos=better?better.acos:null; r.bleedingShare=share;
+  });
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
+  if(st.minOrders>0) rows=rows.filter(r=>r.orders>=st.minOrders);
+  if(st.bleedingOnly) rows=rows.filter(r=>r.bleeding);
   if(st.place) rows=rows.filter(r=>r.placeLabel===st.place);
   if(st.acosMin!==''&&st.acosMin!=null) rows=rows.filter(r=>r.acos===Infinity||r.acos>=+st.acosMin);
   if(st.acosMax!==''&&st.acosMax!=null) rows=rows.filter(r=>r.acos!==Infinity&&r.acos<=+st.acosMax);
-  rows.sort((a,b)=>b.spend-a.spend);
+  const sortAccessors={percentage:r=>r.percentage||0, clicks:r=>r.clicks||0, spend:r=>r.spend||0, sales:r=>r.sales||0, acos:r=>r.acos===Infinity?Number.MAX_VALUE:(r.acos||0), bid:r=>r.singleBid==null?-1:r.singleBid, cpc:r=>r.cpc||0};
+  const sortFn=sortAccessors[st.sortKey]||sortAccessors.spend;
+  rows.sort((a,b)=>(sortFn(a)-sortFn(b))*st.sortDir);
   const portfolios=[...new Set(LAST_PLACEMENTS.map(p=>(campsById[p.campaignId]||{}).portfolioName||'(No Portfolio)'))].sort();
   const fMoney=n=>'$'+(n||0).toFixed(2);
   const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
+  const sortableHeaders=[
+    {key:'percentage',label:'Current %'}, {key:'clicks',label:'Clicks'}, {key:'spend',label:'Spend'},
+    {key:'sales',label:'Sales'}, {key:'acos',label:'ACoS'}, {key:'bid',label:'Bid'}, {key:'cpc',label:'CPC'}
+  ];
   const rowHtml=r=>{
     const key=r.campaignId+'|'+r.placement;
     const editVal=PL_EDITS[key]!=null?PL_EDITS[key]:'';
@@ -1007,9 +1025,12 @@ function renderPlacements(){
       <td>${fMoney(r.spend)}</td>
       <td>${fMoney(r.sales)}</td>
       <td style="color:${r.acos===Infinity||r.acos>50?'#b91c1c':r.acos>25?'#c2760a':'#15803d'}">${fAcos(r.acos)}</td>
-      <td>${r.singleBid!=null?fMoney(r.singleBid):'<span class="muted">multi-kw</span>'}</td>
+      <td>${r.singleBid!=null?fMoney(r.singleBid):'<span class="muted" title="This campaign targets more than one keyword/product, each with its own bid, so there\'s no single shared bid to show here.">multi-kw</span>'}</td>
       <td>${fMoney(r.cpc)}</td>
-      <td>${r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:''}</td>
+      <td>${[
+        r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:'',
+        r.bleeding?`<span class="tag warn" title="This placement is taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS, while ${esc(r.bleedingVs)} in the same campaign converts far better (${fAcos(r.bleedingVsAcos)}). Consider trimming this placement's % gradually (a few points every 5-7 days) rather than all at once, so the campaign can shift volume to the better-performing placement without losing impression share.">bleeding</span>`:''
+      ].filter(Boolean).join(' ')}</td>
       <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
     </tr>`;
   };
@@ -1017,7 +1038,7 @@ function renderPlacements(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
       <div class="ctrls">
         <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
@@ -1030,6 +1051,8 @@ function renderPlacements(){
         <div class="field"><label>ACoS ≥</label><input type="number" id="pl-acosmin" value="${esc(st.acosMin)}" placeholder="—" style="width:80px;"></div>
         <div class="field"><label>ACoS ≤</label><input type="number" id="pl-acosmax" value="${esc(st.acosMax)}" placeholder="—" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
+        <div class="field"><label>Min Orders</label><input type="number" id="pl-minorders" value="${st.minOrders}" style="width:90px;"></div>
+        <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;height:34px;cursor:pointer;"><input type="checkbox" id="pl-bleedingonly" ${st.bleedingOnly?'checked':''}> Bleeding placements only</label></div>
       </div>
     </div>
     <div class="card pad">
@@ -1039,7 +1062,7 @@ function renderPlacements(){
         <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th><th>Bid</th><th>CPC</th><th class="l"></th><th>New %</th></tr></thead>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th>${sortableHeaders.map(h=>`<th class="sortable" data-sortkey="${h.key}" style="cursor:pointer;user-select:none;" title="Click to sort">${h.label}${st.sortKey===h.key?(st.sortDir===1?' ▲':' ▼'):''}</th>`).join('')}<th class="l"></th><th>New %</th></tr></thead>
         <tbody>${rows.map(rowHtml).join('')}</tbody>
       </table></div>
     </div>`;
@@ -1049,6 +1072,13 @@ function renderPlacements(){
   $('#pl-acosmin').oninput=debounce(()=>{st.acosMin=$('#pl-acosmin').value; renderPlacements();},300);
   $('#pl-acosmax').oninput=debounce(()=>{st.acosMax=$('#pl-acosmax').value; renderPlacements();},300);
   $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
+  $('#pl-minorders').oninput=debounce(()=>{st.minOrders=+$('#pl-minorders').value||0; renderPlacements();},300);
+  $('#pl-bleedingonly').onchange=e=>{st.bleedingOnly=e.target.checked; renderPlacements();};
+  document.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
+    const key=th.dataset.sortkey;
+    if(st.sortKey===key){ st.sortDir=-st.sortDir; } else { st.sortKey=key; st.sortDir=-1; }
+    renderPlacements();
+  });
   document.querySelectorAll('[data-pledit]').forEach(inp=>inp.oninput=debounce(()=>{
     const key=inp.dataset.pledit;
     if(inp.value===''){ delete PL_EDITS[key]; } else { PL_EDITS[key]=inp.value; }
@@ -1145,34 +1175,12 @@ $('#cm-file').onchange=e=>{
     try{
       const buf=new Uint8Array(ev.target.result);
       LAST_WB=XLSX.read(buf,{type:'array'}); LAST_FILENAME=file.name;
-      const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value);
+      const rows=processWorkbook(LAST_WB, '');
       $('#cm-status').innerHTML = `<b>${esc(file.name)}</b> — ${rows.length} enabled campaign(s) found.`;
       renderApp(rows);
     }catch(err){ console.error(err); alert('Import error: '+err.message); }
   };
   r.readAsArrayBuffer(file);
-};
-$('#cm-parentmap').onchange=e=>{
-  const file=e.target.files[0]; if(!file) return;
-  const r=new FileReader();
-  r.onload=ev=>{
-    try{
-      const buf=new Uint8Array(ev.target.result);
-      const wb=XLSX.read(buf,{type:'array'});
-      PARENT_MAP=parseParentMap(wb);
-      const n=Object.keys(PARENT_MAP).length;
-      if(!n){ $('#cm-parentmap-status').innerHTML = `Could not find "(Parent) ASIN" / "Product ASIN"-style columns in <b>${esc(file.name)}</b> — mixed detection unchanged.`; return; }
-      $('#cm-parentmap-status').innerHTML = `<b>${esc(file.name)}</b> loaded — ${n} child→parent ASIN mapping(s). Same-parent variations will no longer be flagged as MIXED.`;
-      if(LAST_WB){ const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value); renderApp(rows); }
-    }catch(err){ console.error(err); alert('Import error: '+err.message); }
-  };
-  r.readAsArrayBuffer(file);
-};
-$('#cm-brandterms').onchange=()=>{
-  if(!LAST_WB) return;
-  const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value);
-  $('#cm-status').innerHTML = `<b>${esc(LAST_FILENAME)}</b> — ${rows.length} enabled campaign(s) found.`;
-  renderApp(rows);
 };
 </script>
 </body>
