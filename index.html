@@ -2529,6 +2529,12 @@ function computePlacementOptRows(product, filters){
     // positive % that lands its effective bid right at its own target instead of the anchor's.
     const badTargets=floorBad.map(p=>({p, target:Math.max(0.02, p.cpc-Math.max(p.cpc*st.floorBuffer/100, st.floorBufferMinDollar))}));
     const newBid=+Math.min(...badTargets.map(x=>x.target)).toFixed(2);
+    // If a bad placement's own % was already large, its observed CPC reflects that inflated effective bid,
+    // not the campaign's base bid — cutting 15% off an already-boosted CPC can land ABOVE the old base bid,
+    // which would raise the shared bid instead of cutting it. That contradicts the entire premise of this
+    // override, so skip it outright rather than force a "cut" that isn't one; the campaign falls through to
+    // the normal tiered decrease below instead.
+    if(newBid>=target.bid) return;
     floorBidOverrides[cid]={newBid, oldBid:target.bid};
     plc.forEach(p=>{
       const badEntry=badTargets.find(x=>x.p===p);
@@ -2543,9 +2549,14 @@ function computePlacementOptRows(product, filters){
         return;
       }
       if(p.clicks<=0) return;
+      // Protect what this placement was ACTUALLY getting before (base × its own old %), not the campaign's
+      // raw base bid — a good placement that already carried a big % of its own would otherwise get judged
+      // against a number far below what it was really bidding, and get crushed toward 0% instead of kept
+      // where it was working.
+      const oldEffective=target.bid*(1+(p.percentage||0)/100);
       const gap=st.floorGoal-p.acos;
-      const bonusDollar=(p.orders>0 && gap>=st.floorBonusGap)?Math.max(target.bid*st.floorBonusPct/100, st.floorBonusMinDollar):0;
-      const targetEff=target.bid+bonusDollar;
+      const bonusDollar=(p.orders>0 && gap>=st.floorBonusGap)?Math.max(oldEffective*st.floorBonusPct/100, st.floorBonusMinDollar):0;
+      const targetEff=oldEffective+bonusDollar;
       const compPct=Math.max(0, Math.min(900, Math.round((targetEff/newBid-1)*100)));
       if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none'||p.action==='compensate') p.action='compensate'; }
     });
