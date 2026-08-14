@@ -2150,7 +2150,9 @@ function renderOptBids(){
   // cut below should stay in effect. Only the actionable subset (decrease/push/increase/compensate) is
   // shown in the "Placement (this campaign)" column / export, via placementChangesByCamp further down.
   const placementsByCamp={};
-  computePlacementOptRows(S.product, {}).allRows.forEach(pr=>{ if(!pr.isSingle) return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
+  const placementOpt=computePlacementOptRows(S.product, {});
+  placementOpt.allRows.forEach(pr=>{ if(!pr.isSingle) return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
+  const floorBidOverrides=placementOpt.floorBidOverrides||{};
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -2158,7 +2160,15 @@ function renderOptBids(){
     const acosAdj=bidCategoryAdj(category, st);
     const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
     let action='none', newBid=t.bid, pct=null, reason=null;
-    if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
+    const floorOverride=floorBidOverrides[t.campaignId];
+    if(floorOverride){
+      // A sibling placement is stuck at 0% and still bleeding — the Placement Optimizer already worked out
+      // the CPC/ACoS-goal bid this campaign needs (see computePlacementOptRows) instead of guessing from
+      // this keyword's own ACoS tier, which has nothing to do with what that specific placement costs.
+      action='decrease'; newBid=floorOverride.newBid;
+      pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
+      reason=`placement stuck at 0% floor — bid set to its CPC minus buffer`;
+    } else if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
       let decPct = t.orders>=1? decreaseTierFor(effAcos, st) : null;
       // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
       // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
@@ -2464,12 +2474,67 @@ function computePlacementOptRows(product, filters){
   if(bst.zeroHi1===undefined) bst.zeroHi1=3; if(bst.zeroDec1===undefined) bst.zeroDec1=10;
   if(bst.zeroHi2===undefined) bst.zeroHi2=6; if(bst.zeroDec2===undefined) bst.zeroDec2=20;
   if(bst.zeroHi3===undefined) bst.zeroHi3=10; if(bst.zeroDec3===undefined) bst.zeroDec3=30;
+  // --- CPC/ACoS-goal floor override -----------------------------------------------------------------
+  // A floor-bad (or ineffective-floor) placement means the % lever is spent — the shared bid is the only
+  // thing left that can move it. Rather than keep guessing that bid cut from the keyword's own ACoS tier
+  // (which has nothing to do with what THIS placement's auctions actually cost), anchor it to the real
+  // going rate: (worst floor-bad placement's own CPC) × (1 − buffer%). Every OTHER placement in that same
+  // campaign then gets raised back to the OLD bid's effective level (plus a bonus once it's beating the
+  // ACoS goal by a wide margin) so it doesn't take collateral damage from a bid cut aimed at its sibling.
+  // Only overrides campaigns where this is unambiguous (a real floor-bad placement AND a real good one to
+  // protect) — everything else still falls through to the tiered bid cut below, unchanged.
+  // Deliberately its own setting, not reused from hi1/hi2/hi3 above — those tune the UNRELATED graduated
+  // tier cuts that still apply to every other (non-floor-bad) placement; sharing a number would mean tuning
+  // one silently retunes the other.
+  if(st.floorGoal===undefined) st.floorGoal=50;
+  if(st.floorBuffer===undefined) st.floorBuffer=15;
+  if(st.floorBonusGap===undefined) st.floorBonusGap=25;
+  if(st.floorBonusPct===undefined) st.floorBonusPct=10;
+  const floorBidOverrides={};
+  const byCampForFloor={};
+  allRows.forEach(r=>{ if(r.isSingle) (byCampForFloor[r.campaignId]=byCampForFloor[r.campaignId]||[]).push(r); });
+  Object.keys(byCampForFloor).forEach(cid=>{
+    const plc=byCampForFloor[cid];
+    const target=singleTargetByCamp.get(cid);
+    if(!target) return;
+    const floorBad=plc.filter(p=>(p.action==='floor-bad'||p.ineffectiveFloor) && p.clicks>0);
+    if(!floorBad.length) return;
+    const goodOnes=plc.filter(p=>p.clicks>0 && p.orders>0 && p.acos<=st.floorGoal && !floorBad.includes(p));
+    if(!goodOnes.length) return;
+    // Each bad placement gets its OWN ceiling (its own CPC × buffer), not a shared floor of zero — the
+    // worst-CPC one becomes the anchor (0%, since its target equals the new bid exactly), but a less-bad
+    // placement among the bad ones still deserves a gentler cut than the anchor, reflected as a small
+    // positive % that lands its effective bid right at its own target instead of the anchor's.
+    const badTargets=floorBad.map(p=>({p, target:Math.max(0.02, p.cpc*(1-st.floorBuffer/100))}));
+    const newBid=+Math.min(...badTargets.map(x=>x.target)).toFixed(2);
+    floorBidOverrides[cid]={newBid, oldBid:target.bid};
+    plc.forEach(p=>{
+      const badEntry=badTargets.find(x=>x.p===p);
+      if(badEntry){
+        const pct=Math.max(0, Math.min(900, Math.round((badEntry.target/newBid-1)*100)));
+        p.newPct=pct;
+        // The anchor (its own target === the new bid) genuinely lands at 0% — no real % change, correctly
+        // excluded from export below. Any OTHER bad placement getting a real bump above its old % needs to
+        // actually export that change, so it can't stay labeled 'floor-bad' (which every export/table filter
+        // in this file treats as "nothing to show").
+        p.action = pct>p.percentage ? 'compensate' : 'floor-bad';
+        return;
+      }
+      if(p.clicks<=0) return;
+      const gap=st.floorGoal-p.acos;
+      const bonus=(p.orders>0 && gap>=st.floorBonusGap)?(1+st.floorBonusPct/100):1;
+      const targetEff=target.bid*bonus;
+      const compPct=Math.max(0, Math.min(900, Math.round((targetEff/newBid-1)*100)));
+      if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none'||p.action==='compensate') p.action='compensate'; }
+    });
+  });
   const byCampAll={};
   allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
   // singleTargetByCamp built up front now (needed by the ineffective-floor check above too) — indexed once,
   // not re-scanned per campaign, since a DATA.targets.find() inside this per-campaign loop is O(campaigns ×
   // targets) and is exactly what made the tab lock up the tab/browser on bigger accounts.
   Object.keys(byCampAll).forEach(cid=>{
+    if(floorBidOverrides[cid]) return; // handled by the CPC/goal override above instead
     const plc=byCampAll[cid];
     const target=singleTargetByCamp.get(cid);
     if(!target) return;
@@ -2497,7 +2562,7 @@ function computePlacementOptRows(product, filters){
   });
   if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const rows=allRows.filter(r=>r.action!=='none' && r.action!=='floor-bad');
-  return {rows, allRows, st, rowsRaw};
+  return {rows, allRows, st, rowsRaw, floorBidOverrides};
 }
 function renderOptPlacements(){
   const {rows: rowsAll, st, rowsRaw}=computePlacementOptRows(S.product, {});
@@ -2545,6 +2610,13 @@ function renderOptPlacements(){
         <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec2" value="${st.dec2}" style="width:90px;"></div>
         <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="op-hi3" value="${st.hi3}" style="width:80px;"></div>
         <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec3" value="${st.dec3}" style="width:90px;"></div>
+      </div>
+      <div class="hint" style="margin:12px 0 4px;"><b>Floor override</b> (single-keyword campaigns only) — when a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid entirely; instead the bid is set to (that placement's own CPC) × (1 − buffer%), and sibling placements at/below this goal get raised back to the old bid (plus a bonus once they're beating goal by a wide margin). Independent of the ACoS tiers above — tuning one doesn't affect the other.</div>
+      <div class="ctrls">
+        <div class="field"><label>Floor ACoS Goal %</label><input type="number" id="op-floorgoal" value="${st.floorGoal}" style="width:90px;"></div>
+        <div class="field"><label>Buffer % under CPC</label><input type="number" id="op-floorbuffer" value="${st.floorBuffer}" style="width:90px;"></div>
+        <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="op-floorbonusgap" value="${st.floorBonusGap}" style="width:90px;"></div>
+        <div class="field"><label>Bonus %</label><input type="number" id="op-floorbonuspct" value="${st.floorBonusPct}" style="width:90px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Increase if ACoS &lt;%</label><input type="number" id="op-lo" min="0" value="${st.lowAcos}" style="width:90px;"></div>
@@ -2595,6 +2667,8 @@ function renderOptPlacements(){
   bind('op-zerohi1','zeroHi1',v=>+v||0); bind('op-zerodec1','zeroDec1',v=>+v||0);
   bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
   bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
+  bind('op-floorgoal','floorGoal',v=>+v||0); bind('op-floorbuffer','floorBuffer',v=>+v||0);
+  bind('op-floorbonusgap','floorBonusGap',v=>+v||0); bind('op-floorbonuspct','floorBonusPct',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
