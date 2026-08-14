@@ -956,7 +956,7 @@ function renderBiddingStrategy(){
 // with a plain editable "New %" box per row. Only rows you actually typed a number into get exported —
 // leaving a row blank means "not touching this one".
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
-let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false};
+let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false, starvedOnly:false};
 let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
 let PL_LAST_ROWS=[]; // rows currently shown after filters — target set for the bulk nudge button
 function renderPlacements(){
@@ -996,6 +996,18 @@ function renderPlacements(){
     r.bleeding = campaignSpend>=15 && share>=0.55 && !!better;
     r.bleedingVs = better?better.placeLabel:null; r.bleedingVsAcos=better?better.acos:null; r.bleedingShare=share;
   });
+  // "Starved" campaigns: the base bid is likely too low to win Top of Search / Rest of Search auctions
+  // (which usually need a higher effective bid than Product Pages does), so almost every click lands on
+  // PP by default rather than by a placement-% choice — there's no TOS/ROS data to even compare ACoS
+  // against, which is why "bleeding" alone doesn't catch this pattern. Flagged on the PP row since that's
+  // the one holding the spend; the fix (lower bid + raise TOS/ROS %) is a single combined bulk edit.
+  rows.forEach(r=>{
+    if(r.placeLabel!=='Product Pages') return;
+    const siblings=byCampaign[r.campaignId];
+    const tosRosClicks=siblings.filter(x=>x.placeLabel==='Top of Search'||x.placeLabel==='Rest of Search').reduce((s,x)=>s+x.clicks,0);
+    r.starved = r.spend>=10 && r.clicks>0 && tosRosClicks<5;
+    r.starvedTosRosClicks=tosRosClicks;
+  });
   // Computed on the pre-filter set so isolating one campaign (by clicking its name, or typing its full
   // name) still finds every one of its placement rows even if a Placement/ACoS/Min Spend filter would
   // otherwise have hidden some of them from the main table.
@@ -1021,6 +1033,7 @@ function renderPlacements(){
   if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
   if(st.minOrders>0) rows=rows.filter(r=>r.orders>=st.minOrders);
   if(st.bleedingOnly) rows=rows.filter(r=>r.bleeding);
+  if(st.starvedOnly) rows=rows.filter(r=>r.starved);
   if(st.place) rows=rows.filter(r=>r.placeLabel===st.place);
   if(st.acosMin!==''&&st.acosMin!=null) rows=rows.filter(r=>r.acos===Infinity||r.acos>=+st.acosMin);
   if(st.acosMax!==''&&st.acosMax!=null) rows=rows.filter(r=>r.acos!==Infinity&&r.acos<=+st.acosMax);
@@ -1051,7 +1064,8 @@ function renderPlacements(){
       <td>${fMoney(r.cpc)}</td>
       <td>${[
         r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:'',
-        r.bleeding?`<span class="tag warn" title="This placement is taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS, while ${esc(r.bleedingVs)} in the same campaign converts far better (${fAcos(r.bleedingVsAcos)}). Consider trimming this placement's % gradually (a few points every 5-7 days) rather than all at once, so the campaign can shift volume to the better-performing placement without losing impression share.">bleeding</span>`:''
+        r.bleeding?`<span class="tag warn" title="This placement is taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS, while ${esc(r.bleedingVs)} in the same campaign converts far better (${fAcos(r.bleedingVsAcos)}). Consider trimming this placement's % gradually (a few points every 5-7 days) rather than all at once, so the campaign can shift volume to the better-performing placement without losing impression share.">bleeding</span>`:'',
+        r.starved?`<span class="tag warn" title="Top of Search + Rest of Search only got ${fInt(r.starvedTosRosClicks)} click(s) combined while Product Pages spent ${fMoney(r.spend)} — the base bid is likely too low to compete for TOS/ROS auctions at all. Cutting Product Pages % alone won't fix this; consider lowering the base bid below what's winning on PP and raising TOS/ROS % in the same bulk update, so the campaign doesn't just go dark until the % catches up.">TOS/ROS starved</span>`:''
       ].filter(Boolean).join(' ')}</td>
       <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
     </tr>`;
@@ -1084,7 +1098,7 @@ function renderPlacements(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those, then "Apply to N shown row(s)" fills New % for every visible row, cutting harder the worse that row's own ACoS is (a 300% ACoS row loses ~3x what a 100% ACoS row loses, relative to the nudge base). Still fully editable before export — nothing is sent until you export.</div>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those, then "Apply to N shown row(s)" fills New % for every visible row, cutting harder the worse that row's own ACoS is (a 300% ACoS row loses ~3x what a 100% ACoS row loses, relative to the nudge base). A <b>TOS/ROS starved</b> tag means Top of Search + Rest of Search got almost no clicks while Product Pages spent real money — usually the base bid itself is too low to compete outside PP, so the fix is lowering the bid and raising TOS/ROS % together, not cutting PP % alone. Still fully editable before export — nothing is sent until you export.</div>
       <div class="ctrls">
         <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
@@ -1099,6 +1113,7 @@ function renderPlacements(){
         <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
         <div class="field"><label>Min Orders</label><input type="number" id="pl-minorders" value="${st.minOrders}" style="width:90px;"></div>
         <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;height:34px;cursor:pointer;"><input type="checkbox" id="pl-bleedingonly" ${st.bleedingOnly?'checked':''}> Bleeding placements only</label></div>
+        <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;height:34px;cursor:pointer;"><input type="checkbox" id="pl-starvedonly" ${st.starvedOnly?'checked':''}> TOS/ROS starved only</label></div>
       </div>
     </div>
     ${campDetailHtml}
@@ -1126,6 +1141,7 @@ function renderPlacements(){
   $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
   $('#pl-minorders').oninput=debounce(()=>{st.minOrders=+$('#pl-minorders').value||0; renderPlacements();},300);
   $('#pl-bleedingonly').onchange=e=>{st.bleedingOnly=e.target.checked; renderPlacements();};
+  $('#pl-starvedonly').onchange=e=>{st.starvedOnly=e.target.checked; renderPlacements();};
   document.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
     const key=th.dataset.sortkey;
     if(st.sortKey===key){ st.sortDir=-st.sortDir; } else { st.sortKey=key; st.sortDir=-1; }
