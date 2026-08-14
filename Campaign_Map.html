@@ -91,7 +91,7 @@
   <div class="topbar">
     <h1>Account Tools</h1>
     <div class="seg" id="cm-mode">
-      <button data-mode="rename" class="active">Renaming</button>
+      <button data-mode="placements" class="active">Placements</button>
       <button data-mode="bidding">Bidding Strategy</button>
     </div>
     <div class="links">
@@ -115,7 +115,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-08-14 18:38</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-08-14 18:47</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -358,7 +358,7 @@ function sheetRows(wb, name){
   return {json, get};
 }
 
-function parseSPSheet(wb, byCampaign){
+function parseSPSheet(wb, byCampaign, placements){
   const s=sheetRows(wb,'Sponsored Products Campaigns'); if(!s) return;
   s.json.forEach(row=>{
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
@@ -393,6 +393,17 @@ function parseSPSheet(wb, byCampaign){
       const expr=String(s.get(row,['product targeting expression'])||'').trim().toLowerCase();
       if(expr.startsWith('category')) c.hasPTCategory=true;
       else if(expr.startsWith('asin')) c.hasPTAsin=true;
+    } else if(ent==='bidding adjustment' && placements){
+      const raw=String(s.get(row,['placement'])||'').trim();
+      if(!raw) return;
+      placements.push({
+        campaignId:cid, placement:raw, percentage:+String(s.get(row,['percentage'])||0).replace(/[^0-9.\-]/g,'')||0,
+        impressions:+String(s.get(row,['impressions'])||0).replace(/[^0-9.\-]/g,'')||0,
+        clicks:+String(s.get(row,['clicks'])||0).replace(/[^0-9.\-]/g,'')||0,
+        spend:+String(s.get(row,['spend'])||0).replace(/[^0-9.\-]/g,'')||0,
+        sales:+String(s.get(row,['sales'])||0).replace(/[^0-9.\-]/g,'')||0,
+        orders:+String(s.get(row,['orders'])||0).replace(/[^0-9.\-]/g,'')||0,
+      });
     }
   });
 }
@@ -570,13 +581,15 @@ function formatYM(ym, style){
 /* ============================ BUILD / RENDER ============================ */
 function processWorkbook(wb, brandTermsRaw){
   const byCampaign={};
-  parseSPSheet(wb, byCampaign);
+  const placements=[];
+  parseSPSheet(wb, byCampaign, placements);
   parseSBSheets(wb, byCampaign);
   parseSDSheet(wb, byCampaign);
   // Stashed unfiltered (enabled AND paused/archived) — the renaming feature below only ever wants enabled
   // campaigns, but Bidding Strategy needs every campaign regardless of state, so it keeps its own reference
   // to the full parse instead of the enabled-only `rows` this function returns.
   LAST_BY_CAMPAIGN=byCampaign;
+  LAST_PLACEMENTS=placements;
   const brandTerms=linesOf(brandTermsRaw).map(x=>x.toLowerCase());
   const enabledCampaigns=Object.values(byCampaign).filter(c=>c.state==='enabled');
 
@@ -655,10 +668,12 @@ function buildAsinGroups(rows){
 
 let LAST_ROWS=[];
 let LAST_BY_CAMPAIGN={};
-let APP_MODE='rename'; // 'rename' | 'bidding'
+let LAST_PLACEMENTS=[];
+let APP_MODE='placements'; // 'rename' (unused, kept for the old renaming code below) | 'bidding' | 'placements'
 function renderApp(rows){
   LAST_ROWS=rows;
   if(APP_MODE==='bidding'){ renderBiddingStrategy(); return; }
+  if(APP_MODE==='placements'){ renderPlacements(); return; }
   if(!rows.length){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>No enabled campaigns found in this file.</p></div></div>`;
     return;
@@ -930,6 +945,99 @@ function renderBiddingStrategy(){
   $('#bs-selall').onchange=e=>{ rows.forEach(r=>{ if(e.target.checked) BS_SEL.add(r.campaignId); else BS_SEL.delete(r.campaignId); }); renderBiddingStrategy(); };
   document.querySelectorAll('[data-bschk]').forEach(cb=>cb.onchange=()=>{ const cid=cb.dataset.bschk; if(cb.checked) BS_SEL.add(cid); else BS_SEL.delete(cid); renderBiddingStrategy(); });
   $('#bs-export').onclick=()=>exportBiddingStrategy(all.filter(r=>BS_SEL.has(r.campaignId)), st.target);
+}
+/* ============================ PLACEMENTS ============================ */
+// Same "you decide" philosophy as Bidding Strategy — no auto-suggested tiers here. Shows every SP campaign's
+// current Top of Search / Product Pages / Rest of Search split (% + spend/ACoS), sorted worst-spend-first,
+// with a plain editable "New %" box per row. Only rows you actually typed a number into get exported —
+// leaving a row blank means "not touching this one".
+function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
+let PL_STATE={port:'', camp:'', minSpend:1};
+let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
+function renderPlacements(){
+  const st=PL_STATE;
+  const campsById=LAST_BY_CAMPAIGN;
+  let rows=LAST_PLACEMENTS.map(p=>{
+    const c=campsById[p.campaignId]||{};
+    const acos = p.sales>0 ? p.spend/p.sales*100 : (p.spend>0? Infinity : 0);
+    return Object.assign({}, p, {
+      campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)',
+      state:c.state||'', placeLabel:placeName(p.placement), acos
+    });
+  });
+  if(!rows.length){
+    $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload a Bulk Operations export with placement performance data (Bidding Adjustment rows) to see this.</p></div></div>`;
+    return;
+  }
+  if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
+  rows.sort((a,b)=>b.spend-a.spend);
+  const portfolios=[...new Set(LAST_PLACEMENTS.map(p=>(campsById[p.campaignId]||{}).portfolioName||'(No Portfolio)'))].sort();
+  const fMoney=n=>'$'+(n||0).toFixed(2);
+  const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
+  const rowHtml=r=>{
+    const key=r.campaignId+'|'+r.placement;
+    const editVal=PL_EDITS[key]!=null?PL_EDITS[key]:'';
+    return `<tr>
+      <td class="l">${esc(r.campaignName)}</td>
+      <td class="l">${esc(r.portfolioName)}</td>
+      <td class="l">${esc(r.placeLabel)}</td>
+      <td>${(r.percentage||0)}%</td>
+      <td>${fInt(r.clicks)}</td>
+      <td>${fMoney(r.spend)}</td>
+      <td>${fMoney(r.sales)}</td>
+      <td style="color:${r.acos===Infinity||r.acos>50?'#b91c1c':r.acos>25?'#c2760a':'#15803d'}">${fAcos(r.acos)}</td>
+      <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
+    </tr>`;
+  };
+  const editedCount=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Placements</h3>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
+      <div class="ctrls">
+        <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
+        <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
+      </div>
+    </div>
+    <div class="card pad">
+      <div class="rowbar" style="margin:0 0 10px;">
+        <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
+        <div class="spacer"></div>
+        <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
+      </div>
+      <div class="tablewrap"><table>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th><th>New %</th></tr></thead>
+        <tbody>${rows.map(rowHtml).join('')}</tbody>
+      </table></div>
+    </div>`;
+  $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
+  $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
+  $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
+  document.querySelectorAll('[data-pledit]').forEach(inp=>inp.oninput=debounce(()=>{
+    const key=inp.dataset.pledit;
+    if(inp.value===''){ delete PL_EDITS[key]; } else { PL_EDITS[key]=inp.value; }
+    const btn=$('#pl-export'); const n=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
+    btn.disabled=!n; btn.textContent=`Export Placement Update (${n})`;
+  },300));
+  $('#pl-export').onclick=exportPlacements;
+}
+function fInt(n){ return Math.round(n||0).toLocaleString(); }
+function exportPlacements(){
+  const out=[];
+  Object.keys(PL_EDITS).forEach(key=>{
+    const val=PL_EDITS[key]; if(val===''||val==null) return;
+    const i=key.indexOf('|'); const cid=key.slice(0,i), raw=key.slice(i+1);
+    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':cid,'Placement':raw,'Percentage':+val}));
+  });
+  if(!out.length){ alert('No placements edited — type a new % in at least one row.'); return; }
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...out]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
+  XLSX.writeFile(wb, 'placement_update_bulk.xlsx');
+  alert(`Exported ${out.length} placement update(s).`);
 }
 function exportBiddingStrategy(rows, target){
   if(!rows.length){ alert('No campaigns selected.'); return; }
