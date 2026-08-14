@@ -189,7 +189,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-14 15:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-14 15:06</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2620,8 +2620,16 @@ function campaignBudgetUtil(c, periodDays){
 }
 function renderOptBudget(){
   const st=stFor('optbudget');
-  if(st.capUtil===undefined) st.capUtil=80; if(st.acosThreshold===undefined) st.acosThreshold=30;
-  if(st.incBudgetAmt===undefined) st.incBudgetAmt=5; if(st.decBudgetAmt===undefined) st.decBudgetAmt=5;
+  if(st.capUtil===undefined) st.capUtil=80;
+  // Graduated, same shape as the Bid Optimizer's ACoS tiers — reuses decreaseTierFor/increaseTierFor as-is;
+  // they're pure threshold lookups, so the numbers they return work equally well as dollar amounts here
+  // instead of percentages. Decrease tiers checked highest-ACoS-first, increase tiers lowest-ACoS-first.
+  if(st.hi1===undefined) st.hi1=30; if(st.dec1===undefined) st.dec1=5;
+  if(st.hi2===undefined) st.hi2=45; if(st.dec2===undefined) st.dec2=10;
+  if(st.hi3===undefined) st.hi3=60; if(st.dec3===undefined) st.dec3=20;
+  if(st.incHi1===undefined) st.incHi1=25; if(st.incPct1===undefined) st.incPct1=5;
+  if(st.incHi2===undefined) st.incHi2=15; if(st.incPct2===undefined) st.incPct2=10;
+  if(st.incHi3===undefined) st.incHi3=8; if(st.incPct3===undefined) st.incPct3=20;
   if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=7;
   if(st.manualBudget===undefined) st.manualBudget={};
   const days=Math.max(1, st.periodDays);
@@ -2630,29 +2638,30 @@ function renderOptBudget(){
   // Every eligible campaign shows up here now, not just the ones that cross a threshold — the point is to
   // let you SEE the underlying spend/sales/ACoS for every campaign and type in your own budget if you want,
   // not just approve or reject an auto-suggestion.
-  // One shared ACoS bar instead of two separate thresholds — below it AND capped on budget earns a bump,
-  // above it earns a cut, mirrored around the same number. Increase and decrease move the budget by a flat
-  // dollar amount, not a %, so a small $10 campaign and a big $500 one get the same real nudge instead of the
-  // % compounding differently on each.
   let rows=camps.map(c=>{
     const d=derive(c);
     const util=campaignBudgetUtil(c,days)*100;
-    let action='none', newBudget=c.dailyBudget, reason=null;
-    if(util>=st.capUtil && d.acos<st.acosThreshold){
-      action='increase'; newBudget=+(c.dailyBudget+st.incBudgetAmt).toFixed(2); reason=`${fInt(util)}% utilizat, ACoS ${fAcos(d.acos)}`;
-    } else if(d.acos>st.acosThreshold){
-      action='decrease'; newBudget=Math.max(1, +(c.dailyBudget-st.decBudgetAmt).toFixed(2)); reason=`ACoS ${fAcos(d.acos)}`;
+    let action='none', newBudget=c.dailyBudget, reason=null, delta=0;
+    if(util>=st.capUtil){
+      const incAmt=increaseTierFor(d.acos, st);
+      if(incAmt!=null){ action='increase'; delta=incAmt; newBudget=+(c.dailyBudget+incAmt).toFixed(2); reason=`${fInt(util)}% utilizat, ACoS ${fAcos(d.acos)}`; }
     }
-    return Object.assign({action,newBudget,util,reason},c,d);
+    if(action==='none'){
+      const decAmt=decreaseTierFor(d.acos, st);
+      if(decAmt!=null){ action='decrease'; delta=decAmt; newBudget=Math.max(1, +(c.dailyBudget-decAmt).toFixed(2)); reason=`ACoS ${fAcos(d.acos)}`; }
+    }
+    return Object.assign({action,newBudget,delta,util,reason},c,d);
   });
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   rows.forEach(r=>{ r._uid=r.campaignId; if(st.manualBudget[r._uid]!==undefined) r.newBudget=st.manualBudget[r._uid]; }); // stable identity — same reasoning as Bid/Placement Optimizer above
   const sel=selFor('optbudget');
   const totals=agg(rows);
+  // delta was captured BEFORE any manual override above, so the badge always shows the rule's own tiered
+  // amount — not thrown off if you then typed a different number into New Budget for that row.
   const actionBadge=r=>r.action==='increase'
-    ? `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason)}">↑ +${fMoney(st.incBudgetAmt)}</span>`
+    ? `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason)}">↑ +${fMoney(r.delta)}</span>`
     : r.action==='decrease'
-    ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.reason)}">↓ -${fMoney(st.decBudgetAmt)}</span>`
+    ? `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.reason)}">↓ -${fMoney(r.delta)}</span>`
     : `<span class="badge" style="background:#f1f3f6;color:#6b7280;">—</span>`;
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:actionBadge},
@@ -2668,12 +2677,26 @@ function renderOptBudget(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Budget rules</h3>
-      <div class="hint" style="margin-bottom:8px;">One shared ACoS bar — under it (and already capped on budget) earns a $ increase, over it earns a $ decrease. Both move the budget by a flat dollar amount, not a percentage.</div>
+      <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it. Amounts are flat $, not %.</div>
       <div class="ctrls">
-        <div class="field"><label>ACoS threshold</label><input type="number" id="obg-acosthr" value="${st.acosThreshold}" style="width:90px;">%</div>
+        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="obg-hi1" value="${st.hi1}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by $</label><input type="number" id="obg-dec1" value="${st.dec1}" style="width:80px;"></div>
+        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="obg-hi2" value="${st.hi2}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by $</label><input type="number" id="obg-dec2" value="${st.dec2}" style="width:80px;"></div>
+        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="obg-hi3" value="${st.hi3}" style="width:80px;"></div>
+        <div class="field"><label>Decrease by $</label><input type="number" id="obg-dec3" value="${st.dec3}" style="width:80px;"></div>
+      </div>
+      <div class="hint" style="margin:12px 0 4px;">Graduated increase, mirrored — the lower the ACoS, the bigger the bump. Each tier's ACoS threshold must be lower than the one before it. Only applies once the campaign has already capped its budget (below).</div>
+      <div class="ctrls">
+        <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="obg-inchi1" value="${st.incHi1}" style="width:80px;"></div>
+        <div class="field"><label>Increase by $</label><input type="number" id="obg-inc1" value="${st.incPct1}" style="width:80px;"></div>
+        <div class="field"><label>Tier 2: ACoS &lt;</label><input type="number" id="obg-inchi2" value="${st.incHi2}" style="width:80px;"></div>
+        <div class="field"><label>Increase by $</label><input type="number" id="obg-inc2" value="${st.incPct2}" style="width:80px;"></div>
+        <div class="field"><label>Tier 3: ACoS &lt;</label><input type="number" id="obg-inchi3" value="${st.incHi3}" style="width:80px;"></div>
+        <div class="field"><label>Increase by $</label><input type="number" id="obg-inc3" value="${st.incPct3}" style="width:80px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Increase if Budget Used &gt;</label><input type="number" id="obg-cap" value="${st.capUtil}" style="width:90px;">%</div>
-        <div class="field"><label>Increase by $</label><input type="number" id="obg-incamt" value="${st.incBudgetAmt}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by $</label><input type="number" id="obg-decamt" value="${st.decBudgetAmt}" style="width:80px;"></div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Reporting period (days)</label><input type="number" id="obg-days" value="${st.periodDays}" style="width:90px;"></div>
@@ -2694,8 +2717,13 @@ function renderOptBudget(){
   tbl.wire($('#obg-table'));
   const upd=()=>renderOptBudget();
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
-  bind('obg-acosthr','acosThreshold',v=>+v||0); bind('obg-cap','capUtil',v=>+v||0);
-  bind('obg-incamt','incBudgetAmt',v=>+v||0); bind('obg-decamt','decBudgetAmt',v=>+v||0);
+  bind('obg-cap','capUtil',v=>+v||0);
+  bind('obg-hi1','hi1',v=>+v||0); bind('obg-dec1','dec1',v=>+v||0);
+  bind('obg-hi2','hi2',v=>+v||0); bind('obg-dec2','dec2',v=>+v||0);
+  bind('obg-hi3','hi3',v=>+v||0); bind('obg-dec3','dec3',v=>+v||0);
+  bind('obg-inchi1','incHi1',v=>+v||0); bind('obg-inc1','incPct1',v=>+v||0);
+  bind('obg-inchi2','incHi2',v=>+v||0); bind('obg-inc2','incPct2',v=>+v||0);
+  bind('obg-inchi3','incHi3',v=>+v||0); bind('obg-inc3','incPct3',v=>+v||0);
   bind('obg-ms','minSpend',v=>+v||0); bind('obg-days','periodDays',v=>+v||1);
   $('#obg-port').onchange=e=>{st.port=e.target.value; upd();};
   // Typing a manual budget updates the row in place (and the persisted override), WITHOUT a full re-render —
