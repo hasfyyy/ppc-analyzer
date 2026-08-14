@@ -959,12 +959,54 @@ function renderBiddingStrategy(){
 // with a plain editable "New %" box per row. Only rows you actually typed a number into get exported —
 // leaving a row blank means "not touching this one".
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
-let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false, starvedOnly:false};
+let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1};
 let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
-let PL_KW_EDITS={}; // keyword/target id -> typed new bid value (string), for the multi-keyword bid-check panel
+let PL_KW_EDITS={}; // keyword/target id -> typed new bid value (string), for the Bid Optimizer panel
 let PL_KW_META={}; // keyword/target id -> {campaignId, adGroupId, entity} needed to build its bulk export row
-let PL_LAST_ROWS=[]; // rows currently shown after filters — target set for the bulk nudge button
-let PL_ALL_ROWS=[]; // every placement row before Portfolio/Campaign/Placement/ACoS filters — needed so the nudge button can still find a "good" sibling placement to raise even when it's filtered out of view
+let PL_LAST_ROWS=[]; // rows currently shown after filters
+let PL_ALL_ROWS=[]; // every placement row before Portfolio/Campaign/Placement/ACoS filters — the Bid Optimizer scans this account-wide, independent of what's currently filtered into view
+let BID_OPT={goal:50, buffer:15, bonusGap:25, bonusPct:10};
+// The account's actual playbook, reduced to two rules:
+// 1) Every placement performing worse than the ACoS goal gets a shared bid low enough to clear
+//    (1 - buffer%) of its OWN cpc — the worst-CPC one among them sets the campaign's new bid, since
+//    Amazon has no negative placement % to push a placement's effective bid any lower than the shared bid.
+// 2) Every placement performing better than goal gets a placement-% raise so its effective bid returns to
+//    the campaign's old bid (its proven working level) — plus a further +bonusPct% if it's beating goal by
+//    more than bonusGap points, since that much headroom means it can absorb a more aggressive push.
+// Multi-keyword campaigns use the single highest-bid keyword as the "shared bid" proxy — Amazon doesn't
+// report placement performance per keyword, so the top bidder is the best available guess at fault.
+function computeBidOptCandidates(allRows, opt){
+  const byCampaign={};
+  allRows.forEach(r=>{ (byCampaign[r.campaignId]=byCampaign[r.campaignId]||[]).push(r); });
+  const out=[];
+  Object.keys(byCampaign).forEach(cid=>{
+    const siblings=byCampaign[cid].filter(r=>r.clicks>0);
+    if(siblings.length<2) return;
+    const c=LAST_BY_CAMPAIGN[cid]||{};
+    const targets=(c.targetBids||[]).filter(t=>t.id).slice().sort((a,b)=>b.bid-a.bid);
+    if(!targets.length) return;
+    const topBid=targets[0].bid;
+    const bad=siblings.filter(r=>r.acos===Infinity||r.acos>opt.goal);
+    const good=siblings.filter(r=>r.acos!==Infinity&&r.acos<=opt.goal);
+    if(!bad.length||!good.length) return; // only act when the campaign has a clear split — otherwise there's nothing to anchor the bid cut against
+    const badTargets=bad.map(r=>({r, target:Math.max(0.02, r.cpc*(1-opt.buffer/100))}));
+    const newBaseBid=Math.min(...badTargets.map(x=>x.target));
+    const placements=siblings.map(r=>{
+      const isBad=bad.includes(r);
+      let target;
+      if(isBad){ target=badTargets.find(x=>x.r===r).target; }
+      else { const gap=opt.goal-r.acos; const bonus=gap>=opt.bonusGap?(1+opt.bonusPct/100):1; target=topBid*bonus; }
+      const pct=Math.max(0, Math.min(900, Math.round((target/newBaseBid-1)*100)));
+      return {key:r.campaignId+'|'+r.placement, placeLabel:r.placeLabel, acos:r.acos, cpc:r.cpc, oldPct:r.percentage||0, newPct:pct, role:isBad?'bad':'good'};
+    });
+    out.push({
+      campaignId:cid, campaignName:c.campaignName||cid, portfolioName:c.portfolioName||'(No Portfolio)',
+      topTarget:targets[0], newBid:+newBaseBid.toFixed(2), placements,
+      spend:siblings.reduce((s,r)=>s+r.spend,0)
+    });
+  });
+  return out.sort((a,b)=>b.spend-a.spend);
+}
 function renderPlacements(){
   const st=PL_STATE;
   const campsById=LAST_BY_CAMPAIGN;
@@ -973,52 +1015,15 @@ function renderPlacements(){
     const acos = p.sales>0 ? p.spend/p.sales*100 : (p.spend>0? Infinity : 0);
     const cpc = p.clicks>0 ? p.spend/p.clicks : 0;
     const singleBid = c.singleBid!=null ? c.singleBid : null;
-    // If the shared bid alone (before any % boost) already clears this placement's own real CPC, cutting the
-    // % here changes the number on screen but the campaign keeps winning the same auctions at the same
-    // cost — the bid itself is the only lever left. Only meaningful for single-keyword/PT campaigns, where
-    // there IS one shared bid; multi-target campaigns have no single bid to check this against.
-    const effBid = singleBid!=null ? singleBid*(1+(p.percentage||0)/100) : null;
-    const ineffective = singleBid!=null && cpc>0 && singleBid>=cpc;
     return Object.assign({}, p, {
       campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)',
-      state:c.state||'', placeLabel:placeName(p.placement), acos, cpc, singleBid, effBid, ineffective
+      state:c.state||'', placeLabel:placeName(p.placement), acos, cpc, singleBid
     });
   });
   if(!rows.length){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload a Bulk Operations export with placement performance data (Bidding Adjustment rows) to see this.</p></div></div>`;
     return;
   }
-  // Flag placements that are hogging a campaign's spend while performing meaningfully worse than a
-  // sibling placement in the same campaign that already has real spend behind it — this is the "bleeding
-  // into Product Pages while TOS/ROS convert better" pattern, computed on the full unfiltered set so it
-  // still sees siblings even when the placement filter narrows what's displayed.
-  const byCampaign={};
-  rows.forEach(r=>{ (byCampaign[r.campaignId]=byCampaign[r.campaignId]||[]).push(r); });
-  rows.forEach(r=>{
-    const siblings=byCampaign[r.campaignId];
-    const campaignSpend=siblings.reduce((s,x)=>s+x.spend,0);
-    const share=campaignSpend>0?r.spend/campaignSpend:0;
-    const better=siblings.find(x=>x!==r && x.spend>=Math.max(10, campaignSpend*0.1) && x.acos!==Infinity && (r.acos===Infinity || x.acos<=r.acos*0.7));
-    r.bleeding = campaignSpend>=15 && share>=0.55 && !!better;
-    r.bleedingVs = better?better.placeLabel:null; r.bleedingVsAcos=better?better.acos:null; r.bleedingShare=share;
-    r.bleedingVsKey = better?(better.campaignId+'|'+better.placement):null;
-    // If this placement is already at (near) 0% and still bleeding, there's no % left to cut — the shared
-    // bid itself is winning these auctions regardless of the multiplier, so the fix is lowering the bid,
-    // not trimming a % that's already at the floor.
-    r.bidCutNeeded = r.bleeding && (r.percentage||0)<=5;
-  });
-  // "Starved" campaigns: the base bid is likely too low to win Top of Search / Rest of Search auctions
-  // (which usually need a higher effective bid than Product Pages does), so almost every click lands on
-  // PP by default rather than by a placement-% choice — there's no TOS/ROS data to even compare ACoS
-  // against, which is why "bleeding" alone doesn't catch this pattern. Flagged on the PP row since that's
-  // the one holding the spend; the fix (lower bid + raise TOS/ROS %) is a single combined bulk edit.
-  rows.forEach(r=>{
-    if(r.placeLabel!=='Product Pages') return;
-    const siblings=byCampaign[r.campaignId];
-    const tosRosClicks=siblings.filter(x=>x.placeLabel==='Top of Search'||x.placeLabel==='Rest of Search').reduce((s,x)=>s+x.clicks,0);
-    r.starved = r.spend>=10 && r.clicks>0 && tosRosClicks<5;
-    r.starvedTosRosClicks=tosRosClicks;
-  });
   // Computed on the pre-filter set so isolating one campaign (by clicking its name, or typing its full
   // name) still finds every one of its placement rows even if a Placement/ACoS/Min Spend filter would
   // otherwise have hidden some of them from the main table.
@@ -1044,8 +1049,6 @@ function renderPlacements(){
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
   if(st.minOrders>0) rows=rows.filter(r=>r.orders>=st.minOrders);
-  if(st.bleedingOnly) rows=rows.filter(r=>r.bleeding);
-  if(st.starvedOnly) rows=rows.filter(r=>r.starved);
   if(st.place) rows=rows.filter(r=>r.placeLabel===st.place);
   if(st.acosMin!==''&&st.acosMin!=null) rows=rows.filter(r=>r.acos===Infinity||r.acos>=+st.acosMin);
   if(st.acosMax!==''&&st.acosMax!=null) rows=rows.filter(r=>r.acos!==Infinity&&r.acos<=+st.acosMax);
@@ -1074,56 +1077,41 @@ function renderPlacements(){
       <td style="color:${r.acos===Infinity||r.acos>50?'#b91c1c':r.acos>25?'#c2760a':'#15803d'}">${fAcos(r.acos)}</td>
       <td>${r.singleBid!=null?fMoney(r.singleBid):'<span class="muted" title="This campaign targets more than one keyword/product, each with its own bid, so there\'s no single shared bid to show here.">multi-kw</span>'}</td>
       <td>${fMoney(r.cpc)}</td>
-      <td>${[
-        r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:'',
-        r.bleeding&&r.bidCutNeeded&&r.singleBid!=null?`<span class="tag warn" title="This placement is already at ${(r.percentage||0)}% — there's no % left to cut. It's still taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS because the shared bid (${fMoney(r.singleBid)}) itself wins these auctions regardless of the multiplier. The fix is lowering that bid, not the %. “Apply to N shown row(s)” will raise ${esc(r.bleedingVs)}'s % instead, to compensate ${esc(r.bleedingVs)} for the bid cut so it doesn't lose volume too.">lower the bid</span>`:
-        r.bleeding&&r.bidCutNeeded?`<span class="tag warn" title="This placement is already at ${(r.percentage||0)}% — there's no % left to cut, and this campaign has multiple keywords/targets, so there's no single shared bid to point at either. Click the campaign name to open its keyword/target list (sorted highest bid first) — the highest-bid one(s) are the most likely to be winning cheap Product Pages auctions regardless of %. Lower just those, not every keyword in the campaign. “Apply to N shown row(s)” will still raise ${esc(r.bleedingVs)}'s % to compensate ahead of that.">check keyword bids</span>`:
-        r.bleeding?`<span class="tag warn" title="This placement is taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS, while ${esc(r.bleedingVs)} in the same campaign converts far better (${fAcos(r.bleedingVsAcos)}). Consider trimming this placement's % gradually (a few points every 5-7 days) rather than all at once, so the campaign can shift volume to the better-performing placement without losing impression share.">bleeding</span>`:'',
-        r.starved?`<span class="tag warn" title="Top of Search + Rest of Search only got ${fInt(r.starvedTosRosClicks)} click(s) combined while Product Pages spent ${fMoney(r.spend)} — the base bid is likely too low to compete for TOS/ROS auctions at all. Cutting Product Pages % alone won't fix this; consider lowering the base bid below what's winning on PP and raising TOS/ROS % in the same bulk update, so the campaign doesn't just go dark until the % catches up.">TOS/ROS starved</span>`:''
-      ].filter(Boolean).join(' ')}</td>
       <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
     </tr>`;
   };
   const editedCount=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
-  // Multi-keyword campaigns stuck at 0% placement % with nothing left to cut have no single shared bid to
-  // point at — but across a whole account there can be thousands of these rows, too many to open one by
-  // one via the campaign detail view. This scans every such campaign account-wide and surfaces just its
-  // single highest-bid keyword/target, the one most likely winning cheap Product Pages auctions regardless
-  // of placement %, so a fix can be applied at account scale instead of campaign-by-campaign.
-  const reviveSeen={};
-  PL_ALL_ROWS.forEach(r=>{
-    if(!r.bidCutNeeded || r.singleBid!=null || reviveSeen[r.campaignId]) return;
-    const c=LAST_BY_CAMPAIGN[r.campaignId]||{};
-    const targets=(c.targetBids||[]).filter(t=>t.id).slice().sort((a,b)=>b.bid-a.bid);
-    if(!targets.length) return;
-    reviveSeen[r.campaignId]={campaignId:r.campaignId, campaignName:c.campaignName||r.campaignId, portfolioName:c.portfolioName||'(No Portfolio)', spend:r.spend, acos:r.acos, top:targets[0], bleedingVs:r.bleedingVs, bleedingVsKey:r.bleedingVsKey};
-  });
-  const reviveCandidates=Object.values(reviveSeen).sort((a,b)=>b.spend-a.spend);
-  reviveCandidates.forEach(x=>{ PL_KW_META[x.top.id]={campaignId:x.campaignId, adGroupId:x.top.adGroupId, entity:x.top.entity}; });
+  const bidOptCandidates=computeBidOptCandidates(PL_ALL_ROWS, BID_OPT);
+  bidOptCandidates.forEach(x=>{ PL_KW_META[x.topTarget.id]={campaignId:x.campaignId, adGroupId:x.topTarget.adGroupId, entity:x.topTarget.entity}; });
   const kwEditedCount=Object.keys(PL_KW_EDITS).filter(k=>PL_KW_EDITS[k]!==''&&PL_KW_EDITS[k]!=null&&PL_KW_META[k]).length;
-  const reviveHtml = !reviveCandidates.length ? '' : `
+  const bidOptHtml = !bidOptCandidates.length ? '' : `
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 8px;">
-        <h3 class="sectitle" style="margin:0;">Multi-keyword bid check (${reviveCandidates.length})</h3>
+        <h3 class="sectitle" style="margin:0;">Bid Optimizer (${bidOptCandidates.length} campaigns)</h3>
         <div class="spacer"></div>
-        <div class="field"><label>Cut bid by %</label><input type="number" id="kw-cutpct" value="45" style="width:70px;"></div>
-        <div class="field"><label>Raise placement by pts</label><input type="number" id="kw-raisepts" value="100" style="width:80px;"></div>
-        <button class="btn ghost" id="kw-apply-all">Apply to ${reviveCandidates.length} shown row(s)</button>
+        <button class="btn ghost" id="bo-apply-all">Apply to ${bidOptCandidates.length} shown row(s)</button>
         <button class="btn grad" id="kw-export" ${kwEditedCount?'':'disabled'}>Export Keyword Bid Update (${kwEditedCount})</button>
       </div>
-      <div class="hint" style="margin-bottom:10px;">These campaigns have a placement already at ~0% and still bleeding, with more than one keyword/target — so there's no single shared bid to lower. Shown is each campaign's single highest-bid keyword/target, the most likely one winning cheap Product Pages auctions regardless of placement %. "Apply" cuts that bid by the % above and raises the campaign's better-performing sibling placement's % by the points above (both editable per-row afterward) — this exports separately from the placement update above, and the placement-% raise also needs including in that export, so run both before uploading.</div>
+      <div class="hint" style="margin-bottom:10px;">Campaigns with a clear split — at least one placement above ACoS goal, at least one at or below it. Bid = (worst-performing placement's own CPC) × (1 − buffer%); placements below goal get a % raise back to the old bid (plus a bonus if they're beating goal by a wide margin). Multi-keyword campaigns use their single highest-bid keyword as the bid to change. Still editable before export.</div>
+      <div class="ctrls" style="margin-bottom:10px;">
+        <div class="field"><label>ACoS Goal %</label><input type="number" id="bo-goal" value="${BID_OPT.goal}" style="width:80px;"></div>
+        <div class="field"><label>Buffer % under CPC</label><input type="number" id="bo-buffer" value="${BID_OPT.buffer}" style="width:80px;"></div>
+        <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="bo-bonusgap" value="${BID_OPT.bonusGap}" style="width:80px;"></div>
+        <div class="field"><label>Bonus %</label><input type="number" id="bo-bonuspct" value="${BID_OPT.bonusPct}" style="width:80px;"></div>
+      </div>
       <div class="tablewrap"><table>
-        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Top keyword/target</th><th class="l">Match</th><th>Current Bid</th><th>PP Spend</th><th>PP ACoS</th><th class="l">New Bid</th></tr></thead>
-        <tbody>${reviveCandidates.map(x=>`<tr>
-          <td class="l"><a href="#" class="camp-link" data-camp="${esc(x.campaignName)}">${esc(x.campaignName)}</a></td>
-          <td class="l">${esc(x.portfolioName)}</td>
-          <td class="l">${esc(x.top.text)}</td>
-          <td class="l">${esc(x.top.matchType)}</td>
-          <td>${fMoney(x.top.bid)}</td>
-          <td>${fMoney(x.spend)}</td>
-          <td style="color:${x.acos===Infinity||x.acos>50?'#b91c1c':x.acos>25?'#c2760a':'#15803d'}">${fAcos(x.acos)}</td>
-          <td><input type="number" step="0.01" placeholder="—" value="${esc(PL_KW_EDITS[x.top.id]||'')}" data-kwedit="${esc(x.top.id)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
-        </tr>`).join('')}</tbody>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Top keyword/target</th><th>New Bid</th><th class="l">Placement</th><th>ACoS</th><th>CPC</th><th>Old %</th><th>New %</th></tr></thead>
+        <tbody>${bidOptCandidates.map(x=>x.placements.map((p,i)=>`<tr>
+          <td class="l">${i===0?`<a href="#" class="camp-link" data-camp="${esc(x.campaignName)}">${esc(x.campaignName)}</a>`:''}</td>
+          <td class="l">${i===0?esc(x.portfolioName):''}</td>
+          <td class="l">${i===0?esc(x.topTarget.text):''}</td>
+          <td>${i===0?`<b>${fMoney(x.newBid)}</b>`:''}</td>
+          <td class="l">${esc(p.placeLabel)} <span class="muted">(${p.role})</span></td>
+          <td style="color:${p.acos===Infinity||p.acos>50?'#b91c1c':p.acos>25?'#c2760a':'#15803d'}">${fAcos(p.acos)}</td>
+          <td>${fMoney(p.cpc)}</td>
+          <td>${p.oldPct}%</td>
+          <td><b>${p.newPct}%</b></td>
+        </tr>`).join('')).join('')}</tbody>
       </table></div>
     </div>`;
   const campDetailHtml = !campDetail ? '' : `
@@ -1154,7 +1142,7 @@ function renderPlacements(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those, then "Apply to N shown row(s)" fills New % for every visible row, cutting harder the worse that row's own ACoS is (a 300% ACoS row loses ~3x what a 100% ACoS row loses, relative to the nudge base). When that placement is already at ~0% with nothing left to cut, the tag becomes <b>lower the bid</b> (single-keyword campaigns) or <b>check keyword bids</b> (multi-keyword — click the campaign name to see which keyword has the highest bid, since there's no single shared bid to point at) — either way, "Apply" raises the better-performing sibling placement's % by the same amount, so it doesn't lose volume once you separately lower the bid. A <b>TOS/ROS starved</b> tag means Top of Search + Rest of Search got almost no clicks while Product Pages spent real money — usually the base bid itself is too low to compete outside PP, so the fix is lowering the bid and raising TOS/ROS % together, not cutting PP % alone. Still fully editable before export — nothing is sent until you export.</div>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid). Type a new % only where you want a change; leave blank to leave it alone. See the Bid Optimizer panel below for an account-wide, ACoS-goal-driven bid + placement % calculation.</div>
       <div class="ctrls">
         <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
@@ -1168,8 +1156,6 @@ function renderPlacements(){
         <div class="field"><label>ACoS ≤</label><input type="number" id="pl-acosmax" value="${esc(st.acosMax)}" placeholder="—" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
         <div class="field"><label>Min Orders</label><input type="number" id="pl-minorders" value="${st.minOrders}" style="width:90px;"></div>
-        <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;height:34px;cursor:pointer;"><input type="checkbox" id="pl-bleedingonly" ${st.bleedingOnly?'checked':''}> Bleeding placements only</label></div>
-        <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;height:34px;cursor:pointer;"><input type="checkbox" id="pl-starvedonly" ${st.starvedOnly?'checked':''}> TOS/ROS starved only</label></div>
       </div>
     </div>
     ${campDetailHtml}
@@ -1177,16 +1163,14 @@ function renderPlacements(){
       <div class="rowbar" style="margin:0 0 10px;">
         <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
         <div class="spacer"></div>
-        <div class="field"><label>Nudge base</label><input type="number" id="pl-nudge" value="10" style="width:70px;"></div>
-        <button class="btn ghost" id="pl-nudge-apply" ${rows.length?'':'disabled'} title="Fills New % for every row currently shown with (current % − base × severity), where severity = ACoS/100%, clamped between 0.5x and 3x. A 300% ACoS row gets cut ~3x harder than a 100% ACoS row. For rows already at ~0% (tagged 'lower the bid'), no % is cut — instead the same amount is added to the better-performing sibling placement's %, to compensate it ahead of a manual bid cut. Floored/capped at 0-900%, still editable before export.">Apply to ${rows.length} shown row(s)</button>
         <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th>${sortableHeaders.map(h=>`<th class="sortable" data-sortkey="${h.key}" style="cursor:pointer;user-select:none;" title="Click to sort">${h.label}${st.sortKey===h.key?(st.sortDir===1?' ▲':' ▼'):''}</th>`).join('')}<th class="l"></th><th>New %</th></tr></thead>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th>${sortableHeaders.map(h=>`<th class="sortable" data-sortkey="${h.key}" style="cursor:pointer;user-select:none;" title="Click to sort">${h.label}${st.sortKey===h.key?(st.sortDir===1?' ▲':' ▼'):''}</th>`).join('')}<th>New %</th></tr></thead>
         <tbody>${rows.map(rowHtml).join('')}</tbody>
       </table></div>
     </div>
-    ${reviveHtml}`;
+    ${bidOptHtml}`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
   $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
   $('#pl-place').onchange=e=>{st.place=e.target.value; renderPlacements();};
@@ -1197,8 +1181,6 @@ function renderPlacements(){
   $('#pl-acosmax').oninput=debounce(()=>{st.acosMax=$('#pl-acosmax').value; renderPlacements();},300);
   $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
   $('#pl-minorders').oninput=debounce(()=>{st.minOrders=+$('#pl-minorders').value||0; renderPlacements();},300);
-  $('#pl-bleedingonly').onchange=e=>{st.bleedingOnly=e.target.checked; renderPlacements();};
-  $('#pl-starvedonly').onchange=e=>{st.starvedOnly=e.target.checked; renderPlacements();};
   document.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{
     const key=th.dataset.sortkey;
     if(st.sortKey===key){ st.sortDir=-st.sortDir; } else { st.sortKey=key; st.sortDir=-1; }
@@ -1220,47 +1202,18 @@ function renderPlacements(){
   },300));
   const kwExportBtn=$('#kw-export');
   if(kwExportBtn) kwExportBtn.onclick=exportKeywordBidUpdate;
-  const kwApplyAllBtn=$('#kw-apply-all');
-  if(kwApplyAllBtn) kwApplyAllBtn.onclick=()=>{
-    const cutPct=+$('#kw-cutpct').value||0;
-    const raisePts=+$('#kw-raisepts').value||0;
-    reviveCandidates.forEach(x=>{
-      const newBid=+(x.top.bid*(1-cutPct/100)).toFixed(2);
-      PL_KW_EDITS[x.top.id]=String(Math.max(0.02,newBid));
-      if(x.bleedingVsKey){
-        const target=PL_ALL_ROWS.find(rr=>(rr.campaignId+'|'+rr.placement)===x.bleedingVsKey);
-        if(target) PL_EDITS[x.bleedingVsKey]=String(Math.min(900, Math.round((target.percentage||0)+raisePts)));
-      }
-    });
-    renderPlacements();
-  };
-  const nudgeBtn=$('#pl-nudge-apply');
-  if(nudgeBtn) nudgeBtn.onclick=()=>{
-    const step=+$('#pl-nudge').value||0;
-    if(!step){ alert('Enter a nudge amount above 0.'); return; }
-    const raises={}; // sibling key -> total points to add, in case more than one bleeding row points to the same "good" sibling
-    PL_LAST_ROWS.forEach(r=>{
-      const key=r.campaignId+'|'+r.placement;
-      // Severity scales the change with how bad the placement's own ACoS is: 100% ACoS = 1x the base
-      // step, 300% ACoS = 3x, capped so one very high outlier doesn't move a % too far in one click,
-      // and floored so near-zero-ACoS rows (rare in a "bleeding" set) still get a token adjustment.
-      const acosPct = r.acos===Infinity ? 300 : r.acos;
-      const severity = Math.min(3, Math.max(0.5, acosPct/100));
-      const amount = Math.round(step*severity);
-      if(r.bidCutNeeded){
-        // Already at (near) 0% — nothing left to cut here. Instead, raise the sibling placement that's
-        // actually converting well, so it doesn't lose volume once the bid itself gets lowered separately.
-        if(r.bleedingVsKey) raises[r.bleedingVsKey]=(raises[r.bleedingVsKey]||0)+amount;
-        return;
-      }
-      const next=Math.max(0, Math.round((r.percentage||0)-amount));
-      PL_EDITS[key]=String(next);
-    });
-    Object.keys(raises).forEach(key=>{
-      const target=PL_ALL_ROWS.find(x=>(x.campaignId+'|'+x.placement)===key);
-      if(!target) return;
-      const raised=Math.min(900, Math.round((target.percentage||0)+raises[key]));
-      PL_EDITS[key]=String(raised);
+  ['bo-goal','bo-buffer','bo-bonusgap','bo-bonuspct'].forEach(id=>{
+    const el=$('#'+id); if(!el) return;
+    el.oninput=debounce(()=>{
+      BID_OPT={goal:+$('#bo-goal').value||0, buffer:+$('#bo-buffer').value||0, bonusGap:+$('#bo-bonusgap').value||0, bonusPct:+$('#bo-bonuspct').value||0};
+      renderPlacements();
+    },300);
+  });
+  const boApplyBtn=$('#bo-apply-all');
+  if(boApplyBtn) boApplyBtn.onclick=()=>{
+    bidOptCandidates.forEach(x=>{
+      PL_KW_EDITS[x.topTarget.id]=String(x.newBid);
+      x.placements.forEach(p=>{ PL_EDITS[p.key]=String(p.newPct); });
     });
     renderPlacements();
   };
