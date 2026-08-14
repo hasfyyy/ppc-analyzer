@@ -2280,8 +2280,10 @@ function renderOptBids(){
       <div class="ctrls">
         <div class="field"><label>Floor ACoS Goal %</label><input type="number" id="ob-floorgoal" value="${pst.floorGoal}" style="width:90px;"></div>
         <div class="field"><label>Buffer % under CPC</label><input type="number" id="ob-floorbuffer" value="${pst.floorBuffer}" style="width:90px;"></div>
+        <div class="field"><label>...or min $ under CPC</label><input type="number" step="0.01" id="ob-floorbufferdollar" value="${pst.floorBufferMinDollar}" style="width:90px;"></div>
         <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;"></div>
         <div class="field"><label>Bonus %</label><input type="number" id="ob-floorbonuspct" value="${pst.floorBonusPct}" style="width:90px;"></div>
+        <div class="field"><label>...or min $ bonus</label><input type="number" step="0.01" id="ob-floorbonusdollar" value="${pst.floorBonusMinDollar}" style="width:90px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
@@ -2339,7 +2341,9 @@ function renderOptBids(){
   bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incPct3',v=>+v||0);
   const bindPst=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ pst[key]=parse(el.value); upd(); },250); };
   bindPst('ob-floorgoal','floorGoal',v=>+v||0); bindPst('ob-floorbuffer','floorBuffer',v=>+v||0);
+  bindPst('ob-floorbufferdollar','floorBufferMinDollar',v=>+v||0);
   bindPst('ob-floorbonusgap','floorBonusGap',v=>+v||0); bindPst('ob-floorbonuspct','floorBonusPct',v=>+v||0);
+  bindPst('ob-floorbonusdollar','floorBonusMinDollar',v=>+v||0);
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   bind('ob-zerolow','zeroLowClicks',v=>+v||0); bind('ob-zeroinc','zeroIncPct',v=>+v||0);
@@ -2499,8 +2503,14 @@ function computePlacementOptRows(product, filters){
   // one silently retunes the other.
   if(st.floorGoal===undefined) st.floorGoal=50;
   if(st.floorBuffer===undefined) st.floorBuffer=15;
+  // A pure % cut/bonus falls apart at the extremes: 15% off a $0.50 CPC is a $0.075 nudge (meaningless —
+  // won't change what auctions get won), while a flat $ amount big enough to matter there would be a
+  // rounding error on a $4+ CPC. Taking whichever is LARGER — the % or a small fixed $ floor — keeps the
+  // cut/bonus meaningful at cheap-CPC accounts without needing a bigger % that would overcut expensive ones.
+  if(st.floorBufferMinDollar===undefined) st.floorBufferMinDollar=0.05;
   if(st.floorBonusGap===undefined) st.floorBonusGap=25;
   if(st.floorBonusPct===undefined) st.floorBonusPct=10;
+  if(st.floorBonusMinDollar===undefined) st.floorBonusMinDollar=0.05;
   const floorBidOverrides={};
   const byCampForFloor={};
   allRows.forEach(r=>{ if(r.isSingle) (byCampForFloor[r.campaignId]=byCampForFloor[r.campaignId]||[]).push(r); });
@@ -2516,7 +2526,7 @@ function computePlacementOptRows(product, filters){
     // worst-CPC one becomes the anchor (0%, since its target equals the new bid exactly), but a less-bad
     // placement among the bad ones still deserves a gentler cut than the anchor, reflected as a small
     // positive % that lands its effective bid right at its own target instead of the anchor's.
-    const badTargets=floorBad.map(p=>({p, target:Math.max(0.02, p.cpc*(1-st.floorBuffer/100))}));
+    const badTargets=floorBad.map(p=>({p, target:Math.max(0.02, p.cpc-Math.max(p.cpc*st.floorBuffer/100, st.floorBufferMinDollar))}));
     const newBid=+Math.min(...badTargets.map(x=>x.target)).toFixed(2);
     floorBidOverrides[cid]={newBid, oldBid:target.bid};
     plc.forEach(p=>{
@@ -2533,8 +2543,8 @@ function computePlacementOptRows(product, filters){
       }
       if(p.clicks<=0) return;
       const gap=st.floorGoal-p.acos;
-      const bonus=(p.orders>0 && gap>=st.floorBonusGap)?(1+st.floorBonusPct/100):1;
-      const targetEff=target.bid*bonus;
+      const bonusDollar=(p.orders>0 && gap>=st.floorBonusGap)?Math.max(target.bid*st.floorBonusPct/100, st.floorBonusMinDollar):0;
+      const targetEff=target.bid+bonusDollar;
       const compPct=Math.max(0, Math.min(900, Math.round((targetEff/newBid-1)*100)));
       if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none'||p.action==='compensate') p.action='compensate'; }
     });
@@ -2622,12 +2632,14 @@ function renderOptPlacements(){
         <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="op-hi3" value="${st.hi3}" style="width:80px;"></div>
         <div class="field"><label>Decrease by (points)</label><input type="number" id="op-dec3" value="${st.dec3}" style="width:90px;"></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;"><b>Floor override</b> (single-keyword campaigns only) — when a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid entirely; instead the bid is set to (that placement's own CPC) × (1 − buffer%), and sibling placements at/below this goal get raised back to the old bid (plus a bonus once they're beating goal by a wide margin). Independent of the ACoS tiers above — tuning one doesn't affect the other.</div>
+      <div class="hint" style="margin:12px 0 4px;"><b>Floor override</b> (single-keyword campaigns only) — when a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid entirely; instead the bid is set to (that placement's own CPC) minus whichever is BIGGER, the buffer % or the min $ (a % alone is a rounding error at a $0.50 CPC and overkill at a $4 one), and sibling placements at/below this goal get raised back to the old bid plus a bonus (again whichever is bigger, % or min $) once they're beating goal by a wide margin. Independent of the ACoS tiers above — tuning one doesn't affect the other.</div>
       <div class="ctrls">
         <div class="field"><label>Floor ACoS Goal %</label><input type="number" id="op-floorgoal" value="${st.floorGoal}" style="width:90px;"></div>
         <div class="field"><label>Buffer % under CPC</label><input type="number" id="op-floorbuffer" value="${st.floorBuffer}" style="width:90px;"></div>
+        <div class="field"><label>...or min $ under CPC</label><input type="number" step="0.01" id="op-floorbufferdollar" value="${st.floorBufferMinDollar}" style="width:90px;"></div>
         <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="op-floorbonusgap" value="${st.floorBonusGap}" style="width:90px;"></div>
         <div class="field"><label>Bonus %</label><input type="number" id="op-floorbonuspct" value="${st.floorBonusPct}" style="width:90px;"></div>
+        <div class="field"><label>...or min $ bonus</label><input type="number" step="0.01" id="op-floorbonusdollar" value="${st.floorBonusMinDollar}" style="width:90px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Increase if ACoS &lt;%</label><input type="number" id="op-lo" min="0" value="${st.lowAcos}" style="width:90px;"></div>
@@ -2679,7 +2691,9 @@ function renderOptPlacements(){
   bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
   bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
   bind('op-floorgoal','floorGoal',v=>+v||0); bind('op-floorbuffer','floorBuffer',v=>+v||0);
+  bind('op-floorbufferdollar','floorBufferMinDollar',v=>+v||0);
   bind('op-floorbonusgap','floorBonusGap',v=>+v||0); bind('op-floorbonuspct','floorBonusPct',v=>+v||0);
+  bind('op-floorbonusdollar','floorBonusMinDollar',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
