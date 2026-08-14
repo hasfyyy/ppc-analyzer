@@ -1187,6 +1187,7 @@ function fInt(n){ return Math.round(n||0).toLocaleString(); }
    actually move spend off Product Pages, and did the campaign keep
    spending/converting, or did it just go dark?" */
 let SB_LIB_PROMISE=null, SB_CLIENT=null;
+let WK_LABEL_OVERRIDE=null; // remembers what the user typed in "Save current upload as" across re-renders — otherwise uploading a new bulk file while on this tab re-renders it and silently resets the field to today's suggested week, clobbering whatever label they were about to save under
 function loadSupabaseLib(){
   if(SB_LIB_PROMISE) return SB_LIB_PROMISE;
   SB_LIB_PROMISE=new Promise((resolve,reject)=>{
@@ -1294,7 +1295,7 @@ async function renderWeekly(){
   (dbRows||[]).forEach(r=>{ store[r.week_label]={savedAt:r.saved_at, campaigns:(r.data&&r.data.campaigns)||{}}; });
   const weeks=Object.keys(store).sort();
   const hasCurrentUpload=LAST_PLACEMENTS.length>0;
-  const suggested=isoWeekLabel(new Date());
+  const suggested=WK_LABEL_OVERRIDE!=null?WK_LABEL_OVERRIDE:isoWeekLabel(new Date());
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Weekly Tracking</h3>
@@ -1320,6 +1321,7 @@ async function renderWeekly(){
       <div id="wk-compare"></div>
     </div>`:''}
   `;
+  $('#wk-label').oninput=()=>{ WK_LABEL_OVERRIDE=$('#wk-label').value; };
   $('#wk-save').onclick=async ()=>{
     const label=$('#wk-label').value.trim(); if(!label){ alert('Enter a week label.'); return; }
     const btn=$('#wk-save'); btn.disabled=true; btn.textContent='Saving…';
@@ -1329,6 +1331,7 @@ async function renderWeekly(){
       {onConflict:'user_id,week_label'}
     );
     if(error){ alert('Could not save: '+error.message); btn.disabled=false; btn.textContent='Save snapshot'; return; }
+    WK_LABEL_OVERRIDE=null; // saved successfully — next render can go back to suggesting today's actual week
     renderWeekly();
   };
   document.querySelectorAll('.wk-del').forEach(a=>a.onclick=async e=>{
