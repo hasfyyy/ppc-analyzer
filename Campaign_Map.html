@@ -958,6 +958,7 @@ function renderBiddingStrategy(){
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
 let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false};
 let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
+let PL_LAST_ROWS=[]; // rows currently shown after filters — target set for the bulk nudge button
 function renderPlacements(){
   const st=PL_STATE;
   const campsById=LAST_BY_CAMPAIGN;
@@ -1006,6 +1007,7 @@ function renderPlacements(){
   const sortAccessors={percentage:r=>r.percentage||0, clicks:r=>r.clicks||0, spend:r=>r.spend||0, sales:r=>r.sales||0, acos:r=>r.acos===Infinity?Number.MAX_VALUE:(r.acos||0), bid:r=>r.singleBid==null?-1:r.singleBid, cpc:r=>r.cpc||0};
   const sortFn=sortAccessors[st.sortKey]||sortAccessors.spend;
   rows.sort((a,b)=>(sortFn(a)-sortFn(b))*st.sortDir);
+  PL_LAST_ROWS=rows;
   const portfolios=[...new Set(LAST_PLACEMENTS.map(p=>(campsById[p.campaignId]||{}).portfolioName||'(No Portfolio)'))].sort();
   const fMoney=n=>'$'+(n||0).toFixed(2);
   const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
@@ -1038,7 +1040,7 @@ function renderPlacements(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those, then "Apply to N shown row(s)" fills New % with (current % − nudge amount) for every visible row, so you can knock a few points off the same bleeding placements each time you review a fresh export, without retyping each one. Still fully editable before export — nothing is sent until you export.</div>
       <div class="ctrls">
         <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
@@ -1059,6 +1061,8 @@ function renderPlacements(){
       <div class="rowbar" style="margin:0 0 10px;">
         <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
         <div class="spacer"></div>
+        <div class="field"><label>Nudge shown rows by</label><input type="number" id="pl-nudge" value="10" style="width:70px;"></div>
+        <button class="btn ghost" id="pl-nudge-apply" ${rows.length?'':'disabled'} title="Fills New % for every row currently shown with (current % − this amount), floored at 0. Still editable before export.">Apply to ${rows.length} shown row(s)</button>
         <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
       </div>
       <div class="tablewrap"><table>
@@ -1086,6 +1090,17 @@ function renderPlacements(){
     btn.disabled=!n; btn.textContent=`Export Placement Update (${n})`;
   },300));
   $('#pl-export').onclick=exportPlacements;
+  const nudgeBtn=$('#pl-nudge-apply');
+  if(nudgeBtn) nudgeBtn.onclick=()=>{
+    const step=+$('#pl-nudge').value||0;
+    if(!step){ alert('Enter a nudge amount above 0.'); return; }
+    PL_LAST_ROWS.forEach(r=>{
+      const key=r.campaignId+'|'+r.placement;
+      const next=Math.max(0, Math.round((r.percentage||0)-step));
+      PL_EDITS[key]=String(next);
+    });
+    renderPlacements();
+  };
 }
 function fInt(n){ return Math.round(n||0).toLocaleString(); }
 function exportPlacements(){
