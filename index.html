@@ -2578,6 +2578,11 @@ function computePlacementOptRows(product, filters){
     const factor=1/(1-decPct/100);
     plc.forEach(p=>{
       if(p.action==='decrease' || p.action==='floor-bad' || p.percentage<=0) return;
+      // Not individually flagged 'decrease' just means this placement didn't have enough of its OWN clicks
+      // to be judged on its own — not that it's actually a good performer. Only protect it from the bid cut
+      // if it's actually earning that (same bar the floor-override uses), or every placement with too little
+      // volume to be judged gets bumped by default, whether it deserves it or not.
+      if(!(p.clicks>0 && p.orders>0 && p.acos<=st.floorGoal)) return;
       const compPct=Math.min(900, Math.round((1+p.percentage/100)*factor*100-100));
       // A sub-1-point bump (15%→15.3%, rounded) changes nothing about which auctions get won — it's noise
       // in the export, not a real correction. Only register it once it's at least 1 whole point.
