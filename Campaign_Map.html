@@ -90,6 +90,10 @@
 
   <div class="topbar">
     <h1>Renaming Campaigns</h1>
+    <div class="seg" id="cm-mode">
+      <button data-mode="rename" class="active">Renaming</button>
+      <button data-mode="bidding">Bidding Strategy</button>
+    </div>
     <div class="links">
       <a class="backlink" href="Campaign_Builder.html">Campaign Builder</a>
       <a class="backlink" href="index.html">← PPC Analyzer</a>
@@ -111,7 +115,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-08-14 15:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Renaming Campaigns · build 2026-08-14 18:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -360,13 +364,15 @@ function parseSPSheet(wb, byCampaign){
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
     const cid=String(s.get(row,['campaign id'])||'').trim();
     if(!cid) return;
-    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,hasPTAsin:false,hasPTCategory:false,asins:new Set(),keywordTexts:[]});
+    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',biddingStrategy:'',dailyBudget:0,startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,hasPTAsin:false,hasPTCategory:false,asins:new Set(),keywordTexts:[]});
     if(ent==='campaign'){
       c.campaignName=String(s.get(row,['campaign name'])||c.campaignName);
       c.state=String(s.get(row,['state'])||c.state).trim().toLowerCase();
       c.portfolioId=String(s.get(row,['portfolio id'])||c.portfolioId).trim();
       c.portfolioName=String(s.get(row,['portfolio name'])||c.portfolioName).trim();
       c.targetingType=String(s.get(row,['targeting type'])||c.targetingType).trim();
+      c.biddingStrategy=String(s.get(row,['bidding strategy'])||c.biddingStrategy).trim();
+      c.dailyBudget=+String(s.get(row,['daily budget'])||c.dailyBudget||0).replace(/[^0-9.\-]/g,'')||c.dailyBudget||0;
       c.startDate=String(s.get(row,['start date'])||c.startDate).trim();
     } else if(ent==='ad group'){
       const agid=String(s.get(row,['ad group id'])||''); if(agid) c.adGroups.add(agid);
@@ -567,6 +573,10 @@ function processWorkbook(wb, brandTermsRaw){
   parseSPSheet(wb, byCampaign);
   parseSBSheets(wb, byCampaign);
   parseSDSheet(wb, byCampaign);
+  // Stashed unfiltered (enabled AND paused/archived) — the renaming feature below only ever wants enabled
+  // campaigns, but Bidding Strategy needs every campaign regardless of state, so it keeps its own reference
+  // to the full parse instead of the enabled-only `rows` this function returns.
+  LAST_BY_CAMPAIGN=byCampaign;
   const brandTerms=linesOf(brandTermsRaw).map(x=>x.toLowerCase());
   const enabledCampaigns=Object.values(byCampaign).filter(c=>c.state==='enabled');
 
@@ -620,8 +630,9 @@ function processWorkbook(wb, brandTermsRaw){
     // people scan first (in the UI and once exported/re-sorted in Excel), so the flag has to travel with it.
     const type=mixed? baseType+' · MIXED' : baseType;
     return {
-      campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type,
+      campaignId:c.campaignId, campaignName:c.campaignName, program:c.program, type, state:c.state,
       adGroupCount:c.adGroups?c.adGroups.size:0, portfolioId:c.portfolioId, portfolioName:c.portfolioName,
+      biddingStrategy:c.biddingStrategy||'', dailyBudget:c.dailyBudget||0,
       asins, parents, mixed, primaryAsin,
       createdMonthYear: monthYearFromStartDate(c.startDate), createdYM: startDateYM(c.startDate)
     };
@@ -643,8 +654,11 @@ function buildAsinGroups(rows){
 }
 
 let LAST_ROWS=[];
+let LAST_BY_CAMPAIGN={};
+let APP_MODE='rename'; // 'rename' | 'bidding'
 function renderApp(rows){
   LAST_ROWS=rows;
+  if(APP_MODE==='bidding'){ renderBiddingStrategy(); return; }
   if(!rows.length){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>No enabled campaigns found in this file.</p></div></div>`;
     return;
@@ -835,6 +849,98 @@ function renderApp(rows){
   });
 }
 
+/* ============================ BIDDING STRATEGY ============================ */
+// A blunt, deliberately manual tool — no ACoS tiers, no auto-suggestion. Built for the "an automated bidding
+// rule wrecked this account, cheap Product Pages traffic is burning spend" situation: see every campaign's
+// current bidding strategy at a glance across hundreds of campaigns, pick ONE target strategy, and push it to
+// every campaign you select in one bulk update. Unlike the renaming view above, this needs PAUSED campaigns
+// too (LAST_BY_CAMPAIGN, not the enabled-only LAST_ROWS) — the whole point is fixing account-wide settings
+// regardless of which campaigns happen to be delivering right now. The decision of what to set stays with you.
+const BID_STRATEGIES=['Dynamic bids - down only','Dynamic bids - up and down','Fixed bids'];
+let BS_SEL=new Set();
+let BS_STATE={target:'Dynamic bids - down only', scope:'all', port:'', camp:'', stratFilter:'all'};
+function renderBiddingStrategy(){
+  const st=BS_STATE;
+  const all=Object.values(LAST_BY_CAMPAIGN).filter(c=>c.program==='SP');
+  if(!all.length){
+    $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload a Bulk Operations export to see Sponsored Products campaigns here.</p></div></div>`;
+    return;
+  }
+  let rows=all;
+  if(st.scope==='enabled') rows=rows.filter(r=>r.state==='enabled');
+  else if(st.scope==='paused') rows=rows.filter(r=>r.state!=='enabled');
+  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  const allInScope=rows;
+  const stratCounts={};
+  allInScope.forEach(r=>{ const k=r.biddingStrategy||'(blank)'; stratCounts[k]=(stratCounts[k]||0)+1; });
+  if(st.stratFilter!=='all') rows=rows.filter(r=>(r.biddingStrategy||'(blank)')===st.stratFilter);
+  rows.sort((a,b)=>(b.dailyBudget||0)-(a.dailyBudget||0));
+  const portfolios=[...new Set(all.map(r=>r.portfolioName||'(No Portfolio)'))].sort();
+  const rowHtml=r=>{
+    const cid=r.campaignId;
+    return `<tr>
+      <td class="l"><input type="checkbox" data-bschk="${esc(cid)}" ${BS_SEL.has(cid)?'checked':''}></td>
+      <td class="l">${r.biddingStrategy?esc(r.biddingStrategy):'<span class="muted">(blank)</span>'}</td>
+      <td class="l">${esc(r.campaignName)}</td>
+      <td class="l">${esc(r.portfolioName||'(No Portfolio)')}</td>
+      <td class="l">${esc(r.state||'')}</td>
+      <td>${(r.dailyBudget||0).toFixed(2)}</td>
+    </tr>`;
+  };
+  const allChecked=rows.length>0 && rows.every(r=>BS_SEL.has(r.campaignId));
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Bidding Strategy</h3>
+      <div class="hint" style="margin-bottom:10px;">See every SP campaign's current bidding strategy at a glance (paused/archived included — this isn't scoped to what's currently delivering), then push ONE target strategy to whichever campaigns you select below. No auto-suggestion — you decide what to set and for which campaigns.</div>
+      <div class="ctrls">
+        <div class="field"><label>Set selected campaigns to</label><select id="bs-target">${BID_STRATEGIES.map(x=>`<option ${st.target===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label>Scope</label><select id="bs-scope">
+          <option value="all" ${st.scope==='all'?'selected':''}>All campaigns</option>
+          <option value="enabled" ${st.scope==='enabled'?'selected':''}>Enabled only</option>
+          <option value="paused" ${st.scope==='paused'?'selected':''}>Paused/archived only</option>
+        </select></div>
+        <div class="field"><label>Portfolio</label><select id="bs-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
+        <div class="field grow"><label>Campaign</label><input type="text" id="bs-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
+        <div class="field"><label>Show</label><select id="bs-stratf">
+          <option value="all" ${st.stratFilter==='all'?'selected':''}>All (${allInScope.length})</option>
+          ${Object.keys(stratCounts).sort().map(k=>`<option value="${esc(k)}" ${st.stratFilter===k?'selected':''}>${esc(k)} (${stratCounts[k]})</option>`).join('')}
+        </select></div>
+      </div>
+    </div>
+    <div class="card" style="display:flex;">
+      ${Object.keys(stratCounts).sort().map(k=>`<div class="stat"><b>${stratCounts[k]}</b><span>${esc(k)}</span></div>`).join('')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar" style="margin:0 0 10px;">
+        <h3 class="sectitle" style="margin:0;">SP Campaigns (${rows.length})</h3>
+        <div class="spacer"></div>
+        <button class="btn grad" id="bs-export" ${BS_SEL.size?'':'disabled'}>Export Bidding Strategy Update (${BS_SEL.size})</button>
+      </div>
+      <div class="tablewrap"><table>
+        <thead><tr><th class="l"><input type="checkbox" id="bs-selall" ${allChecked?'checked':''}></th><th class="l">Current Strategy</th><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">State</th><th>Daily Budget</th></tr></thead>
+        <tbody>${rows.map(rowHtml).join('')}</tbody>
+      </table></div>
+    </div>`;
+  $('#bs-target').onchange=e=>{st.target=e.target.value;};
+  $('#bs-scope').onchange=e=>{st.scope=e.target.value; renderBiddingStrategy();};
+  $('#bs-port').onchange=e=>{st.port=e.target.value; renderBiddingStrategy();};
+  $('#bs-camp').oninput=debounce(()=>{st.camp=$('#bs-camp').value; renderBiddingStrategy();},220);
+  $('#bs-stratf').onchange=e=>{st.stratFilter=e.target.value; renderBiddingStrategy();};
+  $('#bs-selall').onchange=e=>{ rows.forEach(r=>{ if(e.target.checked) BS_SEL.add(r.campaignId); else BS_SEL.delete(r.campaignId); }); renderBiddingStrategy(); };
+  document.querySelectorAll('[data-bschk]').forEach(cb=>cb.onchange=()=>{ const cid=cb.dataset.bschk; if(cb.checked) BS_SEL.add(cid); else BS_SEL.delete(cid); renderBiddingStrategy(); });
+  $('#bs-export').onclick=()=>exportBiddingStrategy(all.filter(r=>BS_SEL.has(r.campaignId)), st.target);
+}
+function exportBiddingStrategy(rows, target){
+  if(!rows.length){ alert('No campaigns selected.'); return; }
+  const out=rows.map(r=>bulkRow(Object.assign({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Bidding Strategy':target}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...out]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
+  XLSX.writeFile(wb, 'bidding_strategy_bulk.xlsx');
+  alert(`Exported ${out.length} campaign(s) → Bidding Strategy set to "${target}".`);
+}
+
 // Amazon's own bulk column set — a rename-only file needs just Product/Entity/Operation/Campaign ID/Campaign
 // Name, but every column must still be present (blank) or Bulk Operations rejects the sheet outright.
 const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression"];
@@ -886,6 +992,11 @@ function exportReport(rows, groups, mixedBucket, noAsinBucket){
 /* ============================ WIRING ============================ */
 let LAST_WB=null, LAST_FILENAME='';
 btLoadReadOnly();
+document.querySelectorAll('#cm-mode [data-mode]').forEach(b=>b.onclick=()=>{
+  APP_MODE=b.dataset.mode;
+  document.querySelectorAll('#cm-mode [data-mode]').forEach(x=>x.classList.toggle('active', x===b));
+  renderApp(LAST_ROWS);
+});
 $('#cm-file').onchange=e=>{
   const file=e.target.files[0]; if(!file) return;
   const r=new FileReader();
