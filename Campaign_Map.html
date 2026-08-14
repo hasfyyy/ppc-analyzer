@@ -962,6 +962,7 @@ function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) re
 let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false, starvedOnly:false};
 let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
 let PL_LAST_ROWS=[]; // rows currently shown after filters — target set for the bulk nudge button
+let PL_ALL_ROWS=[]; // every placement row before Portfolio/Campaign/Placement/ACoS filters — needed so the nudge button can still find a "good" sibling placement to raise even when it's filtered out of view
 function renderPlacements(){
   const st=PL_STATE;
   const campsById=LAST_BY_CAMPAIGN;
@@ -998,6 +999,11 @@ function renderPlacements(){
     const better=siblings.find(x=>x!==r && x.spend>=Math.max(10, campaignSpend*0.1) && x.acos!==Infinity && (r.acos===Infinity || x.acos<=r.acos*0.7));
     r.bleeding = campaignSpend>=15 && share>=0.55 && !!better;
     r.bleedingVs = better?better.placeLabel:null; r.bleedingVsAcos=better?better.acos:null; r.bleedingShare=share;
+    r.bleedingVsKey = better?(better.campaignId+'|'+better.placement):null;
+    // If this placement is already at (near) 0% and still bleeding, there's no % left to cut — the shared
+    // bid itself is winning these auctions regardless of the multiplier, so the fix is lowering the bid,
+    // not trimming a % that's already at the floor.
+    r.bidCutNeeded = r.bleeding && (r.percentage||0)<=5;
   });
   // "Starved" campaigns: the base bid is likely too low to win Top of Search / Rest of Search auctions
   // (which usually need a higher effective bid than Product Pages does), so almost every click lands on
@@ -1031,6 +1037,7 @@ function renderPlacements(){
       };
     }
   }
+  PL_ALL_ROWS=rows;
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
@@ -1067,6 +1074,7 @@ function renderPlacements(){
       <td>${fMoney(r.cpc)}</td>
       <td>${[
         r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:'',
+        r.bleeding&&r.bidCutNeeded?`<span class="tag warn" title="This placement is already at ${(r.percentage||0)}% — there's no % left to cut. It's still taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS because the shared bid itself wins these auctions regardless of the multiplier. The fix is lowering the bid, not the %. “Apply to N shown row(s)” will raise ${esc(r.bleedingVs)}'s % instead, to compensate ${esc(r.bleedingVs)} for the bid cut so it doesn't lose volume too.">lower the bid</span>`:
         r.bleeding?`<span class="tag warn" title="This placement is taking ${(r.bleedingShare*100).toFixed(0)}% of the campaign's spend at ${fAcos(r.acos)} ACoS, while ${esc(r.bleedingVs)} in the same campaign converts far better (${fAcos(r.bleedingVsAcos)}). Consider trimming this placement's % gradually (a few points every 5-7 days) rather than all at once, so the campaign can shift volume to the better-performing placement without losing impression share.">bleeding</span>`:'',
         r.starved?`<span class="tag warn" title="Top of Search + Rest of Search only got ${fInt(r.starvedTosRosClicks)} click(s) combined while Product Pages spent ${fMoney(r.spend)} — the base bid is likely too low to compete for TOS/ROS auctions at all. Cutting Product Pages % alone won't fix this; consider lowering the base bid below what's winning on PP and raising TOS/ROS % in the same bulk update, so the campaign doesn't just go dark until the % catches up.">TOS/ROS starved</span>`:''
       ].filter(Boolean).join(' ')}</td>
@@ -1101,7 +1109,7 @@ function renderPlacements(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those, then "Apply to N shown row(s)" fills New % for every visible row, cutting harder the worse that row's own ACoS is (a 300% ACoS row loses ~3x what a 100% ACoS row loses, relative to the nudge base). A <b>TOS/ROS starved</b> tag means Top of Search + Rest of Search got almost no clicks while Product Pages spent real money — usually the base bid itself is too low to compete outside PP, so the fix is lowering the bid and raising TOS/ROS % together, not cutting PP % alone. Still fully editable before export — nothing is sent until you export.</div>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first by default; click any column header to sort by it. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. A <b>bleeding</b> tag means this placement holds most of the campaign's spend but converts noticeably worse than another placement in the same campaign — tick "Bleeding placements only" to see just those, then "Apply to N shown row(s)" fills New % for every visible row, cutting harder the worse that row's own ACoS is (a 300% ACoS row loses ~3x what a 100% ACoS row loses, relative to the nudge base). When that placement is already at ~0% with nothing left to cut, the tag becomes <b>lower the bid</b> instead — "Apply" then raises the better-performing sibling placement's % by the same amount, so it doesn't lose volume once you separately lower the campaign's bid. A <b>TOS/ROS starved</b> tag means Top of Search + Rest of Search got almost no clicks while Product Pages spent real money — usually the base bid itself is too low to compete outside PP, so the fix is lowering the bid and raising TOS/ROS % together, not cutting PP % alone. Still fully editable before export — nothing is sent until you export.</div>
       <div class="ctrls">
         <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
@@ -1125,7 +1133,7 @@ function renderPlacements(){
         <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
         <div class="spacer"></div>
         <div class="field"><label>Nudge base</label><input type="number" id="pl-nudge" value="10" style="width:70px;"></div>
-        <button class="btn ghost" id="pl-nudge-apply" ${rows.length?'':'disabled'} title="Fills New % for every row currently shown with (current % − base × severity), where severity = ACoS/100%, clamped between 0.5x and 3x. A 300% ACoS row gets cut ~3x harder than a 100% ACoS row. Floored at 0%, still editable before export.">Apply to ${rows.length} shown row(s)</button>
+        <button class="btn ghost" id="pl-nudge-apply" ${rows.length?'':'disabled'} title="Fills New % for every row currently shown with (current % − base × severity), where severity = ACoS/100%, clamped between 0.5x and 3x. A 300% ACoS row gets cut ~3x harder than a 100% ACoS row. For rows already at ~0% (tagged 'lower the bid'), no % is cut — instead the same amount is added to the better-performing sibling placement's %, to compensate it ahead of a manual bid cut. Floored/capped at 0-900%, still editable before export.">Apply to ${rows.length} shown row(s)</button>
         <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
       </div>
       <div class="tablewrap"><table>
@@ -1161,16 +1169,29 @@ function renderPlacements(){
   if(nudgeBtn) nudgeBtn.onclick=()=>{
     const step=+$('#pl-nudge').value||0;
     if(!step){ alert('Enter a nudge amount above 0.'); return; }
+    const raises={}; // sibling key -> total points to add, in case more than one bleeding row points to the same "good" sibling
     PL_LAST_ROWS.forEach(r=>{
       const key=r.campaignId+'|'+r.placement;
-      // Severity scales the cut with how bad the placement's own ACoS is: 100% ACoS = 1x the base
-      // step, 300% ACoS = 3x, capped so one very high outlier doesn't wipe a placement's % in one go,
-      // and floored so near-zero-ACoS rows (rare in a "bleeding" set) still get a token trim.
+      // Severity scales the change with how bad the placement's own ACoS is: 100% ACoS = 1x the base
+      // step, 300% ACoS = 3x, capped so one very high outlier doesn't move a % too far in one click,
+      // and floored so near-zero-ACoS rows (rare in a "bleeding" set) still get a token adjustment.
       const acosPct = r.acos===Infinity ? 300 : r.acos;
       const severity = Math.min(3, Math.max(0.5, acosPct/100));
-      const cut = Math.round(step*severity);
-      const next=Math.max(0, Math.round((r.percentage||0)-cut));
+      const amount = Math.round(step*severity);
+      if(r.bidCutNeeded){
+        // Already at (near) 0% — nothing left to cut here. Instead, raise the sibling placement that's
+        // actually converting well, so it doesn't lose volume once the bid itself gets lowered separately.
+        if(r.bleedingVsKey) raises[r.bleedingVsKey]=(raises[r.bleedingVsKey]||0)+amount;
+        return;
+      }
+      const next=Math.max(0, Math.round((r.percentage||0)-amount));
       PL_EDITS[key]=String(next);
+    });
+    Object.keys(raises).forEach(key=>{
+      const target=PL_ALL_ROWS.find(x=>(x.campaignId+'|'+x.placement)===key);
+      if(!target) return;
+      const raised=Math.min(900, Math.round((target.percentage||0)+raises[key]));
+      PL_EDITS[key]=String(raised);
     });
     renderPlacements();
   };
