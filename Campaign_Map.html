@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Account Tools</title>
+<script src="supabase-config.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -1178,19 +1179,32 @@ function fInt(n){ return Math.round(n||0).toLocaleString(); }
 
 /* ============================ WEEKLY TRACKING ============================
    Saves a compact per-campaign/per-placement snapshot of whatever bulk export
-   is currently loaded, labeled by week (e.g. "2026-W32"), into localStorage —
-   this tool has no backend, so the browser's storage is the only place a
-   history across uploads can live. Comparing two saved weeks answers "did
-   last week's placement edits actually move spend off Product Pages, and did
-   the campaign keep spending/converting, or did it just go dark?" */
-const WEEKLY_KEY='ppc_weekly_snapshots_v1';
-let WEEKLY_STORE=null;
-function loadWeeklyStore(){
-  if(WEEKLY_STORE) return WEEKLY_STORE;
-  try{ WEEKLY_STORE=JSON.parse(localStorage.getItem(WEEKLY_KEY)||'{}'); }catch(e){ WEEKLY_STORE={}; }
-  return WEEKLY_STORE;
+   is currently loaded, labeled by week (e.g. "2026-W32"), into a Supabase
+   table scoped to the signed-in user — so the same history is visible from
+   any device, not just the browser that made the save. Only this tab
+   requires sign-in; Placements/Bidding Strategy stay open to anyone.
+   Comparing two saved weeks answers "did last week's placement edits
+   actually move spend off Product Pages, and did the campaign keep
+   spending/converting, or did it just go dark?" */
+let SB_LIB_PROMISE=null, SB_CLIENT=null;
+function loadSupabaseLib(){
+  if(SB_LIB_PROMISE) return SB_LIB_PROMISE;
+  SB_LIB_PROMISE=new Promise((resolve,reject)=>{
+    if(window.supabase){ resolve(window.supabase); return; }
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+    s.onload=()=>resolve(window.supabase);
+    s.onerror=()=>reject(new Error('Could not load the Supabase library.'));
+    document.head.appendChild(s);
+  });
+  return SB_LIB_PROMISE;
 }
-function saveWeeklyStore(){ localStorage.setItem(WEEKLY_KEY, JSON.stringify(WEEKLY_STORE)); }
+async function getSupabaseClient(){
+  if(SB_CLIENT) return SB_CLIENT;
+  const lib=await loadSupabaseLib();
+  SB_CLIENT=lib.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+  return SB_CLIENT;
+}
 function isoWeekLabel(d){
   d=new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-day+3);
@@ -1249,15 +1263,42 @@ function compareWeeksHtml(a,b,labelA,labelB){
     </tr>`).join('')}
   </tbody></table></div>`;
 }
-function renderWeekly(){
-  const store=loadWeeklyStore();
+async function renderWeekly(){
+  $('#app').innerHTML=`<div class="card pad"><div class="hint">Loading…</div></div>`;
+  let sb, session;
+  try{
+    sb=await getSupabaseClient();
+    ({data:{session}}=await sb.auth.getSession());
+  }catch(err){
+    $('#app').innerHTML=`<div class="card pad"><h3 class="sectitle">Weekly Tracking</h3><div class="hint">Could not reach the sign-in service: ${esc(err.message)}. Check your connection and reload.</div></div>`;
+    return;
+  }
+  if(APP_MODE!=='weekly') return; // user switched tabs while this was loading
+  if(!session){
+    const redirect=encodeURIComponent(location.pathname+location.search);
+    $('#app').innerHTML=`<div class="card pad">
+      <h3 class="sectitle">Weekly Tracking</h3>
+      <div class="hint" style="margin-bottom:10px;">Save each bulk export you review as a labeled week (e.g. 2026-W32), then compare any two weeks to see whether Product Pages share actually went down, ACoS held up, and no campaign quietly went dark — synced to your account, so it's the same on any device.</div>
+      <a class="btn grad" href="login.html?redirect=${redirect}">Log in to use Weekly Tracking</a>
+    </div>`;
+    return;
+  }
+  const uid=session.user.id;
+  const {data:dbRows, error:loadErr}=await sb.from('weekly_snapshots').select('week_label,saved_at,data').eq('user_id',uid).order('week_label');
+  if(APP_MODE!=='weekly') return;
+  if(loadErr){
+    $('#app').innerHTML=`<div class="card pad"><h3 class="sectitle">Weekly Tracking</h3><div class="hint">Could not load saved weeks: ${esc(loadErr.message)}. If this is the first time using this, make sure the "weekly_snapshots" table has been created in Supabase.</div></div>`;
+    return;
+  }
+  const store={};
+  (dbRows||[]).forEach(r=>{ store[r.week_label]={savedAt:r.saved_at, campaigns:(r.data&&r.data.campaigns)||{}}; });
   const weeks=Object.keys(store).sort();
   const hasCurrentUpload=LAST_PLACEMENTS.length>0;
   const suggested=isoWeekLabel(new Date());
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Weekly Tracking</h3>
-      <div class="hint" style="margin-bottom:10px;">Save each bulk export you review as a labeled week (e.g. 2026-W32), then compare any two weeks to see whether Product Pages share actually went down, ACoS held up, and no campaign quietly went dark. Saved only in this browser — not synced anywhere.</div>
+      <div class="hint" style="margin-bottom:10px;">Signed in as ${esc(session.user.email||uid)}. Save each bulk export you review as a labeled week, then compare any two weeks to see whether Product Pages share actually went down, ACoS held up, and no campaign quietly went dark. Synced to your account — visible on any device you log in from.</div>
       <div class="ctrls">
         <div class="field"><label>Save current upload as</label><input type="text" id="wk-label" value="${esc(suggested)}" style="width:140px;"></div>
         <button class="btn grad" id="wk-save" ${hasCurrentUpload?'':'disabled'}>Save snapshot</button>
@@ -1279,14 +1320,23 @@ function renderWeekly(){
       <div id="wk-compare"></div>
     </div>`:''}
   `;
-  $('#wk-save').onclick=()=>{
+  $('#wk-save').onclick=async ()=>{
     const label=$('#wk-label').value.trim(); if(!label){ alert('Enter a week label.'); return; }
-    store[label]=buildWeekSnapshot(); saveWeeklyStore(); renderWeekly();
+    const btn=$('#wk-save'); btn.disabled=true; btn.textContent='Saving…';
+    const snap=buildWeekSnapshot();
+    const {error}=await sb.from('weekly_snapshots').upsert(
+      {user_id:uid, week_label:label, saved_at:snap.savedAt, data:{campaigns:snap.campaigns}},
+      {onConflict:'user_id,week_label'}
+    );
+    if(error){ alert('Could not save: '+error.message); btn.disabled=false; btn.textContent='Save snapshot'; return; }
+    renderWeekly();
   };
-  document.querySelectorAll('.wk-del').forEach(a=>a.onclick=e=>{
+  document.querySelectorAll('.wk-del').forEach(a=>a.onclick=async e=>{
     e.preventDefault();
     if(!confirm(`Remove saved week "${a.dataset.week}"?`)) return;
-    delete store[a.dataset.week]; saveWeeklyStore(); renderWeekly();
+    const {error}=await sb.from('weekly_snapshots').delete().eq('user_id',uid).eq('week_label',a.dataset.week);
+    if(error){ alert('Could not remove: '+error.message); return; }
+    renderWeekly();
   });
   if(weeks.length>=2){
     const renderCompare=()=>{ $('#wk-compare').innerHTML=compareWeeksHtml(store[$('#wk-from').value], store[$('#wk-to').value], $('#wk-from').value, $('#wk-to').value); };
