@@ -2578,8 +2578,10 @@ function computePlacementOptRows(product, filters){
     const factor=1/(1-decPct/100);
     plc.forEach(p=>{
       if(p.action==='decrease' || p.action==='floor-bad' || p.percentage<=0) return;
-      const compPct=Math.min(900, +(((1+p.percentage/100)*factor-1)*100).toFixed(1));
-      if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none') p.action='compensate'; }
+      const compPct=Math.min(900, Math.round((1+p.percentage/100)*factor*100-100));
+      // A sub-1-point bump (15%→15.3%, rounded) changes nothing about which auctions get won — it's noise
+      // in the export, not a real correction. Only register it once it's at least 1 whole point.
+      if(compPct>=p.percentage+1 && compPct>p.newPct){ p.newPct=compPct; if(p.action==='none') p.action='compensate'; }
     });
   });
   if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
