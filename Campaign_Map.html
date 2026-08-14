@@ -380,7 +380,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const mt=String(s.get(row,['match type'])||'').trim();
       if(mt) c.matchTypes.add(mt);
       const kw=String(s.get(row,['keyword text'])||'').trim(); if(kw) c.keywordTexts.push(kw);
-      c.targetBids.push({text:kw||'(no text)', matchType:mt||'', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
+      c.targetBids.push({text:kw||'(no text)', matchType:mt||'', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0, id:String(s.get(row,['keyword id'])||'').trim(), adGroupId:String(s.get(row,['ad group id'])||'').trim(), entity:'Keyword'});
     } else if(ent==='product targeting'){
       c.hasPT=true;
       // "category=..." targeting is a fundamentally different campaign (broad category browsing) from
@@ -389,7 +389,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const expr=String(s.get(row,['product targeting expression'])||'').trim().toLowerCase();
       if(expr.startsWith('category')) c.hasPTCategory=true;
       else if(expr.startsWith('asin')) c.hasPTAsin=true;
-      c.targetBids.push({text:expr||'(no expression)', matchType:'PT', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
+      c.targetBids.push({text:expr||'(no expression)', matchType:'PT', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0, id:String(s.get(row,['product targeting id'])||'').trim(), adGroupId:String(s.get(row,['ad group id'])||'').trim(), entity:'Product Targeting'});
     } else if(ent==='bidding adjustment' && placements){
       const raw=String(s.get(row,['placement'])||'').trim();
       if(!raw) return;
@@ -961,6 +961,8 @@ function renderBiddingStrategy(){
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
 let PL_STATE={port:'', camp:'', minSpend:1, minOrders:0, sortKey:'spend', sortDir:-1, bleedingOnly:false, starvedOnly:false};
 let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
+let PL_KW_EDITS={}; // keyword/target id -> typed new bid value (string), for the multi-keyword bid-check panel
+let PL_KW_META={}; // keyword/target id -> {campaignId, adGroupId, entity} needed to build its bulk export row
 let PL_LAST_ROWS=[]; // rows currently shown after filters — target set for the bulk nudge button
 let PL_ALL_ROWS=[]; // every placement row before Portfolio/Campaign/Placement/ACoS filters — needed so the nudge button can still find a "good" sibling placement to raise even when it's filtered out of view
 function renderPlacements(){
@@ -1083,6 +1085,44 @@ function renderPlacements(){
     </tr>`;
   };
   const editedCount=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
+  // Multi-keyword campaigns stuck at 0% placement % with nothing left to cut have no single shared bid to
+  // point at — but across a whole account there can be thousands of these rows, too many to open one by
+  // one via the campaign detail view. This scans every such campaign account-wide and surfaces just its
+  // single highest-bid keyword/target, the one most likely winning cheap Product Pages auctions regardless
+  // of placement %, so a fix can be applied at account scale instead of campaign-by-campaign.
+  const reviveSeen={};
+  PL_ALL_ROWS.forEach(r=>{
+    if(!r.bidCutNeeded || r.singleBid!=null || reviveSeen[r.campaignId]) return;
+    const c=LAST_BY_CAMPAIGN[r.campaignId]||{};
+    const targets=(c.targetBids||[]).filter(t=>t.id).slice().sort((a,b)=>b.bid-a.bid);
+    if(!targets.length) return;
+    reviveSeen[r.campaignId]={campaignId:r.campaignId, campaignName:c.campaignName||r.campaignId, portfolioName:c.portfolioName||'(No Portfolio)', spend:r.spend, acos:r.acos, top:targets[0]};
+  });
+  const reviveCandidates=Object.values(reviveSeen).sort((a,b)=>b.spend-a.spend);
+  reviveCandidates.forEach(x=>{ PL_KW_META[x.top.id]={campaignId:x.campaignId, adGroupId:x.top.adGroupId, entity:x.top.entity}; });
+  const kwEditedCount=Object.keys(PL_KW_EDITS).filter(k=>PL_KW_EDITS[k]!==''&&PL_KW_EDITS[k]!=null&&PL_KW_META[k]).length;
+  const reviveHtml = !reviveCandidates.length ? '' : `
+    <div class="card pad">
+      <div class="rowbar" style="margin:0 0 8px;">
+        <h3 class="sectitle" style="margin:0;">Multi-keyword bid check (${reviveCandidates.length})</h3>
+        <div class="spacer"></div>
+        <button class="btn grad" id="kw-export" ${kwEditedCount?'':'disabled'}>Export Keyword Bid Update (${kwEditedCount})</button>
+      </div>
+      <div class="hint" style="margin-bottom:10px;">These campaigns have a placement already at ~0% and still bleeding, with more than one keyword/target — so there's no single shared bid to lower. Shown is each campaign's single highest-bid keyword/target, the most likely one winning cheap Product Pages auctions regardless of placement %. Type a new bid where you want a cut; this exports as its own Bulk Operations file, separate from the placement update above.</div>
+      <div class="tablewrap"><table>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Top keyword/target</th><th class="l">Match</th><th>Current Bid</th><th>PP Spend</th><th>PP ACoS</th><th class="l">New Bid</th></tr></thead>
+        <tbody>${reviveCandidates.map(x=>`<tr>
+          <td class="l"><a href="#" class="camp-link" data-camp="${esc(x.campaignName)}">${esc(x.campaignName)}</a></td>
+          <td class="l">${esc(x.portfolioName)}</td>
+          <td class="l">${esc(x.top.text)}</td>
+          <td class="l">${esc(x.top.matchType)}</td>
+          <td>${fMoney(x.top.bid)}</td>
+          <td>${fMoney(x.spend)}</td>
+          <td style="color:${x.acos===Infinity||x.acos>50?'#b91c1c':x.acos>25?'#c2760a':'#15803d'}">${fAcos(x.acos)}</td>
+          <td><input type="number" step="0.01" placeholder="—" value="${esc(PL_KW_EDITS[x.top.id]||'')}" data-kwedit="${esc(x.top.id)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
   const campDetailHtml = !campDetail ? '' : `
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 8px;">
@@ -1141,7 +1181,8 @@ function renderPlacements(){
         <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th>${sortableHeaders.map(h=>`<th class="sortable" data-sortkey="${h.key}" style="cursor:pointer;user-select:none;" title="Click to sort">${h.label}${st.sortKey===h.key?(st.sortDir===1?' ▲':' ▼'):''}</th>`).join('')}<th class="l"></th><th>New %</th></tr></thead>
         <tbody>${rows.map(rowHtml).join('')}</tbody>
       </table></div>
-    </div>`;
+    </div>
+    ${reviveHtml}`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
   $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
   $('#pl-place').onchange=e=>{st.place=e.target.value; renderPlacements();};
@@ -1166,6 +1207,15 @@ function renderPlacements(){
     btn.disabled=!n; btn.textContent=`Export Placement Update (${n})`;
   },300));
   $('#pl-export').onclick=exportPlacements;
+  document.querySelectorAll('[data-kwedit]').forEach(inp=>inp.oninput=debounce(()=>{
+    const id=inp.dataset.kwedit;
+    if(inp.value===''){ delete PL_KW_EDITS[id]; } else { PL_KW_EDITS[id]=inp.value; }
+    const btn=$('#kw-export'); if(!btn) return;
+    const n=Object.keys(PL_KW_EDITS).filter(k=>PL_KW_EDITS[k]!==''&&PL_KW_EDITS[k]!=null&&PL_KW_META[k]).length;
+    btn.disabled=!n; btn.textContent=`Export Keyword Bid Update (${n})`;
+  },300));
+  const kwExportBtn=$('#kw-export');
+  if(kwExportBtn) kwExportBtn.onclick=exportKeywordBidUpdate;
   const nudgeBtn=$('#pl-nudge-apply');
   if(nudgeBtn) nudgeBtn.onclick=()=>{
     const step=+$('#pl-nudge').value||0;
@@ -1414,6 +1464,22 @@ function exportPlacements(){
   XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
   XLSX.writeFile(wb, 'placement_update_bulk.xlsx');
   alert(`Exported ${out.length} placement update(s).`);
+}
+function exportKeywordBidUpdate(){
+  const out=[];
+  Object.keys(PL_KW_EDITS).forEach(id=>{
+    const val=PL_KW_EDITS[id]; if(val===''||val==null) return;
+    const meta=PL_KW_META[id]; if(!meta) return;
+    const row={'Product':'Sponsored Products','Entity':meta.entity,'Operation':'Update','Campaign ID':meta.campaignId,'Ad Group ID':meta.adGroupId,'Bid':+val};
+    if(meta.entity==='Keyword') row['Keyword ID']=id; else row['Product Targeting ID']=id;
+    out.push(bulkRow(row));
+  });
+  if(!out.length){ alert('No keyword/target bids edited — type a new bid in at least one row.'); return; }
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...out]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
+  XLSX.writeFile(wb, 'keyword_bid_update_bulk.xlsx');
+  alert(`Exported ${out.length} keyword/target bid update(s).`);
 }
 function exportBiddingStrategy(rows, target){
   if(!rows.length){ alert('No campaigns selected.'); return; }
