@@ -93,6 +93,7 @@
     <div class="seg" id="cm-mode">
       <button data-mode="placements" class="active">Placements</button>
       <button data-mode="bidding">Bidding Strategy</button>
+      <button data-mode="weekly">Weekly</button>
     </div>
     <div class="links"></div>
   </div>
@@ -678,6 +679,7 @@ function renderApp(rows){
   LAST_ROWS=rows;
   if(APP_MODE==='bidding'){ renderBiddingStrategy(); return; }
   if(APP_MODE==='placements'){ renderPlacements(); return; }
+  if(APP_MODE==='weekly'){ renderWeekly(); return; }
   if(!rows.length){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>No enabled campaigns found in this file.</p></div></div>`;
     return;
@@ -1173,6 +1175,127 @@ function renderPlacements(){
   };
 }
 function fInt(n){ return Math.round(n||0).toLocaleString(); }
+
+/* ============================ WEEKLY TRACKING ============================
+   Saves a compact per-campaign/per-placement snapshot of whatever bulk export
+   is currently loaded, labeled by week (e.g. "2026-W32"), into localStorage —
+   this tool has no backend, so the browser's storage is the only place a
+   history across uploads can live. Comparing two saved weeks answers "did
+   last week's placement edits actually move spend off Product Pages, and did
+   the campaign keep spending/converting, or did it just go dark?" */
+const WEEKLY_KEY='ppc_weekly_snapshots_v1';
+let WEEKLY_STORE=null;
+function loadWeeklyStore(){
+  if(WEEKLY_STORE) return WEEKLY_STORE;
+  try{ WEEKLY_STORE=JSON.parse(localStorage.getItem(WEEKLY_KEY)||'{}'); }catch(e){ WEEKLY_STORE={}; }
+  return WEEKLY_STORE;
+}
+function saveWeeklyStore(){ localStorage.setItem(WEEKLY_KEY, JSON.stringify(WEEKLY_STORE)); }
+function isoWeekLabel(d){
+  d=new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-day+3);
+  const firstThursday=new Date(Date.UTC(d.getUTCFullYear(),0,4));
+  const week=1+Math.round(((d-firstThursday)/86400000-3+((firstThursday.getUTCDay()+6)%7))/7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+function buildWeekSnapshot(){
+  const campsById=LAST_BY_CAMPAIGN;
+  const campaigns={};
+  LAST_PLACEMENTS.forEach(p=>{
+    const c=campsById[p.campaignId]||{};
+    const entry=campaigns[p.campaignId]||(campaigns[p.campaignId]={campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)', placements:{}});
+    const label=placeName(p.placement);
+    const pl=entry.placements[label]||(entry.placements[label]={spend:0,sales:0,clicks:0,orders:0,percentage:p.percentage||0});
+    pl.spend+=p.spend; pl.sales+=p.sales; pl.clicks+=p.clicks; pl.orders+=p.orders; pl.percentage=p.percentage||0;
+  });
+  return {savedAt:new Date().toISOString(), campaigns};
+}
+function weekTotals(camp){
+  const pls=camp?Object.values(camp.placements):[];
+  const spend=pls.reduce((s,p)=>s+p.spend,0);
+  const sales=pls.reduce((s,p)=>s+p.sales,0);
+  const ppSpend=camp&&camp.placements['Product Pages']?camp.placements['Product Pages'].spend:0;
+  return {spend, sales, ppShare: spend>0?ppSpend/spend:0, acos: sales>0?spend/sales*100:(spend>0?Infinity:0)};
+}
+function compareWeeksHtml(a,b,labelA,labelB){
+  const fMoney=n=>'$'+(n||0).toFixed(2);
+  const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
+  const fPct=n=>Math.round((n||0)*100)+'%';
+  const ids=new Set([...Object.keys(a.campaigns), ...Object.keys(b.campaigns)]);
+  let rows=[...ids].map(cid=>{
+    const ca=a.campaigns[cid], cb=b.campaigns[cid];
+    const ta=weekTotals(ca), tb=weekTotals(cb);
+    return {
+      cid, name:(cb&&cb.campaignName)||(ca&&ca.campaignName)||cid, portfolio:(cb&&cb.portfolioName)||(ca&&ca.portfolioName)||'',
+      ta, tb, spendDeltaPct: ta.spend>0?(tb.spend-ta.spend)/ta.spend*100:null,
+      wentDark: ta.spend>=15 && tb.spend<ta.spend*0.5
+    };
+  }).filter(r=>r.ta.spend>0||r.tb.spend>0);
+  rows.sort((x,y)=>(y.wentDark-x.wentDark) || (Math.abs(y.ta.ppShare-y.tb.ppShare)-Math.abs(x.ta.ppShare-x.tb.ppShare)));
+  if(!rows.length) return '<div class="hint" style="margin-top:10px;">No overlapping campaigns between these two weeks.</div>';
+  return `<div style="max-height:520px;overflow:auto;margin-top:10px;"><table style="width:100%;"><thead><tr>
+    <th class="l">Campaign</th><th class="l">Portfolio</th>
+    <th>PP share ${esc(labelA)}</th><th>PP share ${esc(labelB)}</th>
+    <th>Spend ${esc(labelA)}</th><th>Spend ${esc(labelB)}</th><th>Spend Δ</th>
+    <th>ACoS ${esc(labelA)}</th><th>ACoS ${esc(labelB)}</th><th class="l"></th>
+  </tr></thead><tbody>
+    ${rows.map(r=>`<tr>
+      <td class="l">${esc(r.name)}</td><td class="l">${esc(r.portfolio)}</td>
+      <td>${fPct(r.ta.ppShare)}</td><td>${fPct(r.tb.ppShare)}</td>
+      <td>${fMoney(r.ta.spend)}</td><td>${fMoney(r.tb.spend)}</td>
+      <td style="color:${r.spendDeltaPct!=null&&r.spendDeltaPct<-30?'#b91c1c':r.spendDeltaPct!=null&&r.spendDeltaPct>10?'#15803d':'inherit'}">${r.spendDeltaPct==null?'—':(r.spendDeltaPct>0?'+':'')+r.spendDeltaPct.toFixed(0)+'%'}</td>
+      <td>${fAcos(r.ta.acos)}</td><td>${fAcos(r.tb.acos)}</td>
+      <td class="l">${r.wentDark?`<span class="tag warn" title="Total spend dropped more than half vs ${esc(labelA)} — this usually means the campaign fell out of the auction rather than shifting toward TOS/ROS. Consider raising the bid or placement % back up a bit rather than cutting further.">went dark</span>`:''}</td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+function renderWeekly(){
+  const store=loadWeeklyStore();
+  const weeks=Object.keys(store).sort();
+  const hasCurrentUpload=LAST_PLACEMENTS.length>0;
+  const suggested=isoWeekLabel(new Date());
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Weekly Tracking</h3>
+      <div class="hint" style="margin-bottom:10px;">Save each bulk export you review as a labeled week (e.g. 2026-W32), then compare any two weeks to see whether Product Pages share actually went down, ACoS held up, and no campaign quietly went dark. Saved only in this browser — not synced anywhere.</div>
+      <div class="ctrls">
+        <div class="field"><label>Save current upload as</label><input type="text" id="wk-label" value="${esc(suggested)}" style="width:140px;"></div>
+        <button class="btn grad" id="wk-save" ${hasCurrentUpload?'':'disabled'}>Save snapshot</button>
+        ${!hasCurrentUpload?'<span class="hint">Upload a Bulk Operations export at the top of the page first, then come back here to save it as this week&#39;s snapshot.</span>':''}
+      </div>
+    </div>
+    <div class="card pad">
+      <h3 class="sectitle">Saved weeks (${weeks.length})</h3>
+      ${!weeks.length?'<div class="hint">No weeks saved yet.</div>':`<table style="width:100%;"><thead><tr><th class="l">Week</th><th class="l">Saved</th><th>Campaigns</th><th class="l"></th></tr></thead><tbody>
+        ${weeks.map(w=>`<tr><td class="l">${esc(w)}</td><td class="l">${esc(new Date(store[w].savedAt).toLocaleString())}</td><td>${Object.keys(store[w].campaigns).length}</td><td class="l"><a href="#" class="wk-del" data-week="${esc(w)}">remove</a></td></tr>`).join('')}
+      </tbody></table>`}
+    </div>
+    ${weeks.length>=2?`<div class="card pad">
+      <h3 class="sectitle">Compare two weeks</h3>
+      <div class="ctrls">
+        <div class="field"><label>From</label><select id="wk-from">${weeks.map((w,i)=>`<option ${i===weeks.length-2?'selected':''}>${esc(w)}</option>`).join('')}</select></div>
+        <div class="field"><label>To</label><select id="wk-to">${weeks.map((w,i)=>`<option ${i===weeks.length-1?'selected':''}>${esc(w)}</option>`).join('')}</select></div>
+      </div>
+      <div id="wk-compare"></div>
+    </div>`:''}
+  `;
+  $('#wk-save').onclick=()=>{
+    const label=$('#wk-label').value.trim(); if(!label){ alert('Enter a week label.'); return; }
+    store[label]=buildWeekSnapshot(); saveWeeklyStore(); renderWeekly();
+  };
+  document.querySelectorAll('.wk-del').forEach(a=>a.onclick=e=>{
+    e.preventDefault();
+    if(!confirm(`Remove saved week "${a.dataset.week}"?`)) return;
+    delete store[a.dataset.week]; saveWeeklyStore(); renderWeekly();
+  });
+  if(weeks.length>=2){
+    const renderCompare=()=>{ $('#wk-compare').innerHTML=compareWeeksHtml(store[$('#wk-from').value], store[$('#wk-to').value], $('#wk-from').value, $('#wk-to').value); };
+    $('#wk-from').onchange=renderCompare;
+    $('#wk-to').onchange=renderCompare;
+    renderCompare();
+  }
+}
+
 function exportPlacements(){
   const out=[];
   Object.keys(PL_EDITS).forEach(key=>{
