@@ -378,7 +378,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const mt=String(s.get(row,['match type'])||'').trim();
       if(mt) c.matchTypes.add(mt);
       const kw=String(s.get(row,['keyword text'])||'').trim(); if(kw) c.keywordTexts.push(kw);
-      c.targetBids.push({state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
+      c.targetBids.push({text:kw||'(no text)', matchType:mt||'', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
     } else if(ent==='product targeting'){
       c.hasPT=true;
       // "category=..." targeting is a fundamentally different campaign (broad category browsing) from
@@ -387,7 +387,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const expr=String(s.get(row,['product targeting expression'])||'').trim().toLowerCase();
       if(expr.startsWith('category')) c.hasPTCategory=true;
       else if(expr.startsWith('asin')) c.hasPTAsin=true;
-      c.targetBids.push({state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
+      c.targetBids.push({text:expr||'(no expression)', matchType:'PT', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
     } else if(ent==='bidding adjustment' && placements){
       const raw=String(s.get(row,['placement'])||'').trim();
       if(!raw) return;
@@ -996,6 +996,26 @@ function renderPlacements(){
     r.bleeding = campaignSpend>=15 && share>=0.55 && !!better;
     r.bleedingVs = better?better.placeLabel:null; r.bleedingVsAcos=better?better.acos:null; r.bleedingShare=share;
   });
+  // Computed on the pre-filter set so isolating one campaign (by clicking its name, or typing its full
+  // name) still finds every one of its placement rows even if a Placement/ACoS/Min Spend filter would
+  // otherwise have hidden some of them from the main table.
+  let campDetail=null;
+  if(st.camp){
+    const matchIds=[...new Set(rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase())).map(r=>r.campaignId))];
+    if(matchIds.length===1){
+      const cid=matchIds[0];
+      const c=campsById[cid]||{};
+      const campRows=rows.filter(r=>r.campaignId===cid);
+      const totalSpend=campRows.reduce((s,r)=>s+r.spend,0);
+      const totalSales=campRows.reduce((s,r)=>s+r.sales,0);
+      campDetail={
+        campaignName:c.campaignName||cid, portfolioName:c.portfolioName||'(No Portfolio)',
+        totalSpend, totalSales, acos: totalSales>0?totalSpend/totalSales*100:(totalSpend>0?Infinity:0),
+        placements:campRows.slice().sort((a,b)=>b.spend-a.spend),
+        targets:(c.targetBids||[]).slice().sort((a,b)=>b.bid-a.bid)
+      };
+    }
+  }
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
@@ -1019,7 +1039,7 @@ function renderPlacements(){
     const key=r.campaignId+'|'+r.placement;
     const editVal=PL_EDITS[key]!=null?PL_EDITS[key]:'';
     return `<tr>
-      <td class="l">${esc(r.campaignName)}</td>
+      <td class="l"><a href="#" class="camp-link" data-camp="${esc(r.campaignName)}" title="Click to see every placement and keyword/target bid for this campaign">${esc(r.campaignName)}</a></td>
       <td class="l">${esc(r.portfolioName)}</td>
       <td class="l">${esc(r.placeLabel)}</td>
       <td>${(r.percentage||0)}%</td>
@@ -1037,6 +1057,30 @@ function renderPlacements(){
     </tr>`;
   };
   const editedCount=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
+  const campDetailHtml = !campDetail ? '' : `
+    <div class="card pad">
+      <div class="rowbar" style="margin:0 0 8px;">
+        <h3 class="sectitle" style="margin:0;">${esc(campDetail.campaignName)}</h3>
+        <div class="spacer"></div>
+        <span class="hint">${esc(campDetail.portfolioName)} · ${fMoney(campDetail.totalSpend)} spend · ${fMoney(campDetail.totalSales)} sales · ${fAcos(campDetail.acos)} ACoS overall</span>
+      </div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:280px;">
+          <div class="hint" style="margin-bottom:6px;"><b>Placements in this campaign</b></div>
+          <table style="width:100%;"><thead><tr><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th></tr></thead><tbody>
+            ${campDetail.placements.map(p=>`<tr><td class="l">${esc(p.placeLabel)}</td><td>${(p.percentage||0)}%</td><td>${fInt(p.clicks)}</td><td>${fMoney(p.spend)}</td><td>${fMoney(p.sales)}</td><td style="color:${p.acos===Infinity||p.acos>50?'#b91c1c':p.acos>25?'#c2760a':'#15803d'}">${fAcos(p.acos)}</td></tr>`).join('')}
+          </tbody></table>
+        </div>
+        <div style="flex:1;min-width:280px;">
+          <div class="hint" style="margin-bottom:6px;"><b>Keywords / targets in this campaign (${campDetail.targets.length})</b> — this is what "multi-kw" is spreading the bid across; each one bids independently within the placement % above.</div>
+          <div style="max-height:260px;overflow:auto;">
+          <table style="width:100%;"><thead><tr><th class="l">Text</th><th class="l">Match</th><th class="l">State</th><th>Bid</th></tr></thead><tbody>
+            ${campDetail.targets.length ? campDetail.targets.map(t=>`<tr><td class="l">${esc(t.text)}</td><td class="l">${esc(t.matchType)}</td><td class="l">${esc(t.state)}</td><td>${fMoney(t.bid)}</td></tr>`).join('') : '<tr><td colspan="4" class="l muted">No keyword/target rows found for this campaign in the export.</td></tr>'}
+          </tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>`;
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
@@ -1057,6 +1101,7 @@ function renderPlacements(){
         <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap;height:34px;cursor:pointer;"><input type="checkbox" id="pl-bleedingonly" ${st.bleedingOnly?'checked':''}> Bleeding placements only</label></div>
       </div>
     </div>
+    ${campDetailHtml}
     <div class="card pad">
       <div class="rowbar" style="margin:0 0 10px;">
         <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
@@ -1073,6 +1118,9 @@ function renderPlacements(){
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
   $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
   $('#pl-place').onchange=e=>{st.place=e.target.value; renderPlacements();};
+  document.querySelectorAll('.camp-link').forEach(a=>a.onclick=e=>{
+    e.preventDefault(); st.camp=a.dataset.camp; renderPlacements();
+  });
   $('#pl-acosmin').oninput=debounce(()=>{st.acosMin=$('#pl-acosmin').value; renderPlacements();},300);
   $('#pl-acosmax').oninput=debounce(()=>{st.acosMax=$('#pl-acosmax').value; renderPlacements();},300);
   $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
