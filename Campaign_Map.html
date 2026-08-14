@@ -94,10 +94,7 @@
       <button data-mode="placements" class="active">Placements</button>
       <button data-mode="bidding">Bidding Strategy</button>
     </div>
-    <div class="links">
-      <a class="backlink" href="Campaign_Builder.html">Campaign Builder</a>
-      <a class="backlink" href="index.html">← PPC Analyzer</a>
-    </div>
+    <div class="links"></div>
   </div>
 
   <div class="card pad">
@@ -115,7 +112,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-08-14 18:47</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-08-14 19:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -364,7 +361,7 @@ function parseSPSheet(wb, byCampaign, placements){
     const ent=String(s.get(row,['entity'])||'').trim().toLowerCase();
     const cid=String(s.get(row,['campaign id'])||'').trim();
     if(!cid) return;
-    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',biddingStrategy:'',dailyBudget:0,startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,hasPTAsin:false,hasPTCategory:false,asins:new Set(),keywordTexts:[]});
+    const c=byCampaign[cid]||(byCampaign[cid]={campaignId:cid,program:'SP',campaignName:'',state:'',portfolioId:'',portfolioName:'',targetingType:'',biddingStrategy:'',dailyBudget:0,startDate:'',adGroups:new Set(),matchTypes:new Set(),hasPT:false,hasPTAsin:false,hasPTCategory:false,asins:new Set(),keywordTexts:[],targetBids:[]});
     if(ent==='campaign'){
       c.campaignName=String(s.get(row,['campaign name'])||c.campaignName);
       c.state=String(s.get(row,['state'])||c.state).trim().toLowerCase();
@@ -385,6 +382,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const mt=String(s.get(row,['match type'])||'').trim();
       if(mt) c.matchTypes.add(mt);
       const kw=String(s.get(row,['keyword text'])||'').trim(); if(kw) c.keywordTexts.push(kw);
+      c.targetBids.push({state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
     } else if(ent==='product targeting'){
       c.hasPT=true;
       // "category=..." targeting is a fundamentally different campaign (broad category browsing) from
@@ -393,6 +391,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const expr=String(s.get(row,['product targeting expression'])||'').trim().toLowerCase();
       if(expr.startsWith('category')) c.hasPTCategory=true;
       else if(expr.startsWith('asin')) c.hasPTAsin=true;
+      c.targetBids.push({state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
     } else if(ent==='bidding adjustment' && placements){
       const raw=String(s.get(row,['placement'])||'').trim();
       if(!raw) return;
@@ -590,6 +589,15 @@ function processWorkbook(wb, brandTermsRaw){
   // to the full parse instead of the enabled-only `rows` this function returns.
   LAST_BY_CAMPAIGN=byCampaign;
   LAST_PLACEMENTS=placements;
+  // Single-keyword/PT campaigns (the SUP_ convention) share ONE bid across every placement — that shared
+  // bid, not the placement %, is what actually decides if cutting a bad placement's % can even work: if the
+  // bid alone already clears what that placement costs, a % cut changes the number on screen but not the
+  // real spend. Multi-target campaigns have no single bid to attribute, so this stays null for them.
+  Object.values(byCampaign).forEach(c=>{
+    if(c.program!=='SP') return;
+    const enabled=(c.targetBids||[]).filter(t=>t.state==='enabled' && t.bid>0);
+    c.singleBid = enabled.length===1 ? enabled[0].bid : null;
+  });
   const brandTerms=linesOf(brandTermsRaw).map(x=>x.toLowerCase());
   const enabledCampaigns=Object.values(byCampaign).filter(c=>c.state==='enabled');
 
@@ -960,9 +968,17 @@ function renderPlacements(){
   let rows=LAST_PLACEMENTS.map(p=>{
     const c=campsById[p.campaignId]||{};
     const acos = p.sales>0 ? p.spend/p.sales*100 : (p.spend>0? Infinity : 0);
+    const cpc = p.clicks>0 ? p.spend/p.clicks : 0;
+    const singleBid = c.singleBid!=null ? c.singleBid : null;
+    // If the shared bid alone (before any % boost) already clears this placement's own real CPC, cutting the
+    // % here changes the number on screen but the campaign keeps winning the same auctions at the same
+    // cost — the bid itself is the only lever left. Only meaningful for single-keyword/PT campaigns, where
+    // there IS one shared bid; multi-target campaigns have no single bid to check this against.
+    const effBid = singleBid!=null ? singleBid*(1+(p.percentage||0)/100) : null;
+    const ineffective = singleBid!=null && cpc>0 && singleBid>=cpc;
     return Object.assign({}, p, {
       campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)',
-      state:c.state||'', placeLabel:placeName(p.placement), acos
+      state:c.state||'', placeLabel:placeName(p.placement), acos, cpc, singleBid, effBid, ineffective
     });
   });
   if(!rows.length){
@@ -972,6 +988,9 @@ function renderPlacements(){
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
+  if(st.place) rows=rows.filter(r=>r.placeLabel===st.place);
+  if(st.acosMin!==''&&st.acosMin!=null) rows=rows.filter(r=>r.acos===Infinity||r.acos>=+st.acosMin);
+  if(st.acosMax!==''&&st.acosMax!=null) rows=rows.filter(r=>r.acos!==Infinity&&r.acos<=+st.acosMax);
   rows.sort((a,b)=>b.spend-a.spend);
   const portfolios=[...new Set(LAST_PLACEMENTS.map(p=>(campsById[p.campaignId]||{}).portfolioName||'(No Portfolio)'))].sort();
   const fMoney=n=>'$'+(n||0).toFixed(2);
@@ -988,6 +1007,9 @@ function renderPlacements(){
       <td>${fMoney(r.spend)}</td>
       <td>${fMoney(r.sales)}</td>
       <td style="color:${r.acos===Infinity||r.acos>50?'#b91c1c':r.acos>25?'#c2760a':'#15803d'}">${fAcos(r.acos)}</td>
+      <td>${r.singleBid!=null?fMoney(r.singleBid):'<span class="muted">multi-kw</span>'}</td>
+      <td>${fMoney(r.cpc)}</td>
+      <td>${r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:''}</td>
       <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
     </tr>`;
   };
@@ -995,10 +1017,18 @@ function renderPlacements(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Placements</h3>
-      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
       <div class="ctrls">
         <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
+        <div class="field"><label>Placement</label><select id="pl-place">
+          <option value="" ${!st.place?'selected':''}>All</option>
+          <option ${st.place==='Top of Search'?'selected':''}>Top of Search</option>
+          <option ${st.place==='Rest of Search'?'selected':''}>Rest of Search</option>
+          <option ${st.place==='Product Pages'?'selected':''}>Product Pages</option>
+        </select></div>
+        <div class="field"><label>ACoS ≥</label><input type="number" id="pl-acosmin" value="${esc(st.acosMin)}" placeholder="—" style="width:80px;"></div>
+        <div class="field"><label>ACoS ≤</label><input type="number" id="pl-acosmax" value="${esc(st.acosMax)}" placeholder="—" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
       </div>
     </div>
@@ -1009,12 +1039,15 @@ function renderPlacements(){
         <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th><th>New %</th></tr></thead>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th><th>Bid</th><th>CPC</th><th class="l"></th><th>New %</th></tr></thead>
         <tbody>${rows.map(rowHtml).join('')}</tbody>
       </table></div>
     </div>`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
   $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
+  $('#pl-place').onchange=e=>{st.place=e.target.value; renderPlacements();};
+  $('#pl-acosmin').oninput=debounce(()=>{st.acosMin=$('#pl-acosmin').value; renderPlacements();},300);
+  $('#pl-acosmax').oninput=debounce(()=>{st.acosMax=$('#pl-acosmax').value; renderPlacements();},300);
   $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
   document.querySelectorAll('[data-pledit]').forEach(inp=>inp.oninput=debounce(()=>{
     const key=inp.dataset.pledit;
