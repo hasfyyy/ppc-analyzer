@@ -2425,7 +2425,14 @@ function computePlacementOptRows(product, filters){
   if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
   if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
-  if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushBelow===undefined) st.pushBelow=15; if(st.pushStep===undefined) st.pushStep=15;
+  // Replaces the old "push if % is below X" rule — that one missed a placement that already has a real %
+  // (say 143%) but still isn't getting enough auctions to prove itself, which is the far more common pattern
+  // in practice: a campaign concentrates its whole budget on whichever placement is easiest to win (often
+  // the worst-converting one), so TOS/ROS never get a real shot regardless of what their % already is. This
+  // triggers on too few CLICKS instead, on Top of Search / Rest of Search only (never Product Pages, which
+  // is usually the placement doing the crowding-out in the first place) — and works for every campaign, not
+  // just single-keyword, since it never touches the shared bid, only that placement's own %.
+  if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushClicks===undefined) st.pushClicks=5; if(st.pushStep===undefined) st.pushStep=30;
   // 0 orders has no ACoS to grade against, so it runs on its own click-based ladder — same graduated shape,
   // mirroring the Bid Optimizer's own 0-order tiers one axis over (clicks instead of ACoS).
   if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
@@ -2451,7 +2458,7 @@ function computePlacementOptRows(product, filters){
   rowsRaw.forEach(p=>{
     const t=placeType(p.placement); if(!t) return;
     const k=p.campaignId+'|'+t;
-    if(!byKey[k]) byKey[k]={campaignId:p.campaignId, campaignName:p.campaignName||p.campaignId, portfolioName:p.portfolioName||'(No Portfolio)', placementName:placeName(p.placement), rawPlacement:p.placement, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
+    if(!byKey[k]) byKey[k]={campaignId:p.campaignId, campaignName:p.campaignName||p.campaignId, portfolioName:p.portfolioName||'(No Portfolio)', placementName:placeName(p.placement), rawPlacement:p.placement, placeType:t, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
     const e=byKey[k]; e.impressions+=p.impressions; e.clicks+=p.clicks; e.spend+=p.spend; e.sales+=p.sales; e.orders+=p.orders;
   });
   let allRows=Object.values(byKey).map(e=>{
@@ -2480,12 +2487,13 @@ function computePlacementOptRows(product, filters){
       // can't be fixed here at all. Flagged as 'floor-bad' (not 'decrease') so the Bid Optimizer knows NOT
       // to treat it as "already handled" and still cuts the shared bid instead.
       action='floor-bad';
-    } else if(isSingle && st.pushEnabled && e.percentage<st.pushBelow && !(e.clicks>=st.minClicks && e.orders>=1 && d.acos>st.lowAcos)){
-      // Below the floor % with too little data to judge ACoS yet, a placement gets the benefit of the
-      // doubt — push it up so it can actually start competing. But if there's ALREADY enough clicks/orders
-      // to see the ACoS isn't good (like 35-42% here), that benefit of the doubt doesn't apply anymore —
-      // pushing a placement we already know is mediocre just because its % happens to be low was the bug:
-      // it fought against a same-campaign bid decrease instead of agreeing with it.
+    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks){
+      // Too few clicks to have EARNED the "bad performer" label above (badPerf already came back false,
+      // whatever the % happens to be) — likely because the campaign's budget keeps getting eaten by another
+      // placement before this one gets a fair shot. Give it more room to compete regardless of its current %,
+      // since a placement already at a real % (140%+) that still can't buy clicks needs the same push as one
+      // stuck at the floor — the % isn't the thing holding it back, the auction volume is. Product Pages is
+      // deliberately excluded — it's usually the placement doing the crowding-out, not the one needing help.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
     } else if(isSingle && e.clicks>=st.minClicks && e.orders>=1 && d.acos<st.lowAcos){
       action='increase'; newPct=Math.min(900, e.percentage+st.incStep);
@@ -2638,7 +2646,7 @@ function renderOptPlacements(){
     // Compensation can push a 'push'/'increase' row's newPct further than its own base step, so the badge
     // always shows the REAL delta actually being applied, not just the rule's nominal step size.
     const delta=(r.newPct-r.percentage).toFixed(1);
-    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Below the ${st.pushBelow}% floor — pushed up regardless of ACoS, so it can actually start winning auctions there.">↑ +${delta}pp (push)</span>`;
+    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Under ${st.pushClicks} clicks on Top of Search / Rest of Search — pushed up regardless of its current % or ACoS, so it gets a real shot at winning auctions there before another placement eats the whole budget.">↑ +${delta}pp (push)</span>`;
     if(r.action==='compensate') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="Another placement in this campaign is stuck at 0% with bad performance, so the shared bid is getting cut instead. This bump keeps THIS placement's own effective bid where it was.">↑ +${delta}pp (compensate)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${delta}pp</span>`;
   };
@@ -2685,10 +2693,10 @@ function renderOptPlacements(){
         <div class="field grow"><label>Campaign</label><input type="text" id="op-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-pushen" ${st.pushEnabled?'checked':''}> Push placements below</label>
-        <div class="field"><input type="number" id="op-pushbelow" value="${st.pushBelow}" style="width:80px;">%</div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-pushen" ${st.pushEnabled?'checked':''}> Push Top of Search / Rest of Search under</label>
+        <div class="field"><input type="number" id="op-pushclicks" value="${st.pushClicks}" style="width:80px;">clicks</div>
         <div class="field"><label>Push by (points)</label><input type="number" id="op-pushstep" value="${st.pushStep}" style="width:90px;"></div>
-        <div class="hint" style="align-self:center;">Single-keyword campaigns only (see below) — a placement stuck below this % rarely gets enough auctions to ever build up the clicks/ACoS that would trigger the increase rule above, so this pushes it regardless of performance.</div>
+        <div class="hint" style="align-self:center;">Every campaign, not just single-keyword — a placement stuck under this many clicks hasn't had a real shot yet, regardless of what its % already is (a campaign's budget often gets eaten by one easy-to-win placement — usually Product Pages, deliberately excluded here — before TOS/ROS get a chance). Doesn't touch the shared bid, so it's safe even when several keywords share this campaign's placement %.</div>
       </div>
       <div class="hint" style="margin:12px 0 4px;">0 orders — ACoS is undefined with no sales, so this runs on clicks instead, same graduated shape as above. Below the first threshold a zero-order placement still gets the benefit of the doubt (push/increase can still apply).</div>
       <div class="ctrls">
@@ -2722,7 +2730,7 @@ function renderOptPlacements(){
   bind('op-hi2','hi2',v=>+v||0); bind('op-dec2','dec2',v=>+v||0);
   bind('op-hi3','hi3',v=>+v||0); bind('op-dec3','dec3',v=>+v||0);
   bind('op-inc','incStep',v=>+v||0); bind('op-mc','minClicks',v=>+v||0);
-  bind('op-pushbelow','pushBelow',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
+  bind('op-pushclicks','pushClicks',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
   bind('op-zerohi1','zeroHi1',v=>+v||0); bind('op-zerodec1','zeroDec1',v=>+v||0);
   bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
   bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
