@@ -2172,6 +2172,8 @@ function renderOptBids(){
   placementOpt.allRows.forEach(pr=>{ if(!pr.isSingle) return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const pst=placementOpt.st; // Placement Optimizer's own state (stFor('optplace')) — the floor-override fields live there, not here; this is a shortcut onto the SAME values, not a separate copy.
   const floorBidOverrides=placementOpt.floorBidOverrides||{};
+  const stuckHighByCamp=placementOpt.stuckHighByCamp||new Map();
+  const topTargetByCamp=placementOpt.topTargetByCamp||new Map();
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -2222,6 +2224,19 @@ function renderOptBids(){
     if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=st.wakeMinImpr){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
     }
+    // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
+    // has proven it isn't the lever, so nudge the bid itself instead. Only the campaign's single highest-bid
+    // target gets this (picked via topTargetByCamp), so a multi-keyword campaign doesn't get every keyword
+    // bumped for the same one stuck placement. A flat $ bump, not a %, since there's too little data here for
+    // a tier-based percentage to mean anything.
+    if(action==='none'){
+      const stuckPlacements=stuckHighByCamp.get(t.campaignId);
+      const top=topTargetByCamp.get(t.campaignId);
+      if(stuckPlacements && stuckPlacements.length && top && top.id===t.id){
+        action='stuck-bump'; newBid=+(t.bid+pst.stuckBumpDollar).toFixed(2);
+        reason=`${stuckPlacements.join(' & ')} stuck past ${pst.pushCeiling}% with too few clicks — testing a bid bump since % isn't working`;
+      }
+    }
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason,category},t,d);
     // Only the real, exportable placement moves — a 'floor-bad' entry has no percentage change to show.
@@ -2242,6 +2257,7 @@ function renderOptBids(){
   const actionBadge=r=>{
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
     if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
+    if(r.action==='stuck-bump') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="${esc(r.reason||'')}">↑ +${fMoney(r.newBid-r.bid)} (stuck placement)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
   };
   const cols=[
@@ -2302,6 +2318,7 @@ function renderOptBids(){
         <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;"></div>
         <div class="field"><label>Bonus %</label><input type="number" id="ob-floorbonuspct" value="${pst.floorBonusPct}" style="width:90px;"></div>
         <div class="field"><label>...or min $ bonus</label><input type="number" step="0.01" id="ob-floorbonusdollar" value="${pst.floorBonusMinDollar}" style="width:90px;"></div>
+        <div class="field"><label>Stuck placement bid bump $</label><input type="number" step="0.01" id="ob-stuckbump" value="${pst.stuckBumpDollar}" style="width:90px;" title="A campaign's highest-bid keyword/target gets bumped by this much when one of its placements is stuck past the push ceiling (see Placement Optimizer) with too few clicks — % has already proven it isn't the lever there."></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
@@ -2340,6 +2357,7 @@ function renderOptBids(){
           <option value="decrease" ${st.actionFilter==='decrease'?'selected':''}>Decreases only (${allRows.filter(r=>r.action==='decrease').length})</option>
           <option value="increase" ${st.actionFilter==='increase'?'selected':''}>Increases only (${allRows.filter(r=>r.action==='increase').length})</option>
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
+          <option value="stuck-bump" ${st.actionFilter==='stuck-bump'?'selected':''}>Stuck placement only (${allRows.filter(r=>r.action==='stuck-bump').length})</option>
         </select></div>
         <div class="spacer"></div>
         <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
@@ -2362,6 +2380,7 @@ function renderOptBids(){
   bindPst('ob-floorbufferdollar','floorBufferMinDollar',v=>+v||0);
   bindPst('ob-floorbonusgap','floorBonusGap',v=>+v||0); bindPst('ob-floorbonuspct','floorBonusPct',v=>+v||0);
   bindPst('ob-floorbonusdollar','floorBonusMinDollar',v=>+v||0);
+  bindPst('ob-stuckbump','stuckBumpDollar',v=>+v||0);
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   bind('ob-zerolow','zeroLowClicks',v=>+v||0); bind('ob-zeroinc','zeroIncPct',v=>+v||0);
@@ -2434,6 +2453,7 @@ function computePlacementOptRows(product, filters){
   // just single-keyword, since it never touches the shared bid, only that placement's own %.
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushClicks===undefined) st.pushClicks=5; if(st.pushStep===undefined) st.pushStep=30;
   if(st.pushCeiling===undefined) st.pushCeiling=300;
+  if(st.stuckBumpDollar===undefined) st.stuckBumpDollar=0.10;
   // 0 orders has no ACoS to grade against, so it runs on its own click-based ladder — same graduated shape,
   // mirroring the Bid Optimizer's own 0-order tiers one axis over (clicks instead of ACoS).
   if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
@@ -2453,6 +2473,12 @@ function computePlacementOptRows(product, filters){
   // real floor for that placement's cost.
   const singleTargetByCamp=new Map();
   DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && !singleTargetByCamp.has(t.campaignId)) singleTargetByCamp.set(t.campaignId, t); });
+  // Highest-bid enabled target per campaign, regardless of how many targets it has — used to pick ONE
+  // keyword/target to bump when a placement is stuck-high in a multi-keyword campaign (same "most likely
+  // culprit" reasoning as the floor override uses), so a stuck placement doesn't get every keyword in its
+  // campaign bumped redundantly.
+  const topTargetByCamp=new Map();
+  DATA.targets.forEach(t=>{ if(t.product!==product || t.state!=='enabled' || t.bid<=0) return; const cur=topTargetByCamp.get(t.campaignId); if(!cur || t.bid>cur.bid) topTargetByCamp.set(t.campaignId, t); });
   let rowsRaw=DATA.placements.filter(p=>p.product===product && enabledCamps.has(p.campaignId));
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
@@ -2631,12 +2657,17 @@ function computePlacementOptRows(product, filters){
       if(compPct>=p.percentage+1 && compPct>p.newPct){ p.newPct=compPct; if(p.action==='none') p.action='compensate'; }
     });
   });
+  // Which campaigns have a placement stuck above the push ceiling with too few clicks — the Bid Optimizer
+  // uses this to bump that campaign's highest-bid keyword/target by a small $ amount instead of pushing the
+  // % further, since % has already proven it isn't the lever there.
+  const stuckHighByCamp=new Map();
+  allRows.forEach(r=>{ if(r.action==='stuck-high'){ const list=stuckHighByCamp.get(r.campaignId)||[]; list.push(r.placementName); stuckHighByCamp.set(r.campaignId, list); } });
   if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const rows=allRows.filter(r=>r.action!=='none' && r.action!=='floor-bad' && r.action!=='stuck-high');
-  return {rows, allRows, st, rowsRaw, floorBidOverrides};
+  return {rows, allRows, st, rowsRaw, floorBidOverrides, stuckHighByCamp, topTargetByCamp};
 }
 function renderOptPlacements(){
-  const {rows: rowsAll, st, rowsRaw, allRows: allRowsRaw}=computePlacementOptRows(S.product, {});
+  const {rows: rowsAll, st, rowsRaw}=computePlacementOptRows(S.product, {});
   if(st.hideSingleKw===undefined) st.hideSingleKw=true;
   // Single-keyword campaigns' placement suggestions are already bundled into their SP Bid Changes row above
   // (same underlying computation) — showing them here too invites doing the same export twice, so they're
@@ -2728,15 +2759,7 @@ function renderOptPlacements(){
         <button class="btn grad" id="op-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Placement Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="op-table">${tbl.html}</div>
-    </div>
-    ${(()=>{ const stuck=allRowsRaw.filter(r=>r.action==='stuck-high'); if(!stuck.length) return ''; return `
-    <div class="card pad">
-      <h3 class="sectitle">Needs a bid review (${stuck.length})</h3>
-      <div class="hint" style="margin-bottom:10px;">Already pushed past ${st.pushCeiling}% and still under ${st.pushClicks} clicks — more % clearly isn't the lever here anymore. Nothing to export for these; worth raising the keyword/target's own bid instead, since the placement % has room but isn't the bottleneck.</div>
-      <div class="tablewrap"><table><thead><tr><th class="l">Campaign</th><th class="l">Placement</th><th>Clicks</th><th>Spend</th><th>Current %</th></tr></thead><tbody>
-        ${stuck.sort((a,b)=>b.percentage-a.percentage).map(r=>`<tr><td class="l">${esc(r.campaignName)}</td><td class="l">${esc(r.placementName)}</td><td>${fInt(r.clicks)}</td><td>${fMoney(r.spend)}</td><td>${r.percentage}%</td></tr>`).join('')}
-      </tbody></table></div>
-    </div>`; })()}`;
+    </div>`;
   tbl.wire($('#op-table'));
   const upd=()=>renderOptPlacements();
   $('#op-lo').oninput=debounce(()=>{st.lowAcos=+$('#op-lo').value||0; upd();},350);
