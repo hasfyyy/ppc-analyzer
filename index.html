@@ -2134,11 +2134,14 @@ function renderOptBids(){
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
   // needs the opposite: catching it early, before it burns through 10 clicks, is the whole point).
-  if(st.zeroLowClicks===undefined) st.zeroLowClicks=2; if(st.zeroIncPct===undefined) st.zeroIncPct=10;
+  // Off by default (0 = the "clicks < 0" check never fires) — Wake already covers "not enough data yet"
+  // via impressions instead, so this doesn't need to also soften every 1-click, 0-order keyword; leaving the
+  // control in place in case a specific account wants it back.
+  if(st.zeroLowClicks===undefined) st.zeroLowClicks=0; if(st.zeroIncPct===undefined) st.zeroIncPct=10;
   if(st.zeroHi1===undefined) st.zeroHi1=3; if(st.zeroDec1===undefined) st.zeroDec1=10;
   if(st.zeroHi2===undefined) st.zeroHi2=6; if(st.zeroDec2===undefined) st.zeroDec2=20;
   if(st.zeroHi3===undefined) st.zeroHi3=10; if(st.zeroDec3===undefined) st.zeroDec3=30;
-  if(st.wakeMinImpr===undefined) st.wakeMinImpr=300; if(st.wakePct===undefined) st.wakePct=50; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
+  if(st.wakeMinImpr===undefined) st.wakeMinImpr=50; if(st.wakePct===undefined) st.wakePct=10; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   // ACoS allowance per target category — shifts the ACoS fed into the tiers above, not a separate rule set.
   // +15 for Exact means it takes 15pp more ACoS to trigger the same cut (and 15pp less to trigger the same
   // bump) versus baseline; -15 for Branded means the opposite — the bar tightens instead of loosening.
@@ -2493,7 +2496,7 @@ function computePlacementOptRows(product, filters){
   if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=20;
   if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=30;
   if(bst.minClicks===undefined) bst.minClicks=10; if(bst.minSpend===undefined) bst.minSpend=0;
-  if(bst.zeroLowClicks===undefined) bst.zeroLowClicks=2;
+  if(bst.zeroLowClicks===undefined) bst.zeroLowClicks=0;
   if(bst.zeroHi1===undefined) bst.zeroHi1=3; if(bst.zeroDec1===undefined) bst.zeroDec1=10;
   if(bst.zeroHi2===undefined) bst.zeroHi2=6; if(bst.zeroDec2===undefined) bst.zeroDec2=20;
   if(bst.zeroHi3===undefined) bst.zeroHi3=10; if(bst.zeroDec3===undefined) bst.zeroDec3=30;
