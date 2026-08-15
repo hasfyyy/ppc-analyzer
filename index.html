@@ -374,6 +374,13 @@ function parseWorkbook(wb){
         DATA.targets.push(Object.assign({kind:'target',srcEntity,product,campaignId,adGroupId,id:String(g('targetingId')||''),text:String(g('targetingExpr')||''),matchType:String(g('targetingExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
       } else if(ent.indexOf('negative')!==-1 && ent.indexOf('keyword')!==-1){
         DATA.negatives.push({product,campaignId,adGroupId,text:String(g('keywordText')||'').trim().toLowerCase(),matchType:String(g('matchType')||''),scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
+      } else if(ent.indexOf('negative')!==-1 && ent.indexOf('product targeting')!==-1){
+        // "Negative Product Targeting" / "Campaign Negative Product Targeting" negates an ASIN, carried as
+        // asin="B0XXXXXXXX" in the PT Expression column, not Keyword Text. Missing this branch meant an
+        // already-negated ASIN kept showing up as a fresh Negatives candidate — isNegated() never saw it,
+        // since it only ever recorded entities with "keyword" in the name.
+        const m=String(g('ptExpr')||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i);
+        if(m) DATA.negatives.push({product,campaignId,adGroupId,text:m[1].toLowerCase(),matchType:'asin',scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
       } else if(ent==='bidding adjustment'){
         DATA.placements.push(Object.assign({product,campaignId,placement:String(g('placement')||''),percentage:toNum(g('percentage'))},met));
       }
