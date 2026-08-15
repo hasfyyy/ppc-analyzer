@@ -812,8 +812,14 @@ function campOptions(sel,product){
 }
 
 /* ============================ PLACEMENT ============================ */
-function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
-function placeType(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'top'; if(s.includes('product')||s.includes('detail')) return 'pp'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'rest'; return null; }
+// "Placement Amazon Business" is a real 4th placement Amazon reports Bidding Adjustment rows for (the B2B
+// marketplace) — checked before 'top'/'rest' so it can't accidentally be swallowed by a looser match, even
+// though today's substrings don't overlap. Previously unrecognized entirely: placeType returned null, so
+// every Amazon Business row was silently dropped from Placement Summary AND from the Bid/Placement Optimizer
+// (which both key off placeType()'s return value, generically — no other code change needed once this
+// recognizes it).
+function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('business')) return 'Amazon Business'; if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
+function placeType(pl){ const s=(pl||'').toLowerCase(); if(s.includes('business')) return 'business'; if(s.includes('top')) return 'top'; if(s.includes('product')||s.includes('detail')) return 'pp'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'rest'; return null; }
 function renderPlacement(){
   const st=stFor('placement');
   let rowsRaw=DATA.placements.filter(p=>p.product===S.product);
@@ -827,7 +833,7 @@ function renderPlacement(){
   if(hasMetrics) cols=cols.concat(metricCols().concat([{key:'cpa',label:'CPA',type:'money',fmtTotal:t=>fMoney(derive(t).cpa)}]));
   const tbl=buildTable({columns:cols,rows,tab:'placement',totals:hasMetrics?totals:null,sortDef:{key:hasMetrics?'spend':'adj',dir:-1},onChange:renderPlacement});
   // per-campaign pivot (Top / Product Pages / Rest of Search adjustment %)
-  const byCamp={}; rowsRaw.forEach(p=>{ const cid=p.campaignId; if(!byCamp[cid]) byCamp[cid]={campaignName:p.campaignName||cid, portfolioName:p.portfolioName||'(No Portfolio)', top:'—', pp:'—', rest:'—'}; const t=placeType(p.placement); if(t) byCamp[cid][t]=p.percentage; });
+  const byCamp={}; rowsRaw.forEach(p=>{ const cid=p.campaignId; if(!byCamp[cid]) byCamp[cid]={campaignName:p.campaignName||cid, portfolioName:p.portfolioName||'(No Portfolio)', top:'—', pp:'—', rest:'—', business:'—'}; const t=placeType(p.placement); if(t) byCamp[cid][t]=p.percentage; });
   const campRows=Object.values(byCamp);
   const fpct=v=>v==='—'?'<span class="muted">—</span>':(v>0?`<span class="num-green">+${v}%</span>`:v+'%');
   const campCols=[
@@ -836,6 +842,7 @@ function renderPlacement(){
     {key:'top',label:'Top of Search',type:'num',noSort:true,cell:r=>fpct(r.top)},
     {key:'pp',label:'Product Pages',type:'num',noSort:true,cell:r=>fpct(r.pp)},
     {key:'rest',label:'Rest of Search',type:'num',noSort:true,cell:r=>fpct(r.rest)},
+    {key:'business',label:'Amazon Business',type:'num',noSort:true,cell:r=>fpct(r.business)},
   ];
   const camptbl=buildTable({columns:campCols,rows:campRows,tab:'placement-camp',sortDef:{key:'campaignName',dir:1},onChange:renderPlacement});
   $('#app').innerHTML=`
