@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <title>Account Tools</title>
-<script src="supabase-config.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -92,8 +91,8 @@
   <div class="topbar">
     <h1>Account Tools</h1>
     <div class="seg" id="cm-mode">
-      <button data-mode="bidding" class="active">Bidding Strategy</button>
-      <button data-mode="weekly">Weekly</button>
+      <button data-mode="placements" class="active">Placements</button>
+      <button data-mode="bidding">Bidding Strategy</button>
     </div>
     <div class="links"></div>
   </div>
@@ -101,15 +100,19 @@
   <div class="card pad">
     <div class="rowbar" style="margin:0;">
       <label class="btn grad" style="cursor:pointer;">⬆ Upload Bulk Operations export<input type="file" id="cm-file" accept=".xlsx,.xls,.csv" class="hidden"></label>
+      <label class="btn ghost" style="cursor:pointer;">⬆ Parent/Child ASIN map (optional)<input type="file" id="cm-parentmap" accept=".xlsx,.xls,.csv" class="hidden"></label>
+      <div class="field"><label>Brand terms (comma-separated — used to tell BRND EXACT apart from generic EXACT)</label><input type="text" id="cm-brandterms" placeholder="e.g. odofit, odo fit" style="width:280px;"></div>
       <div class="spacer"></div>
       <span class="hint" id="cm-status">No file loaded yet — upload a bulk export to build the map. Only <b>enabled</b> campaigns are analyzed.</span>
     </div>
+    <div class="rowbar" style="margin:6px 0 0;">
+      <span class="hint" id="cm-parentmap-status">No Parent/Child ASIN map loaded — a campaign is flagged <b>MIXED</b> if it advertises &gt;1 distinct ASIN, even if they're just variations of the same product. Upload a sheet with columns like "Portfolio name / (Parent) ASIN / Product ASIN" so variations of the same parent don't get flagged as mixed.</span>
     </div>
   </div>
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-08-14 19:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-08-17 18:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -379,7 +382,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const mt=String(s.get(row,['match type'])||'').trim();
       if(mt) c.matchTypes.add(mt);
       const kw=String(s.get(row,['keyword text'])||'').trim(); if(kw) c.keywordTexts.push(kw);
-      c.targetBids.push({text:kw||'(no text)', matchType:mt||'', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0, id:String(s.get(row,['keyword id'])||'').trim(), adGroupId:String(s.get(row,['ad group id'])||'').trim(), entity:'Keyword'});
+      c.targetBids.push({state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
     } else if(ent==='product targeting'){
       c.hasPT=true;
       // "category=..." targeting is a fundamentally different campaign (broad category browsing) from
@@ -388,7 +391,7 @@ function parseSPSheet(wb, byCampaign, placements){
       const expr=String(s.get(row,['product targeting expression'])||'').trim().toLowerCase();
       if(expr.startsWith('category')) c.hasPTCategory=true;
       else if(expr.startsWith('asin')) c.hasPTAsin=true;
-      c.targetBids.push({text:expr||'(no expression)', matchType:'PT', state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0, id:String(s.get(row,['product targeting id'])||'').trim(), adGroupId:String(s.get(row,['ad group id'])||'').trim(), entity:'Product Targeting'});
+      c.targetBids.push({state:String(s.get(row,['state'])||'').trim().toLowerCase(), bid:+String(s.get(row,['bid'])||0).replace(/[^0-9.\-]/g,'')||0});
     } else if(ent==='bidding adjustment' && placements){
       const raw=String(s.get(row,['placement'])||'').trim();
       if(!raw) return;
@@ -674,11 +677,11 @@ function buildAsinGroups(rows){
 let LAST_ROWS=[];
 let LAST_BY_CAMPAIGN={};
 let LAST_PLACEMENTS=[];
-let APP_MODE='bidding'; // 'rename' (unused, kept for the old renaming code below) | 'bidding' | 'weekly'
+let APP_MODE='placements'; // 'rename' (unused, kept for the old renaming code below) | 'bidding' | 'placements'
 function renderApp(rows){
   LAST_ROWS=rows;
   if(APP_MODE==='bidding'){ renderBiddingStrategy(); return; }
-  if(APP_MODE==='weekly'){ renderWeekly(); return; }
+  if(APP_MODE==='placements'){ renderPlacements(); return; }
   if(!rows.length){
     $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>No enabled campaigns found in this file.</p></div></div>`;
     return;
@@ -957,210 +960,118 @@ function renderBiddingStrategy(){
 // with a plain editable "New %" box per row. Only rows you actually typed a number into get exported —
 // leaving a row blank means "not touching this one".
 function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('top')) return 'Top of Search'; if(s.includes('product')||s.includes('detail')) return 'Product Pages'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'Rest of Search'; return pl||'—'; }
-function fInt(n){ return Math.round(n||0).toLocaleString(); }
-
-/* ============================ WEEKLY TRACKING ============================
-   Saves a compact per-campaign/per-placement snapshot of whatever bulk export
-   is currently loaded, labeled by week (e.g. "2026-W32"), into a Supabase
-   table scoped to the signed-in user — so the same history is visible from
-   any device, not just the browser that made the save. Only this tab
-   requires sign-in; Placements/Bidding Strategy stay open to anyone.
-   Comparing two saved weeks answers "did last week's placement edits
-   actually move spend off Product Pages, and did the campaign keep
-   spending/converting, or did it just go dark?" */
-let SB_LIB_PROMISE=null, SB_CLIENT=null;
-let WK_LABEL_OVERRIDE=null; // remembers what the user typed in "Save current upload as" across re-renders — otherwise uploading a new bulk file while on this tab re-renders it and silently resets the field to today's suggested week, clobbering whatever label they were about to save under
-function loadSupabaseLib(){
-  if(SB_LIB_PROMISE) return SB_LIB_PROMISE;
-  SB_LIB_PROMISE=new Promise((resolve,reject)=>{
-    if(window.supabase){ resolve(window.supabase); return; }
-    const s=document.createElement('script');
-    s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
-    s.onload=()=>resolve(window.supabase);
-    s.onerror=()=>reject(new Error('Could not load the Supabase library.'));
-    document.head.appendChild(s);
-  });
-  return SB_LIB_PROMISE;
-}
-async function getSupabaseClient(){
-  if(SB_CLIENT) return SB_CLIENT;
-  const lib=await loadSupabaseLib();
-  SB_CLIENT=lib.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-  return SB_CLIENT;
-}
-function isoWeekLabel(d){
-  d=new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-day+3);
-  const firstThursday=new Date(Date.UTC(d.getUTCFullYear(),0,4));
-  const week=1+Math.round(((d-firstThursday)/86400000-3+((firstThursday.getUTCDay()+6)%7))/7);
-  return `${d.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
-}
-function buildWeekSnapshot(){
+let PL_STATE={port:'', camp:'', minSpend:1};
+let PL_EDITS={}; // (campaignId|rawPlacement) -> typed new % value (string)
+function renderPlacements(){
+  const st=PL_STATE;
   const campsById=LAST_BY_CAMPAIGN;
-  const campaigns={};
-  LAST_PLACEMENTS.forEach(p=>{
+  let rows=LAST_PLACEMENTS.map(p=>{
     const c=campsById[p.campaignId]||{};
-    const entry=campaigns[p.campaignId]||(campaigns[p.campaignId]={campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)', placements:{}});
-    const label=placeName(p.placement);
-    const pl=entry.placements[label]||(entry.placements[label]={spend:0,sales:0,clicks:0,orders:0,percentage:p.percentage||0});
-    pl.spend+=p.spend; pl.sales+=p.sales; pl.clicks+=p.clicks; pl.orders+=p.orders; pl.percentage=p.percentage||0;
+    const acos = p.sales>0 ? p.spend/p.sales*100 : (p.spend>0? Infinity : 0);
+    const cpc = p.clicks>0 ? p.spend/p.clicks : 0;
+    const singleBid = c.singleBid!=null ? c.singleBid : null;
+    // If the shared bid alone (before any % boost) already clears this placement's own real CPC, cutting the
+    // % here changes the number on screen but the campaign keeps winning the same auctions at the same
+    // cost — the bid itself is the only lever left. Only meaningful for single-keyword/PT campaigns, where
+    // there IS one shared bid; multi-target campaigns have no single bid to check this against.
+    const effBid = singleBid!=null ? singleBid*(1+(p.percentage||0)/100) : null;
+    const ineffective = singleBid!=null && cpc>0 && singleBid>=cpc;
+    return Object.assign({}, p, {
+      campaignName:c.campaignName||p.campaignId, portfolioName:c.portfolioName||'(No Portfolio)',
+      state:c.state||'', placeLabel:placeName(p.placement), acos, cpc, singleBid, effBid, ineffective
+    });
   });
-  return {savedAt:new Date().toISOString(), campaigns};
-}
-function weekTotals(camp){
-  const pls=camp?Object.values(camp.placements):[];
-  const spend=pls.reduce((s,p)=>s+p.spend,0);
-  const sales=pls.reduce((s,p)=>s+p.sales,0);
-  const ppSpend=camp&&camp.placements['Product Pages']?camp.placements['Product Pages'].spend:0;
-  return {spend, sales, ppShare: spend>0?ppSpend/spend:0, acos: sales>0?spend/sales*100:(spend>0?Infinity:0)};
-}
-function computeCompareRows(a,b){
-  const ids=new Set([...Object.keys(a.campaigns), ...Object.keys(b.campaigns)]);
-  let rows=[...ids].map(cid=>{
-    const ca=a.campaigns[cid], cb=b.campaigns[cid];
-    const ta=weekTotals(ca), tb=weekTotals(cb);
-    return {
-      cid, name:(cb&&cb.campaignName)||(ca&&ca.campaignName)||cid, portfolio:(cb&&cb.portfolioName)||(ca&&ca.portfolioName)||'',
-      ta, tb, spendDeltaPct: ta.spend>0?(tb.spend-ta.spend)/ta.spend*100:null,
-      wentDark: ta.spend>=15 && tb.spend<ta.spend*0.5
-    };
-  }).filter(r=>r.ta.spend>0||r.tb.spend>0);
-  rows.sort((x,y)=>(y.wentDark-x.wentDark) || (Math.abs(y.ta.ppShare-y.tb.ppShare)-Math.abs(x.ta.ppShare-x.tb.ppShare)));
-  return rows;
-}
-function compareTableHtml(rows,labelA,labelB){
+  if(!rows.length){
+    $('#app').innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload a Bulk Operations export with placement performance data (Bidding Adjustment rows) to see this.</p></div></div>`;
+    return;
+  }
+  if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  if(st.minSpend>0) rows=rows.filter(r=>r.spend>=st.minSpend);
+  if(st.place) rows=rows.filter(r=>r.placeLabel===st.place);
+  if(st.acosMin!==''&&st.acosMin!=null) rows=rows.filter(r=>r.acos===Infinity||r.acos>=+st.acosMin);
+  if(st.acosMax!==''&&st.acosMax!=null) rows=rows.filter(r=>r.acos!==Infinity&&r.acos<=+st.acosMax);
+  rows.sort((a,b)=>b.spend-a.spend);
+  const portfolios=[...new Set(LAST_PLACEMENTS.map(p=>(campsById[p.campaignId]||{}).portfolioName||'(No Portfolio)'))].sort();
   const fMoney=n=>'$'+(n||0).toFixed(2);
   const fAcos=n=>n===Infinity?'∞':(n||0).toFixed(1)+'%';
-  const fPct=n=>Math.round((n||0)*100)+'%';
-  if(!rows.length) return '<div class="hint" style="margin-top:10px;">No campaigns match these filters.</div>';
-  return `<div style="max-height:520px;overflow:auto;margin-top:10px;"><table style="width:100%;"><thead><tr>
-    <th class="l">Campaign</th><th class="l">Portfolio</th>
-    <th>PP share ${esc(labelA)}</th><th>PP share ${esc(labelB)}</th>
-    <th>Spend ${esc(labelA)}</th><th>Spend ${esc(labelB)}</th><th>Spend Δ</th>
-    <th>ACoS ${esc(labelA)}</th><th>ACoS ${esc(labelB)}</th><th class="l"></th>
-  </tr></thead><tbody>
-    ${rows.map(r=>`<tr>
-      <td class="l">${esc(r.name)}</td><td class="l">${esc(r.portfolio)}</td>
-      <td>${fPct(r.ta.ppShare)}</td><td>${fPct(r.tb.ppShare)}</td>
-      <td>${fMoney(r.ta.spend)}</td><td>${fMoney(r.tb.spend)}</td>
-      <td style="color:${r.spendDeltaPct!=null&&r.spendDeltaPct<-30?'#b91c1c':r.spendDeltaPct!=null&&r.spendDeltaPct>10?'#15803d':'inherit'}">${r.spendDeltaPct==null?'—':(r.spendDeltaPct>0?'+':'')+r.spendDeltaPct.toFixed(0)+'%'}</td>
-      <td>${fAcos(r.ta.acos)}</td><td>${fAcos(r.tb.acos)}</td>
-      <td class="l">${r.wentDark?`<span class="tag warn" title="Total spend dropped more than half vs ${esc(labelA)} — this usually means the campaign fell out of the auction rather than shifting toward TOS/ROS. Consider raising the bid or placement % back up a bit rather than cutting further.">went dark</span>`:''}</td>
-    </tr>`).join('')}
-  </tbody></table></div>`;
-}
-async function renderWeekly(){
-  $('#app').innerHTML=`<div class="card pad"><div class="hint">Loading…</div></div>`;
-  let sb, session;
-  try{
-    sb=await getSupabaseClient();
-    ({data:{session}}=await sb.auth.getSession());
-  }catch(err){
-    $('#app').innerHTML=`<div class="card pad"><h3 class="sectitle">Weekly Tracking</h3><div class="hint">Could not reach the sign-in service: ${esc(err.message)}. Check your connection and reload.</div></div>`;
-    return;
-  }
-  if(APP_MODE!=='weekly') return; // user switched tabs while this was loading
-  if(!session){
-    const redirect=encodeURIComponent(location.pathname+location.search);
-    $('#app').innerHTML=`<div class="card pad">
-      <h3 class="sectitle">Weekly Tracking</h3>
-      <div class="hint" style="margin-bottom:10px;">Save each bulk export you review as a labeled week (e.g. 2026-W32), then compare any two weeks to see whether Product Pages share actually went down, ACoS held up, and no campaign quietly went dark — synced to your account, so it's the same on any device.</div>
-      <a class="btn grad" href="login.html?redirect=${redirect}">Log in to use Weekly Tracking</a>
-    </div>`;
-    return;
-  }
-  const uid=session.user.id;
-  const {data:dbRows, error:loadErr}=await sb.from('weekly_snapshots').select('week_label,saved_at,data').eq('user_id',uid).order('week_label');
-  if(APP_MODE!=='weekly') return;
-  if(loadErr){
-    $('#app').innerHTML=`<div class="card pad"><h3 class="sectitle">Weekly Tracking</h3><div class="hint">Could not load saved weeks: ${esc(loadErr.message)}. If this is the first time using this, make sure the "weekly_snapshots" table has been created in Supabase.</div></div>`;
-    return;
-  }
-  const store={};
-  (dbRows||[]).forEach(r=>{ store[r.week_label]={savedAt:r.saved_at, campaigns:(r.data&&r.data.campaigns)||{}}; });
-  const weeks=Object.keys(store).sort();
-  const hasCurrentUpload=LAST_PLACEMENTS.length>0;
-  const suggested=WK_LABEL_OVERRIDE!=null?WK_LABEL_OVERRIDE:isoWeekLabel(new Date());
+  const rowHtml=r=>{
+    const key=r.campaignId+'|'+r.placement;
+    const editVal=PL_EDITS[key]!=null?PL_EDITS[key]:'';
+    return `<tr>
+      <td class="l">${esc(r.campaignName)}</td>
+      <td class="l">${esc(r.portfolioName)}</td>
+      <td class="l">${esc(r.placeLabel)}</td>
+      <td>${(r.percentage||0)}%</td>
+      <td>${fInt(r.clicks)}</td>
+      <td>${fMoney(r.spend)}</td>
+      <td>${fMoney(r.sales)}</td>
+      <td style="color:${r.acos===Infinity||r.acos>50?'#b91c1c':r.acos>25?'#c2760a':'#15803d'}">${fAcos(r.acos)}</td>
+      <td>${r.singleBid!=null?fMoney(r.singleBid):'<span class="muted">multi-kw</span>'}</td>
+      <td>${fMoney(r.cpc)}</td>
+      <td>${r.ineffective?`<span class="tag warn" title="Bid (${fMoney(r.singleBid)}) alone already clears this placement's CPC (${fMoney(r.cpc)}) — cutting % won't stop the spend, the shared bid itself needs to come down.">won't stop spend alone</span>`:''}</td>
+      <td><input type="number" step="1" placeholder="—" value="${esc(editVal)}" data-pledit="${esc(key)}" style="width:70px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:12px;text-align:right;"></td>
+    </tr>`;
+  };
+  const editedCount=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
   $('#app').innerHTML=`
     <div class="card pad">
-      <h3 class="sectitle">Weekly Tracking</h3>
-      <div class="hint" style="margin-bottom:10px;">Signed in as ${esc(session.user.email||uid)}. Save each bulk export you review as a labeled week, then compare any two weeks to see whether Product Pages share actually went down, ACoS held up, and no campaign quietly went dark. Synced to your account — visible on any device you log in from.</div>
+      <h3 class="sectitle">Placements</h3>
+      <div class="hint" style="margin-bottom:10px;">Every SP campaign's Top of Search / Product Pages / Rest of Search — sorted by spend, worst first. Bid/CPC shown for single-keyword campaigns only (one shared bid) — "won't stop spend alone" means the bid itself already clears that placement's CPC, so a % cut alone won't help. Type a new % only where you want a change; leave blank to leave it alone. No auto-suggestion — you decide.</div>
       <div class="ctrls">
-        <div class="field"><label>Save current upload as</label><input type="text" id="wk-label" value="${esc(suggested)}" style="width:140px;"></div>
-        <button class="btn grad" id="wk-save" ${hasCurrentUpload?'':'disabled'}>Save snapshot</button>
-        ${!hasCurrentUpload?'<span class="hint">Upload a Bulk Operations export at the top of the page first, then come back here to save it as this week&#39;s snapshot.</span>':''}
+        <div class="field"><label>Portfolio</label><select id="pl-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option ${st.port===p?'selected':''}>${esc(p)}</option>`).join('')}</select></div>
+        <div class="field grow"><label>Campaign</label><input type="text" id="pl-camp" placeholder="Filter campaigns…" value="${esc(st.camp)}"></div>
+        <div class="field"><label>Placement</label><select id="pl-place">
+          <option value="" ${!st.place?'selected':''}>All</option>
+          <option ${st.place==='Top of Search'?'selected':''}>Top of Search</option>
+          <option ${st.place==='Rest of Search'?'selected':''}>Rest of Search</option>
+          <option ${st.place==='Product Pages'?'selected':''}>Product Pages</option>
+        </select></div>
+        <div class="field"><label>ACoS ≥</label><input type="number" id="pl-acosmin" value="${esc(st.acosMin)}" placeholder="—" style="width:80px;"></div>
+        <div class="field"><label>ACoS ≤</label><input type="number" id="pl-acosmax" value="${esc(st.acosMax)}" placeholder="—" style="width:80px;"></div>
+        <div class="field"><label>Min Spend</label><input type="number" id="pl-minspend" value="${st.minSpend}" style="width:90px;"></div>
       </div>
     </div>
     <div class="card pad">
-      <h3 class="sectitle">Saved weeks (${weeks.length})</h3>
-      ${!weeks.length?'<div class="hint">No weeks saved yet.</div>':`<table style="width:100%;"><thead><tr><th class="l">Week</th><th class="l">Saved</th><th>Campaigns</th><th class="l"></th></tr></thead><tbody>
-        ${weeks.map(w=>`<tr><td class="l">${esc(w)}</td><td class="l">${esc(new Date(store[w].savedAt).toLocaleString())}</td><td>${Object.keys(store[w].campaigns).length}</td><td class="l"><a href="#" class="wk-del" data-week="${esc(w)}">remove</a></td></tr>`).join('')}
-      </tbody></table>`}
-    </div>
-    ${weeks.length>=2?`<div class="card pad">
-      <h3 class="sectitle">Compare two weeks</h3>
-      <div class="ctrls">
-        <div class="field"><label>From</label><select id="wk-from">${weeks.map((w,i)=>`<option ${i===weeks.length-2?'selected':''}>${esc(w)}</option>`).join('')}</select></div>
-        <div class="field"><label>To</label><select id="wk-to">${weeks.map((w,i)=>`<option ${i===weeks.length-1?'selected':''}>${esc(w)}</option>`).join('')}</select></div>
+      <div class="rowbar" style="margin:0 0 10px;">
+        <h3 class="sectitle" style="margin:0;">Placements (${rows.length})</h3>
+        <div class="spacer"></div>
+        <button class="btn grad" id="pl-export" ${editedCount?'':'disabled'}>Export Placement Update (${editedCount})</button>
       </div>
-      <div id="wk-compare"></div>
-    </div>`:''}
-  `;
-  $('#wk-label').oninput=()=>{ WK_LABEL_OVERRIDE=$('#wk-label').value; };
-  $('#wk-save').onclick=async ()=>{
-    const label=$('#wk-label').value.trim(); if(!label){ alert('Enter a week label.'); return; }
-    const btn=$('#wk-save'); btn.disabled=true; btn.textContent='Saving…';
-    const snap=buildWeekSnapshot();
-    const {error}=await sb.from('weekly_snapshots').upsert(
-      {user_id:uid, week_label:label, saved_at:snap.savedAt, data:{campaigns:snap.campaigns}},
-      {onConflict:'user_id,week_label'}
-    );
-    if(error){ alert('Could not save: '+error.message); btn.disabled=false; btn.textContent='Save snapshot'; return; }
-    WK_LABEL_OVERRIDE=null; // saved successfully — next render can go back to suggesting today's actual week
-    renderWeekly();
-  };
-  document.querySelectorAll('.wk-del').forEach(a=>a.onclick=async e=>{
-    e.preventDefault();
-    if(!confirm(`Remove saved week "${a.dataset.week}"?`)) return;
-    const {error}=await sb.from('weekly_snapshots').delete().eq('user_id',uid).eq('week_label',a.dataset.week);
-    if(error){ alert('Could not remove: '+error.message); return; }
-    renderWeekly();
-  });
-  if(weeks.length>=2){
-    const renderCompare=()=>{
-      const labelA=$('#wk-from').value, labelB=$('#wk-to').value;
-      const allRows=computeCompareRows(store[labelA], store[labelB]);
-      const portfolios=[...new Set(allRows.map(r=>r.portfolio))].sort();
-      $('#wk-compare').innerHTML=`
-        <div class="ctrls" style="margin:10px 0;">
-          <div class="field"><label>Portfolio</label><select id="wk-cmp-port"><option value="">All Portfolios</option>${portfolios.map(p=>`<option>${esc(p)}</option>`).join('')}</select></div>
-          <div class="field"><label>Spend change</label><select id="wk-cmp-dir">
-            <option value="">All</option>
-            <option value="down">Decreased</option>
-            <option value="up">Increased</option>
-            <option value="dark">Went dark only</option>
-          </select></div>
-        </div>
-        <div id="wk-cmp-table">${compareTableHtml(allRows, labelA, labelB)}</div>
-      `;
-      const applyFilter=()=>{
-        const port=$('#wk-cmp-port').value, dir=$('#wk-cmp-dir').value;
-        let filtered=allRows;
-        if(port) filtered=filtered.filter(r=>r.portfolio===port);
-        if(dir==='down') filtered=filtered.filter(r=>r.spendDeltaPct!=null&&r.spendDeltaPct<0);
-        if(dir==='up') filtered=filtered.filter(r=>r.spendDeltaPct!=null&&r.spendDeltaPct>0);
-        if(dir==='dark') filtered=filtered.filter(r=>r.wentDark);
-        $('#wk-cmp-table').innerHTML=compareTableHtml(filtered, labelA, labelB);
-      };
-      $('#wk-cmp-port').onchange=applyFilter;
-      $('#wk-cmp-dir').onchange=applyFilter;
-    };
-    $('#wk-from').onchange=renderCompare;
-    $('#wk-to').onchange=renderCompare;
-    renderCompare();
-  }
+      <div class="tablewrap"><table>
+        <thead><tr><th class="l">Campaign</th><th class="l">Portfolio</th><th class="l">Placement</th><th>Current %</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>ACoS</th><th>Bid</th><th>CPC</th><th class="l"></th><th>New %</th></tr></thead>
+        <tbody>${rows.map(rowHtml).join('')}</tbody>
+      </table></div>
+    </div>`;
+  $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacements();};
+  $('#pl-camp').oninput=debounce(()=>{st.camp=$('#pl-camp').value; renderPlacements();},220);
+  $('#pl-place').onchange=e=>{st.place=e.target.value; renderPlacements();};
+  $('#pl-acosmin').oninput=debounce(()=>{st.acosMin=$('#pl-acosmin').value; renderPlacements();},300);
+  $('#pl-acosmax').oninput=debounce(()=>{st.acosMax=$('#pl-acosmax').value; renderPlacements();},300);
+  $('#pl-minspend').oninput=debounce(()=>{st.minSpend=+$('#pl-minspend').value||0; renderPlacements();},300);
+  document.querySelectorAll('[data-pledit]').forEach(inp=>inp.oninput=debounce(()=>{
+    const key=inp.dataset.pledit;
+    if(inp.value===''){ delete PL_EDITS[key]; } else { PL_EDITS[key]=inp.value; }
+    const btn=$('#pl-export'); const n=Object.keys(PL_EDITS).filter(k=>PL_EDITS[k]!==''&&PL_EDITS[k]!=null).length;
+    btn.disabled=!n; btn.textContent=`Export Placement Update (${n})`;
+  },300));
+  $('#pl-export').onclick=exportPlacements;
 }
-
+function fInt(n){ return Math.round(n||0).toLocaleString(); }
+function exportPlacements(){
+  const out=[];
+  Object.keys(PL_EDITS).forEach(key=>{
+    const val=PL_EDITS[key]; if(val===''||val==null) return;
+    const i=key.indexOf('|'); const cid=key.slice(0,i), raw=key.slice(i+1);
+    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':cid,'Placement':raw,'Percentage':+val}));
+  });
+  if(!out.length){ alert('No placements edited — type a new % in at least one row.'); return; }
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([BULK_HEADERS,...out]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Sponsored Products Campaigns');
+  XLSX.writeFile(wb, 'placement_update_bulk.xlsx');
+  alert(`Exported ${out.length} placement update(s).`);
+}
 function exportBiddingStrategy(rows, target){
   if(!rows.length){ alert('No campaigns selected.'); return; }
   const out=rows.map(r=>bulkRow(Object.assign({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Bidding Strategy':target}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
@@ -1234,12 +1145,34 @@ $('#cm-file').onchange=e=>{
     try{
       const buf=new Uint8Array(ev.target.result);
       LAST_WB=XLSX.read(buf,{type:'array'}); LAST_FILENAME=file.name;
-      const rows=processWorkbook(LAST_WB, '');
+      const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value);
       $('#cm-status').innerHTML = `<b>${esc(file.name)}</b> — ${rows.length} enabled campaign(s) found.`;
       renderApp(rows);
     }catch(err){ console.error(err); alert('Import error: '+err.message); }
   };
   r.readAsArrayBuffer(file);
+};
+$('#cm-parentmap').onchange=e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    try{
+      const buf=new Uint8Array(ev.target.result);
+      const wb=XLSX.read(buf,{type:'array'});
+      PARENT_MAP=parseParentMap(wb);
+      const n=Object.keys(PARENT_MAP).length;
+      if(!n){ $('#cm-parentmap-status').innerHTML = `Could not find "(Parent) ASIN" / "Product ASIN"-style columns in <b>${esc(file.name)}</b> — mixed detection unchanged.`; return; }
+      $('#cm-parentmap-status').innerHTML = `<b>${esc(file.name)}</b> loaded — ${n} child→parent ASIN mapping(s). Same-parent variations will no longer be flagged as MIXED.`;
+      if(LAST_WB){ const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value); renderApp(rows); }
+    }catch(err){ console.error(err); alert('Import error: '+err.message); }
+  };
+  r.readAsArrayBuffer(file);
+};
+$('#cm-brandterms').onchange=()=>{
+  if(!LAST_WB) return;
+  const rows=processWorkbook(LAST_WB, $('#cm-brandterms').value);
+  $('#cm-status').innerHTML = `<b>${esc(LAST_FILENAME)}</b> — ${rows.length} enabled campaign(s) found.`;
+  renderApp(rows);
 };
 </script>
 </body>
