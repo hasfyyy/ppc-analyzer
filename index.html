@@ -1799,13 +1799,17 @@ function renderProducts(){
   const candidates=ads.filter(p=>p.state==='enabled' && enabledCamps.has(p.campaignId) && enabledAdsByCamp[p.campaignId]>1).filter(p=>{
     if(p.spend<st.pMinSpend) return false;
     const d=derive(agg([p]));
-    if(p.clicks>=st.pClicks && p.orders<=st.pMaxOrders) return true;
-    if(p.orders>=1 && (d.acos===Infinity||d.acos>st.pAcos)) return true;
+    // "0 sales" means exactly that — orders===0, not "at or under Max Orders". Capping THIS branch on Max
+    // Orders let a product with real orders and a perfectly good ACoS (e.g. 9-30%, well under threshold)
+    // get flagged as "wasted clicks" purely for having few orders, hiding that it's actually converting fine.
+    // Max Orders instead caps the ACoS branch below — same fix as the Targets tab's identical bug.
+    if(p.clicks>=st.pClicks && p.orders===0) return true;
+    if(p.orders>=1 && (st.pMaxOrders<=0 || p.orders<=st.pMaxOrders) && (d.acos===Infinity||d.acos>st.pAcos)) return true;
     return false;
   }).map(p=>{
     const d=derive(agg([p]));
     const key=p.campaignId+'|'+p.adGroupId+'|'+(p.sku||p.asin||'');
-    const reason=(p.clicks>=st.pClicks && p.orders<=st.pMaxOrders)? `${fInt(p.clicks)} clicks, ${p.orders} order(s)` : `ACoS ${fAcos(d.acos)}`;
+    const reason=(p.clicks>=st.pClicks && p.orders===0)? `${fInt(p.clicks)} clicks, 0 orders` : `ACoS ${fAcos(d.acos)}`;
     return Object.assign({_puid:key, reason},p,d);
   });
   // A manual uncheck must survive a slider tweak, so persistence is keyed on the stable (campaign+adgroup+sku)
