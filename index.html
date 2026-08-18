@@ -868,6 +868,7 @@ function renderNegatives(product){
   const st=stFor(tab); if(st.acos===undefined)st.acos=100; if(st.clicks===undefined)st.clicks=10;
   if(st.minSpend===undefined)st.minSpend=0;
   if(st.orders===undefined)st.orders='all'; if(st.negated===undefined)st.negated='all';
+  if(st.maxOrders===undefined)st.maxOrders='';
   if(st.exExact===undefined)st.exExact=true; // negating a term that IS the exact keyword targeted makes no sense — excluded by default
   // Same reasoning as Targets/Duplicates: a paused campaign's search terms shouldn't drive a negative export.
   const enabledCamps=optimizableCampaignIds(product);
@@ -908,6 +909,10 @@ function renderNegatives(product){
       if(!(noConv||highAcos)) return false;
       if(st.orders==='0' && r.orders!==0) return false;
       if(st.orders==='1' && r.orders<1) return false;
+      // A term with bad ACoS but a real pile of orders behind it might be worth keeping despite the ACoS —
+      // negating it kills proven volume. This caps candidates at a maximum order count, separate from the
+      // "no orders / has orders" filter above, so both can be combined (e.g. "has orders" AND "at most 3").
+      if(st.maxOrders!==''&&st.maxOrders!=null && r.orders>+st.maxOrders) return false;
       if(st.exExact && (r.matchType||'').toLowerCase()==='exact') return false;
       if(st.exExact && isExactCampaign(r.campaignName)) return false;
       if(ownPTAsins.has(r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm.trim().toLowerCase())) return false;
@@ -966,6 +971,7 @@ function renderNegatives(product){
         <div class="field"><label>Clicks (No Conv.) ≥</label><input type="number" id="ng-clicks" min="0" value="${st.clicks}" style="width:90px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="ng-minspend" value="${st.minSpend}" style="width:90px;"></div>
         <div class="field"><label>Orders Filter</label><select id="ng-orders"><option value="all" ${st.orders==='all'?'selected':''}>All</option><option value="0" ${st.orders==='0'?'selected':''}>No orders (0)</option><option value="1" ${st.orders==='1'?'selected':''}>Has orders</option></select></div>
+        <div class="field"><label>Max Orders</label><input type="number" id="ng-maxorders" min="0" placeholder="—" value="${esc(st.maxOrders)}" style="width:90px;" title="Excludes any candidate with MORE orders than this — a term with bad ACoS but real order volume behind it might be worth keeping despite the ACoS."></div>
         <div class="field"><label>Exclude</label><label style="flex-direction:row;gap:6px;font-size:12px;" title="A term identical to the exact keyword already targeted can't be meaningfully negated — excluded by default."><input type="checkbox" id="ng-exex" ${st.exExact?'checked':''}> Exact Match campaigns</label></div>
         ${spTip?`<div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;"><input type="checkbox" id="ng-exasin" ${st.exAsin?'checked':''}> ASIN (b0…)</label></div>`:''}
         <div class="field"><label>Already Negated</label><select id="ng-negf"><option value="all" ${st.negated==='all'?'selected':''}>Show All</option><option value="hide" ${st.negated==='hide'?'selected':''}>Hide Negated</option><option value="only" ${st.negated==='only'?'selected':''}>Only Negated</option></select></div>
@@ -993,6 +999,7 @@ function renderNegatives(product){
   $('#ng-clicks').oninput=debounce(()=>{st.clicks=+$('#ng-clicks').value||0; upd();},350);
   $('#ng-minspend').oninput=debounce(()=>{st.minSpend=+$('#ng-minspend').value||0; upd();},250);
   $('#ng-orders').onchange=e=>{st.orders=e.target.value; upd();};
+  $('#ng-maxorders').oninput=debounce(()=>{st.maxOrders=$('#ng-maxorders').value; upd();},300);
   $('#ng-negf').onchange=e=>{st.negated=e.target.value; upd();};
   $('#ng-exex').onchange=e=>{st.exExact=e.target.checked; upd();};
   if(spTip){ $('#ng-exasin').onchange=e=>{st.exAsin=e.target.checked; upd();}; }
