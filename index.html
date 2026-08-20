@@ -2324,39 +2324,39 @@ function renderOptBids(){
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#app').innerHTML=`
-    <div class="card pad">
-      <h3 class="sectitle">Bid rules</h3>
-      <div class="hint" style="margin-bottom:8px;">ACoS allowance by category — shifts the ACoS fed into the tiers below, so the SAME tiers end up stricter or looser depending on what's being targeted. Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A target is Branded if the campaign name, the portfolio name, OR the keyword/targeting text itself contains one of the terms below (or the word "brand" if left empty) — e.g. term "visse" catches a keyword like "visse visual timer" even inside a generically-named campaign.</div>
+    <details class="card pad" id="ob-settings">
+      <summary class="sectitle" style="cursor:pointer;">Bid rules — Goal ${st.acosGoal}%, Buffer +${st.acosGoalBuffer}pp, cut ${st.acosGoalDec}% <span class="hint" style="font-weight:400;">(click to edit)</span></summary>
+      <div class="hint" style="margin:10px 0 8px;" title="Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A target is Branded if the campaign name, the portfolio name, OR the keyword/targeting text itself contains one of the terms below (or the word &quot;brand&quot; if left empty).">ACoS allowance by category — shifts Goal stricter/looser per target type. Hover for details.</div>
       <div class="ctrls" style="margin-bottom:12px;">
-        <div class="field"><label>Exact: ACoS allowance (pp)</label><input type="number" id="ob-catexact" value="${st.acosAdjExact}" style="width:90px;"></div>
-        <div class="field"><label>Discovery: ACoS allowance (pp)</label><input type="number" id="ob-catdisc" value="${st.acosAdjDiscovery}" style="width:90px;"></div>
-        <div class="field"><label>Branded: ACoS allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
-        <div class="field grow"><label>Brand terms (comma-separated, matched against campaign name, portfolio name, AND the keyword/target text itself)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}"></div>
+        <div class="field"><label>Exact: allowance (pp)</label><input type="number" id="ob-catexact" value="${st.acosAdjExact}" style="width:90px;"></div>
+        <div class="field"><label>Discovery: allowance (pp)</label><input type="number" id="ob-catdisc" value="${st.acosAdjDiscovery}" style="width:90px;"></div>
+        <div class="field"><label>Branded: allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
+        <div class="field grow"><label>Brand terms (comma-separated)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}" title="Matched against campaign name, portfolio name, AND the keyword/target text itself."></div>
       </div>
-      <div class="hint" style="margin-bottom:8px;">ACoS Goal — nothing happens below Goal+Buffer; above it, one flat cut. The category allowance above shifts Goal itself (Exact tolerates Goal+15pp, Branded only Goal-15pp, before the buffer is even added).</div>
+      <div class="hint" style="margin-bottom:8px;" title="Nothing happens below Goal+Buffer; above it, one flat cut. The category allowance above shifts Goal itself (Exact tolerates Goal+15pp, Branded only Goal-15pp) before the buffer is even added.">ACoS Goal — hover for details.</div>
       <div class="ctrls">
         <div class="field"><label>ACoS Goal %</label><input type="number" id="ob-acosgoal" value="${st.acosGoal}" style="width:90px;"></div>
         <div class="field"><label>Buffer % over Goal</label><input type="number" id="ob-acosgoalbuffer" value="${st.acosGoalBuffer}" style="width:90px;"></div>
         <div class="field"><label>Decrease by %</label><input type="number" id="ob-acosgoaldec" value="${st.acosGoalDec}" style="width:90px;"></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;">Graduated increase, mirrored — the lower the ACoS, the bigger the bump. Each tier's ACoS threshold must be lower than the one before it.</div>
+      <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="ob-inchi1" value="${st.incHi1}" style="width:80px;"></div>
-        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc1" value="${st.incPct1}" style="width:80px;"></div>
+        <div class="field"><label>+%</label><input type="number" id="ob-inc1" value="${st.incPct1}" style="width:70px;"></div>
         <div class="field"><label>Tier 2: ACoS &lt;</label><input type="number" id="ob-inchi2" value="${st.incHi2}" style="width:80px;"></div>
-        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc2" value="${st.incPct2}" style="width:80px;"></div>
+        <div class="field"><label>+%</label><input type="number" id="ob-inc2" value="${st.incPct2}" style="width:70px;"></div>
         <div class="field"><label>Tier 3: ACoS &lt;</label><input type="number" id="ob-inchi3" value="${st.incHi3}" style="width:80px;"></div>
-        <div class="field"><label>Increase by %</label><input type="number" id="ob-inc3" value="${st.incPct3}" style="width:80px;"></div>
+        <div class="field"><label>+%</label><input type="number" id="ob-inc3" value="${st.incPct3}" style="width:70px;"></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;"><b>Floor override</b> (single-keyword campaigns, shortcut — same settings as the Placement Optimizer tab) — when a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid; instead the bid is set to (that placement's own CPC) × (1 − buffer%), and siblings at/below this goal get raised back to the old bid (plus a bonus if beating goal by a wide margin).</div>
+      <div class="hint" style="margin:12px 0 4px;" title="Single-keyword campaigns, shortcut — same settings as the Placement Optimizer tab. When a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid; instead the bid is set to (that placement's own CPC) × (1 − buffer%), and siblings at/below this goal get raised back to the old bid (plus a bonus if beating goal by a wide margin).">Floor override — hover for details.</div>
       <div class="ctrls">
         <div class="field"><label>Floor ACoS Goal %</label><input type="number" id="ob-floorgoal" value="${pst.floorGoal}" style="width:90px;"></div>
         <div class="field"><label>Buffer % under CPC</label><input type="number" id="ob-floorbuffer" value="${pst.floorBuffer}" style="width:90px;"></div>
-        <div class="field"><label>...or min $ under CPC</label><input type="number" step="0.01" id="ob-floorbufferdollar" value="${pst.floorBufferMinDollar}" style="width:90px;"></div>
-        <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;"></div>
-        <div class="field"><label>Bonus %</label><input type="number" id="ob-floorbonuspct" value="${pst.floorBonusPct}" style="width:90px;"></div>
-        <div class="field"><label>...or min $ bonus</label><input type="number" step="0.01" id="ob-floorbonusdollar" value="${pst.floorBonusMinDollar}" style="width:90px;"></div>
-        <div class="field"><label>Stuck placement bid bump $</label><input type="number" step="0.01" id="ob-stuckbump" value="${pst.stuckBumpDollar}" style="width:90px;" title="A campaign's highest-bid keyword/target gets bumped by this much when one of its placements is stuck past the push ceiling (see Placement Optimizer) with too few clicks — % has already proven it isn't the lever there."></div>
+        <div class="field"><label>...or min $</label><input type="number" step="0.01" id="ob-floorbufferdollar" value="${pst.floorBufferMinDollar}" style="width:80px;"></div>
+        <div class="field"><label>Bonus if beating by ≥pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;"></div>
+        <div class="field"><label>Bonus %</label><input type="number" id="ob-floorbonuspct" value="${pst.floorBonusPct}" style="width:80px;"></div>
+        <div class="field"><label>...or min $</label><input type="number" step="0.01" id="ob-floorbonusdollar" value="${pst.floorBonusMinDollar}" style="width:80px;"></div>
+        <div class="field"><label>Stuck placement bump $</label><input type="number" step="0.01" id="ob-stuckbump" value="${pst.stuckBumpDollar}" style="width:90px;" title="A campaign's highest-bid keyword/target gets bumped by this much when one of its placements is stuck past the push ceiling (see Placement Optimizer) with too few clicks — % has already proven it isn't the lever there."></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
@@ -2365,26 +2365,26 @@ function renderOptBids(){
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;">0 orders — ACoS is undefined with no sales, so this runs on clicks instead. Too little data yet (below the first threshold) gets a small bump; each tier above it is a graduated cut for proven wasted spend. 0 clicks is handled separately below (Wake).</div>
+      <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake).">0 orders — runs on clicks instead of ACoS (undefined with no sales). Below the first threshold gets a small bump; each tier above is a graduated cut.</div>
       <div class="ctrls">
         <div class="field"><label>Give a chance if Clicks &lt;</label><input type="number" id="ob-zerolow" value="${st.zeroLowClicks}" style="width:90px;"></div>
-        <div class="field"><label>Increase by %</label><input type="number" id="ob-zeroinc" value="${st.zeroIncPct}" style="width:80px;"></div>
+        <div class="field"><label>+%</label><input type="number" id="ob-zeroinc" value="${st.zeroIncPct}" style="width:70px;"></div>
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-zerodec1" value="${st.zeroDec1}" style="width:80px;"></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-zerodec1" value="${st.zeroDec1}" style="width:70px;"></div>
         <div class="field"><label>Tier 2: Clicks ≥</label><input type="number" id="ob-zerohi2" value="${st.zeroHi2}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-zerodec2" value="${st.zeroDec2}" style="width:80px;"></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-zerodec2" value="${st.zeroDec2}" style="width:70px;"></div>
         <div class="field"><label>Tier 3: Clicks ≥</label><input type="number" id="ob-zerohi3" value="${st.zeroHi3}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-zerodec3" value="${st.zeroDec3}" style="width:80px;"></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-zerodec3" value="${st.zeroDec3}" style="width:70px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
         <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;"></div>
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
-        <div class="hint" style="align-self:center;">Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.</div>
+        <div class="hint" style="align-self:center;" title="Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for keywords with impressions but 0 clicks.</div>
       </div>
-    </div>
+    </details>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
       ${kpi('Suggested changes',fInt(allRows.length))}${kpi('Decreases',fInt(allRows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(allRows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(allRows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(allRows.filter(r=>sel.has(r._uid)).length),'pink')}
     </div>
