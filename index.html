@@ -2528,6 +2528,21 @@ function computePlacementOptRows(product, filters){
     let ineffectiveFloor=false;
     if(badPerf && e.percentage>0){
       action='decrease'; newPct=Math.max(0, e.percentage-decPct);
+      // The tier cut above is a flat number of points regardless of what this placement's auctions actually
+      // cost — on a placement that's been boosted a lot (like 80%), a 30pp cut can still leave the effective
+      // bid (base × (1+%)) well above this placement's own real CPC, so the "bad" spend barely changes even
+      // though the % on screen dropped a lot. Checked against the campaign's highest-bid target — same
+      // "most likely responsible" stand-in the stuck-placement bump already uses elsewhere — since multi-
+      // keyword campaigns don't have one unambiguous bid the way single-keyword ones do. Only ever caps the
+      // cut further (never loosens it) when the tier alone doesn't get the effective bid at or under this
+      // placement's own CPC.
+      {
+        const target=topTargetByCamp.get(e.campaignId);
+        if(target && d.cpc>0 && target.bid>0){
+          const cpcCapPct=Math.max(0, +((d.cpc/target.bid-1)*100).toFixed(1));
+          if(cpcCapPct<newPct) newPct=cpcCapPct;
+        }
+      }
       // Landing at 0% doesn't mean the spend actually stops — 0% just means "no boost", the shared base bid
       // is still the effective bid there. If that base bid alone already clears this placement's own real
       // cost (CPC), the cut changed the number on screen but won't meaningfully change what gets spent; the
