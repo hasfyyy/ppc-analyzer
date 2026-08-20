@@ -310,6 +310,12 @@ function detectProduct(v){ const s=String(v||'').toLowerCase(); if(s.includes('b
 // parsed cells are keyed by address regardless of the bogus dimension, so recompute '!ref' from those
 // real addresses before converting — a no-op when the tag was already correct.
 function fixSheetRange(ws){
+  // Dense sheets (see the dense:true read option below) store each row under a plain numeric key
+  // ("0","1",...) instead of one ws['A1']-style key per cell, so the old key-scanning loop below
+  // would misparse those as cell addresses. Dense sheets already carry a correct '!ref' from
+  // XLSX.read itself though — the stale-dimension bug this function exists for was sparse-only —
+  // so there's nothing to fix here; just leave it alone.
+  if(ws['0']!==undefined) return;
   let minR=Infinity,minC=Infinity,maxR=-1,maxC=-1;
   for(const addr in ws){
     if(addr[0]==='!') continue;
@@ -3152,7 +3158,11 @@ function exportNewCampaigns(opps, settings){
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
 function loadArrayBuffer(buf,name){
   try{
-    const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
+    // dense:true stores each row as a plain array instead of one object key per cell address
+    // (e.g. "A1", "B2", ...) — for a 377k-row x 53-col sheet that's ~20M string-keyed properties
+    // in sparse mode, which is what was making XLSX.read() silently fail to build that one
+    // worksheet at all (wb.Sheets[name] came back undefined, no thrown error) on real huge accounts.
+    const wb=XLSX.read(new Uint8Array(buf),{type:'array',dense:true});
     parseWorkbook(wb); DATA.fileName=name;
     $('#loadNote').textContent = `Loaded "${name}" — ${fInt(DATA.searchTerms.length)} search terms · ${fInt(DATA.targets.length)} targets · ${fInt(DATA.productAds.length)} product ads`;
     renderToggle(); renderNav(); renderTab();
