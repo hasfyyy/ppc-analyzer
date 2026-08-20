@@ -2176,9 +2176,9 @@ function renderOptBids(){
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
   // needs the opposite: catching it early, before it burns through 10 clicks, is the whole point).
-  if(st.zeroHi1===undefined) st.zeroHi1=3; if(st.zeroDec1===undefined) st.zeroDec1=10;
-  if(st.zeroHi2===undefined) st.zeroHi2=6; if(st.zeroDec2===undefined) st.zeroDec2=20;
-  if(st.zeroHi3===undefined) st.zeroHi3=10; if(st.zeroDec3===undefined) st.zeroDec3=30;
+  if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
+  if(st.zeroHi2===undefined) st.zeroHi2=15; if(st.zeroDec2===undefined) st.zeroDec2=15;
+  if(st.zeroHi3===undefined) st.zeroHi3=20; if(st.zeroDec3===undefined) st.zeroDec3=20;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=50; if(st.wakePct===undefined) st.wakePct=10; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
   // ACoS allowance per target category — shifts the ACoS fed into the tiers above, not a separate rule set.
   // +15 for Exact means it takes 15pp more ACoS to trigger the same cut (and 15pp less to trigger the same
@@ -2312,7 +2312,7 @@ function renderOptBids(){
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#app').innerHTML=`
-    <details class="card pad" id="ob-settings">
+    <details class="card pad" id="ob-settings" ${st.settingsOpen?'open':''}>
       <summary class="sectitle" style="cursor:pointer;">Bid rules — decrease &gt;${st.hi1}%/&gt;${st.hi2}%/&gt;${st.hi3}% ACoS <span class="hint" style="font-weight:400;">(click to edit)</span></summary>
       <div class="hint" style="margin:10px 0 8px;" title="Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A target is Branded if the campaign name, the portfolio name, OR the keyword/targeting text itself contains one of the terms below (or the word &quot;brand&quot; if left empty).">ACoS allowance by category — shifts Goal stricter/looser per target type. Hover for details.</div>
       <div class="ctrls" style="margin-bottom:12px;">
@@ -2391,6 +2391,9 @@ function renderOptBids(){
     </div>`;
   tbl.wire($('#ob-table'));
   const upd=()=>renderOptBids();
+  // Every input change re-renders this whole tab from scratch, which would otherwise reset the <details>
+  // settings panel closed each time — track its open/closed state across re-renders instead of losing it.
+  const settingsEl=$('#ob-settings'); if(settingsEl) settingsEl.ontoggle=()=>{ st.settingsOpen=settingsEl.open; };
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
   bind('ob-brandterms','brandTerms',v=>v);
