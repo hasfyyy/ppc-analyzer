@@ -328,11 +328,23 @@ function parseWorkbook(wb){
     const headers=Object.keys(json[0]); const c=colmap(headers);
     if(c.entity===undefined && c.searchTerm===undefined && c.campaignId===undefined) return; // not a bulk sheet
     const sheetProduct = /brand/i.test(name)?'SB':(/display/i.test(name)?'SD':(/product/i.test(name)?'SP':null));
+    // Paused/archived campaigns are never touched by any optimizer tab, but their rows can dwarf the
+    // enabled ones in a mature account (seen: 3,397 paused vs 130 enabled campaigns, 90% of all rows).
+    // Dropping them here — before anything is pushed into DATA — keeps big accounts from blowing the
+    // browser's memory on a bulk upload, with zero effect on what any tab actually shows.
+    const campState={};
+    json.forEach(row=>{
+      const g=f=>c[f]!==undefined?row[c[f]]:'';
+      if(String(g('entity')||'').trim().toLowerCase()==='campaign'){
+        campState[String(g('campaignId')||'').trim()]=String(g('state')||'').trim().toLowerCase();
+      }
+    });
     json.forEach(row=>{
       const g=f=>c[f]!==undefined?row[c[f]]:'';
       const ent=String(g('entity')||'').trim().toLowerCase();
       const product = c.product!==undefined ? detectProduct(g('product')) : (sheetProduct||'SP');
       const campaignId=String(g('campaignId')||'').trim();
+      if(campaignId && campState[campaignId] && campState[campaignId]!=='enabled') return;
       const adGroupId=String(g('adGroupId')||'').trim();
       const st=String(g('searchTerm')||'').trim();
       const met={ impressions:toNum(g('impressions')), clicks:toNum(g('clicks')), spend:toNum(g('spend')), sales:toNum(g('sales')), orders:toNum(g('orders')), units:toNum(g('units')) };
