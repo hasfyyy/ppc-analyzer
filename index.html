@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 18:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 18:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2543,6 +2543,19 @@ function computePlacementOptRows(product, filters){
   if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=20;
   if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=30;
   if(st.lowAcos===undefined) st.lowAcos=20; if(st.incStep===undefined) st.incStep=5; if(st.minClicks===undefined) st.minClicks=5;
+  // Target-bid engine (see the decision block below). Tier thresholds are multiples of the ACoS goal, so one
+  // set of rules works across accounts with different targets; the cut is how far under the placement's own
+  // CPC the effective bid should land.
+  if(st.acosGoal===undefined) st.acosGoal=20;
+  if(st.t1Mult===undefined) st.t1Mult=1.25; if(st.t1Cut===undefined) st.t1Cut=10;
+  if(st.t2Mult===undefined) st.t2Mult=2.5;  if(st.t2Cut===undefined) st.t2Cut=15;
+  if(st.t3Mult===undefined) st.t3Mult=4.5;  if(st.t3Cut===undefined) st.t3Cut=25;
+  if(st.raiseStep===undefined) st.raiseStep=5;
+  // Zero-order ladder runs on clicks, not money: with no orders there is no ACoS and no conversion value to
+  // price against, just "how much traffic did it burn without producing anything".
+  if(st.z1Clicks===undefined) st.z1Clicks=10; if(st.z1Cut===undefined) st.z1Cut=10;
+  if(st.z2Clicks===undefined) st.z2Clicks=15; if(st.z2Cut===undefined) st.z2Cut=15;
+  if(st.z3Clicks===undefined) st.z3Clicks=20; if(st.z3Cut===undefined) st.z3Cut=20;
   // Replaces the old "push if % is below X" rule — that one missed a placement that already has a real %
   // (say 143%) but still isn't getting enough auctions to prove itself, which is the far more common pattern
   // in practice: a campaign concentrates its whole budget on whichever placement is easiest to win (often
@@ -2595,40 +2608,57 @@ function computePlacementOptRows(product, filters){
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
     // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
     // even though there's no ACoS to compute (division by zero sales).
-    const decPct = (e.clicks>=st.minClicks && e.orders>=1) ? decreaseTierFor(d.acos, bst) : (e.orders===0 ? zeroOrderDecreaseTierFor(e.clicks, st) : null);
-    const badPerf = decPct!=null;
-    let ineffectiveFloor=false;
-    if(badPerf && e.percentage>0){
-      action='decrease'; newPct=Math.max(0, e.percentage-decPct);
-      // The tier cut above is a flat number of points regardless of what this placement's auctions actually
-      // cost — on a placement that's been boosted a lot (like 80%), a 30pp cut can still leave the effective
-      // bid (base × (1+%)) well above this placement's own real CPC, so the "bad" spend barely changes even
-      // though the % on screen dropped a lot. Checked against the campaign's highest-bid target — same
-      // "most likely responsible" stand-in the stuck-placement bump already uses elsewhere — since multi-
-      // keyword campaigns don't have one unambiguous bid the way single-keyword ones do. Only ever caps the
-      // cut further (never loosens it) when the tier alone doesn't get the effective bid at or under this
-      // placement's own CPC.
-      {
-        const target=topTargetByCamp.get(e.campaignId);
-        if(target && d.cpc>0 && target.bid>0){
-          const cpcCapPct=Math.max(0, +((d.cpc/target.bid-1)*100).toFixed(1));
-          if(cpcCapPct<newPct) newPct=cpcCapPct;
-        }
+    // ---- decision engine: aim at a TARGET EFFECTIVE BID, then act only on the gap that is left ----
+    // The old logic subtracted a flat number of points from the modifier, which says nothing about what the
+    // placement actually costs: -20pp off a 150% modifier and off a 25% one are wildly different real cuts.
+    // Instead the tier picks how far below this placement's OWN CPC the effective bid should land, and the
+    // modifier is whatever gets it there. Crucially it then compares that target against where the bid
+    // ALREADY is: if a previous run (or a manual edit) already brought it down, there is nothing left to do
+    // and no suggestion is produced, instead of blindly cutting the same placement a second time.
+    const goal=st.acosGoal>0? st.acosGoal : 20;
+    const topT=topTargetByCamp.get(e.campaignId);
+    const baseBid=topT? topT.bid : 0;
+    let cutPct=null, cutWhy='';
+    if(e.orders>=1){
+      // Thresholds ride on the account's ACoS goal rather than being fixed numbers, so the same tiers work
+      // whether the target is 20% or 45%.
+      if(d.acos>goal*st.t3Mult){ cutPct=st.t3Cut; cutWhy=`ACoS ${fAcos(d.acos)} (tier 3)`; }
+      else if(d.acos>goal*st.t2Mult){ cutPct=st.t2Cut; cutWhy=`ACoS ${fAcos(d.acos)} (tier 2)`; }
+      else if(d.acos>goal*st.t1Mult){ cutPct=st.t1Cut; cutWhy=`ACoS ${fAcos(d.acos)} (tier 1)`; }
+    } else if(e.clicks>0){
+      // No orders means no ACoS at all (spend/0 is undefined, not "infinitely bad"), so there is nothing to
+      // grade against a goal here. The only honest question is whether it has had enough traffic to prove
+      // itself, which is a click count — and the more clicks it burned without converting, the deeper the cut.
+      if(e.clicks>=st.z3Clicks){ cutPct=st.z3Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
+      else if(e.clicks>=st.z2Clicks){ cutPct=st.z2Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
+      else if(e.clicks>=st.z1Clicks){ cutPct=st.z1Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
+    }
+    let ineffectiveFloor=false, alreadyAtTarget=false, targetEffBid=null, why='';
+    if(cutPct!=null && baseBid>0 && d.cpc>0){
+      targetEffBid=+(d.cpc*(1-cutPct/100)).toFixed(4);
+      const currentEff=baseBid*(1+e.percentage/100);
+      if(currentEff<=targetEffBid*1.0005){
+        // Already at or under where this cut would put it — the correction has been made already.
+        alreadyAtTarget=true; why=`already at target (€${currentEff.toFixed(2)} ≤ €${targetEffBid.toFixed(2)})`;
+      } else {
+        let np=Math.round((targetEffBid/baseBid-1)*100);
+        if(np<0){ np=0; ineffectiveFloor=true; } // modifier alone can't reach it — base bid is the only lever left
+        if(np>e.percentage) np=e.percentage;     // a cut may never RAISE the modifier
+        if(np<e.percentage){ action='decrease'; newPct=np; why=`${cutWhy} → CPC €${d.cpc.toFixed(2)} -${cutPct}% = €${targetEffBid.toFixed(2)} effective`; }
+        else if(ineffectiveFloor){ action='floor-bad'; newPct=0; why=`${cutWhy} → needs €${targetEffBid.toFixed(2)} effective, modifier already at 0%`; }
+        else { alreadyAtTarget=true; why='already at target'; }
       }
-      // Landing at 0% doesn't mean the spend actually stops — 0% just means "no boost", the shared base bid
-      // is still the effective bid there. If that base bid alone already clears this placement's own real
-      // cost (CPC), the cut changed the number on screen but won't meaningfully change what gets spent; the
-      // ONLY lever left is the base bid itself, so this doesn't count as "handled" for the coverage check below.
-      if(isSingle && newPct<=0){
-        const target=singleTargetByCamp.get(e.campaignId);
-        if(target && d.cpc>0 && target.bid>=d.cpc) ineffectiveFloor=true;
-      }
-    } else if(badPerf){
-      // Already at the 0% floor — there's no percentage left to cut, so this placement's bad performance
-      // can't be fixed here at all. Flagged as 'floor-bad' (not 'decrease') so the Bid Optimizer knows NOT
-      // to treat it as "already handled" and still cuts the shared bid instead.
-      action='floor-bad';
-    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage<st.pushCeiling){
+    } else if(cutPct!=null){
+      action='floor-bad'; why=cutWhy;
+    } else if(isSingle && e.orders>=1 && d.acos<=goal && e.placeType!=='business'){
+      // Amazon Business is left out of raises deliberately — it's a separate audience with its own dynamics,
+      // not one of the three placements this workflow steers.
+      action='increase'; newPct=Math.min(900, e.percentage+st.raiseStep); why=`ACoS ${fAcos(d.acos)} at or under goal`;
+    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage<st.pushCeiling && baseBid>0 && d.cpc>0 && baseBid*(1+e.percentage/100)<=d.cpc*1.05){
+      // Only push when the bid is actually the binding constraint — i.e. the effective bid is at or below what
+      // this placement's auctions really cost. If the effective bid already clears the CPC comfortably, more %
+      // buys nothing: it isn't losing auctions on price, it simply isn't getting the volume, and pushing a
+      // placement that already outbids the going rate just raises spend on traffic that was never the issue.
       // Too few clicks to have EARNED the "bad performer" label above (badPerf already came back false,
       // whatever the % happens to be) — likely because the campaign's budget keeps getting eaten by another
       // placement before this one gets a fair shot. Give it more room to compete regardless of its current %,
