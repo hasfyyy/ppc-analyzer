@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 18:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 18:29</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2634,7 +2634,18 @@ function computePlacementOptRows(product, filters){
       else if(e.clicks>=st.z1Clicks){ cutPct=st.z1Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
     }
     let ineffectiveFloor=false, alreadyAtTarget=false, targetEffBid=null, why='';
-    if(cutPct!=null && baseBid>0 && d.cpc>0){
+    if(cutPct!=null && !isSingle){
+      // Multi-keyword campaigns have no single base bid to aim a target CPC at — the keywords sharing this
+      // placement can differ 20x in bid, so dividing a CPC-derived target by any one of them (the highest,
+      // say) produces a nonsense percentage: a gentle tier-1 trim came out as "157% → 0%", wiping the
+      // modifier entirely. Scale the multiplier itself instead: multiplying (1+%) by (1-cut) lowers what
+      // EVERY keyword pays on this placement by exactly the tier's percentage, whatever their individual bids.
+      const factor=1-cutPct/100;
+      const np=Math.max(0, Math.round(((1+e.percentage/100)*factor-1)*100));
+      if(np<e.percentage){ action='decrease'; newPct=np; why=`${cutWhy} → -${cutPct}% on this placement's bids`; }
+      else if(e.percentage<=0){ action='floor-bad'; newPct=0; why=`${cutWhy} → modifier already at 0%`; }
+      else { alreadyAtTarget=true; why='already at target'; }
+    } else if(cutPct!=null && baseBid>0 && d.cpc>0){
       targetEffBid=+(d.cpc*(1-cutPct/100)).toFixed(4);
       const currentEff=baseBid*(1+e.percentage/100);
       if(currentEff<=targetEffBid*1.0005){
