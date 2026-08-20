@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 19:02</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 19:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2253,15 +2253,13 @@ function renderOptBids(){
   // a keyword only earns an individual bid change once it has enough traffic for its rate to mean something;
   // below that the campaign is steered through its placements instead, and the fine-grained per-keyword work
   // happens on the longer 30-60 day window where every keyword has accumulated real volume.
-  // Measured in ORDERS, not clicks. A click threshold derived from the account's conversion rate is
-  // mathematically tidy but useless in practice: on a 5.6% CVR account "enough clicks to expect 3 orders"
-  // works out to 54, which exactly one keyword in eighty-two reached — it would switch keyword-level
-  // optimisation off entirely. What actually makes an ACoS untrustworthy is the order count behind it: at
-  // one order the figure is a coin flip (had that order not landed it would read as infinite), no matter
-  // how many clicks produced it. Zero-order keywords are NOT gated here — they have their own click ladder,
-  // which is the right test for "has it burned enough traffic to prove it doesn't convert".
-  if(st.multiMinOrders===undefined) st.multiMinOrders=2;
-  const hasAcosVolume=t=>singleKw.has(t.campaignId) || t.orders>=st.multiMinOrders;
+  // No extra volume gate here on purpose. It is tempting to demand several orders before touching a keyword,
+  // but that blocks exactly the changes worth making: at 15 clicks, 1 order and 100% ACoS the SPEND is
+  // certain and only the revenue is uncertain — if anything a single conversion flatters it, since the next
+  // 15 clicks may produce none. Cuts are therefore gated on clicks alone (Min Clicks below), which already
+  // keeps a 4-click keyword out. Raises are the direction where one order really is too thin to act on, and
+  // those are gated separately by Min Orders (for increase), default 2 — so scaling up never rides on a
+  // single lucky order.
   const staleCache={};
   const isStale=cid=>{ if(staleCache[cid]===undefined) staleCache[cid]=campaignRecentlyChanged(cid, S.product); return staleCache[cid]; };
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
@@ -2279,7 +2277,7 @@ function renderOptBids(){
       action='decrease'; newBid=floorOverride.newBid;
       pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
       reason=`placement stuck at 0% floor — bid set to its CPC minus buffer`;
-    } else if(t.clicks>=st.minClicks && t.spend>=st.minSpend && hasAcosVolume(t)){
+    } else if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
       let decPct = t.orders>=1? decreaseTierFor(effAcos, st) : null;
       // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
       // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
