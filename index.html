@@ -2093,6 +2093,14 @@ function decreaseTierFor(acos, st){
   if(acos>=st.hi1) return st.dec1;
   return null;
 }
+// Bid Optimizer's own decrease rule: one ACoS Goal per account instead of three separate tiers.
+// Below Goal+Buffer, nothing happens; above it, one flat cut. The category allowance (Exact/Discovery/
+// Branded) still shifts the ACoS fed in here (see effAcos in renderOptBids), so Goal effectively moves
+// per category exactly like it used to move the old tier thresholds.
+function goalDecreaseFor(acos, st){
+  if(acos===Infinity || acos>=st.acosGoal+st.acosGoalBuffer) return st.acosGoalDec;
+  return null;
+}
 // Single-keyword campaigns share ONE bid across every placement — if a placement fix already absorbs most
 // of the bad spend, cutting the full bid on top would double-penalize the placements that were already fine.
 // Rather than an all-or-nothing suppression, scale the cut down by how much of the bad spend is ALREADY
@@ -2160,9 +2168,11 @@ function singleKwCampaigns(product){
 }
 function renderOptBids(){
   const st=stFor('optbids');
-  if(st.hi1===undefined) st.hi1=50; if(st.dec1===undefined) st.dec1=10;
-  if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
-  if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
+  // Single account-wide ACoS Goal replaces the old 3-tier decrease ladder: nothing happens below
+  // Goal+Buffer, anything over gets one flat cut. Simpler to reason about per-account than three
+  // separately-tuned thresholds, and the category allowance (below) still shifts Goal itself for
+  // Exact/Discovery/Branded exactly like it used to shift the tier thresholds.
+  if(st.acosGoal===undefined) st.acosGoal=40; if(st.acosGoalBuffer===undefined) st.acosGoalBuffer=10; if(st.acosGoalDec===undefined) st.acosGoalDec=15;
   if(st.incHi1===undefined) st.incHi1=20; if(st.incPct1===undefined) st.incPct1=10;
   if(st.incHi2===undefined) st.incHi2=10; if(st.incPct2===undefined) st.incPct2=20;
   if(st.incHi3===undefined) st.incHi3=5; if(st.incPct3===undefined) st.incPct3=35;
@@ -2219,7 +2229,7 @@ function renderOptBids(){
       pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
       reason=`placement stuck at 0% floor — bid set to its CPC minus buffer`;
     } else if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
-      let decPct = t.orders>=1? decreaseTierFor(effAcos, st) : null;
+      let decPct = t.orders>=1? goalDecreaseFor(effAcos, st) : null;
       // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
       // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
       // — a proportional scale-down instead of an all-or-nothing suppression, so a partially-fixed campaign
@@ -2321,14 +2331,11 @@ function renderOptBids(){
         <div class="field"><label>Branded: ACoS allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
         <div class="field grow"><label>Brand terms (comma-separated, matched against campaign name, portfolio name, AND the keyword/target text itself)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}"></div>
       </div>
-      <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it.</div>
+      <div class="hint" style="margin-bottom:8px;">ACoS Goal — nothing happens below Goal+Buffer; above it, one flat cut. The category allowance above shifts Goal itself (Exact tolerates Goal+15pp, Branded only Goal-15pp, before the buffer is even added).</div>
       <div class="ctrls">
-        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec1" value="${st.dec1}" style="width:80px;"></div>
-        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="ob-hi2" value="${st.hi2}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec2" value="${st.dec2}" style="width:80px;"></div>
-        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:80px;"></div>
+        <div class="field"><label>ACoS Goal %</label><input type="number" id="ob-acosgoal" value="${st.acosGoal}" style="width:90px;"></div>
+        <div class="field"><label>Buffer % over Goal</label><input type="number" id="ob-acosgoalbuffer" value="${st.acosGoalBuffer}" style="width:90px;"></div>
+        <div class="field"><label>Decrease by %</label><input type="number" id="ob-acosgoaldec" value="${st.acosGoalDec}" style="width:90px;"></div>
       </div>
       <div class="hint" style="margin:12px 0 4px;">Graduated increase, mirrored — the lower the ACoS, the bigger the bump. Each tier's ACoS threshold must be lower than the one before it.</div>
       <div class="ctrls">
@@ -2398,9 +2405,7 @@ function renderOptBids(){
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
   bind('ob-brandterms','brandTerms',v=>v);
-  bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
-  bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
-  bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
+  bind('ob-acosgoal','acosGoal',v=>+v||0); bind('ob-acosgoalbuffer','acosGoalBuffer',v=>+v||0); bind('ob-acosgoaldec','acosGoalDec',v=>+v||0);
   bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incPct1',v=>+v||0);
   bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incPct2',v=>+v||0);
   bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incPct3',v=>+v||0);
