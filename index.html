@@ -2093,14 +2093,6 @@ function decreaseTierFor(acos, st){
   if(acos>=st.hi1) return st.dec1;
   return null;
 }
-// Bid Optimizer's own decrease rule: one ACoS Goal per account instead of three separate tiers.
-// Below Goal+Buffer, nothing happens; above it, one flat cut. The category allowance (Exact/Discovery/
-// Branded) still shifts the ACoS fed in here (see effAcos in renderOptBids), so Goal effectively moves
-// per category exactly like it used to move the old tier thresholds.
-function goalDecreaseFor(acos, st){
-  if(acos===Infinity || acos>=st.acosGoal+st.acosGoalBuffer) return st.acosGoalDec;
-  return null;
-}
 // Single-keyword campaigns share ONE bid across every placement — if a placement fix already absorbs most
 // of the bad spend, cutting the full bid on top would double-penalize the placements that were already fine.
 // Rather than an all-or-nothing suppression, scale the cut down by how much of the bad spend is ALREADY
@@ -2168,11 +2160,9 @@ function singleKwCampaigns(product){
 }
 function renderOptBids(){
   const st=stFor('optbids');
-  // Single account-wide ACoS Goal replaces the old 3-tier decrease ladder: nothing happens below
-  // Goal+Buffer, anything over gets one flat cut. Simpler to reason about per-account than three
-  // separately-tuned thresholds, and the category allowance (below) still shifts Goal itself for
-  // Exact/Discovery/Branded exactly like it used to shift the tier thresholds.
-  if(st.acosGoal===undefined) st.acosGoal=40; if(st.acosGoalBuffer===undefined) st.acosGoalBuffer=10; if(st.acosGoalDec===undefined) st.acosGoalDec=15;
+  if(st.hi1===undefined) st.hi1=40; if(st.dec1===undefined) st.dec1=10;
+  if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
+  if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
   if(st.incHi1===undefined) st.incHi1=20; if(st.incPct1===undefined) st.incPct1=10;
   if(st.incHi2===undefined) st.incHi2=10; if(st.incPct2===undefined) st.incPct2=20;
   if(st.incHi3===undefined) st.incHi3=5; if(st.incPct3===undefined) st.incPct3=35;
@@ -2180,10 +2170,6 @@ function renderOptBids(){
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
   // needs the opposite: catching it early, before it burns through 10 clicks, is the whole point).
-  // Off by default (0 = the "clicks < 0" check never fires) — Wake already covers "not enough data yet"
-  // via impressions instead, so this doesn't need to also soften every 1-click, 0-order keyword; leaving the
-  // control in place in case a specific account wants it back.
-  if(st.zeroLowClicks===undefined) st.zeroLowClicks=0; if(st.zeroIncPct===undefined) st.zeroIncPct=10;
   if(st.zeroHi1===undefined) st.zeroHi1=3; if(st.zeroDec1===undefined) st.zeroDec1=10;
   if(st.zeroHi2===undefined) st.zeroHi2=6; if(st.zeroDec2===undefined) st.zeroDec2=20;
   if(st.zeroHi3===undefined) st.zeroHi3=10; if(st.zeroDec3===undefined) st.zeroDec3=30;
@@ -2231,7 +2217,7 @@ function renderOptBids(){
       pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
       reason=`placement stuck at 0% floor — bid set to its CPC minus buffer`;
     } else if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
-      let decPct = t.orders>=1? goalDecreaseFor(effAcos, st) : null;
+      let decPct = t.orders>=1? decreaseTierFor(effAcos, st) : null;
       // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
       // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
       // — a proportional scale-down instead of an all-or-nothing suppression, so a partially-fixed campaign
@@ -2252,13 +2238,9 @@ function renderOptBids(){
     // keyed on clicks. 0 clicks stays out of this — that's the "wake" rule below, a different problem (never
     // winning an auction at all vs. losing money in the auctions it does win).
     if(action==='none' && t.orders===0){
-      if(t.clicks>=1 && t.clicks<st.zeroLowClicks){
-        action='increase'; pct=st.zeroIncPct; newBid=+(t.bid*(1+st.zeroIncPct/100)).toFixed(2); reason=`0 orders but only ${t.clicks} click(s) — not enough data yet`;
-      } else {
-        let zdec=zeroOrderDecreaseTierFor(t.clicks, st);
-        if(zdec!=null && singleKw.has(t.campaignId)) zdec=scaleDecByPlacementCoverage(zdec, placementsByCamp[t.campaignId]||[]);
-        if(zdec!=null){ action='decrease'; pct=zdec; newBid=Math.max(0.02, +(t.bid*(1-zdec/100)).toFixed(2)); reason=`0 orders, ${t.clicks} wasted clicks`; }
-      }
+      let zdec=zeroOrderDecreaseTierFor(t.clicks, st);
+      if(zdec!=null && singleKw.has(t.campaignId)) zdec=scaleDecByPlacementCoverage(zdec, placementsByCamp[t.campaignId]||[]);
+      if(zdec!=null){ action='decrease'; pct=zdec; newBid=Math.max(0.02, +(t.bid*(1-zdec/100)).toFixed(2)); reason=`0 orders, ${t.clicks} wasted clicks`; }
     }
     // Plenty of impressions but ZERO clicks means the bid is losing every auction it's even entered —
     // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates.
@@ -2325,7 +2307,7 @@ function renderOptBids(){
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
   $('#app').innerHTML=`
     <details class="card pad" id="ob-settings">
-      <summary class="sectitle" style="cursor:pointer;">Bid rules — Goal ${st.acosGoal}%, Buffer +${st.acosGoalBuffer}pp, cut ${st.acosGoalDec}% <span class="hint" style="font-weight:400;">(click to edit)</span></summary>
+      <summary class="sectitle" style="cursor:pointer;">Bid rules — decrease &gt;${st.hi1}%/&gt;${st.hi2}%/&gt;${st.hi3}% ACoS <span class="hint" style="font-weight:400;">(click to edit)</span></summary>
       <div class="hint" style="margin:10px 0 8px;" title="Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A target is Branded if the campaign name, the portfolio name, OR the keyword/targeting text itself contains one of the terms below (or the word &quot;brand&quot; if left empty).">ACoS allowance by category — shifts Goal stricter/looser per target type. Hover for details.</div>
       <div class="ctrls" style="margin-bottom:12px;">
         <div class="field"><label>Exact: allowance (pp)</label><input type="number" id="ob-catexact" value="${st.acosAdjExact}" style="width:90px;"></div>
@@ -2333,11 +2315,14 @@ function renderOptBids(){
         <div class="field"><label>Branded: allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
         <div class="field grow"><label>Brand terms (comma-separated)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}" title="Matched against campaign name, portfolio name, AND the keyword/target text itself."></div>
       </div>
-      <div class="hint" style="margin-bottom:8px;" title="Nothing happens below Goal+Buffer; above it, one flat cut. The category allowance above shifts Goal itself (Exact tolerates Goal+15pp, Branded only Goal-15pp) before the buffer is even added.">ACoS Goal — hover for details.</div>
+      <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it. The category allowance above shifts the ACoS fed into these tiers, so the SAME thresholds end up stricter or looser depending on what's being targeted.">Graduated decrease — hover for details.</div>
       <div class="ctrls">
-        <div class="field"><label>ACoS Goal %</label><input type="number" id="ob-acosgoal" value="${st.acosGoal}" style="width:90px;"></div>
-        <div class="field"><label>Buffer % over Goal</label><input type="number" id="ob-acosgoalbuffer" value="${st.acosGoalBuffer}" style="width:90px;"></div>
-        <div class="field"><label>Decrease by %</label><input type="number" id="ob-acosgoaldec" value="${st.acosGoalDec}" style="width:90px;"></div>
+        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-dec1" value="${st.dec1}" style="width:70px;"></div>
+        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="ob-hi2" value="${st.hi2}" style="width:80px;"></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-dec2" value="${st.dec2}" style="width:70px;"></div>
+        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:70px;"></div>
       </div>
       <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
@@ -2365,12 +2350,8 @@ function renderOptBids(){
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake).">0 orders — runs on clicks instead of ACoS (undefined with no sales). Below the first threshold gets a small bump; each tier above is a graduated cut.</div>
+      <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake).">0 orders — runs on clicks instead of ACoS (undefined with no sales). A graduated cut for proven wasted spend.</div>
       <div class="ctrls">
-        <div class="field"><label>Give a chance if Clicks &lt;</label><input type="number" id="ob-zerolow" value="${st.zeroLowClicks}" style="width:90px;"></div>
-        <div class="field"><label>+%</label><input type="number" id="ob-zeroinc" value="${st.zeroIncPct}" style="width:70px;"></div>
-      </div>
-      <div class="ctrls" style="margin-top:8px;">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
         <div class="field"><label>-%</label><input type="number" id="ob-zerodec1" value="${st.zeroDec1}" style="width:70px;"></div>
         <div class="field"><label>Tier 2: Clicks ≥</label><input type="number" id="ob-zerohi2" value="${st.zeroHi2}" style="width:80px;"></div>
@@ -2407,7 +2388,9 @@ function renderOptBids(){
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
   bind('ob-brandterms','brandTerms',v=>v);
-  bind('ob-acosgoal','acosGoal',v=>+v||0); bind('ob-acosgoalbuffer','acosGoalBuffer',v=>+v||0); bind('ob-acosgoaldec','acosGoalDec',v=>+v||0);
+  bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
+  bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
+  bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
   bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incPct1',v=>+v||0);
   bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incPct2',v=>+v||0);
   bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incPct3',v=>+v||0);
@@ -2419,7 +2402,6 @@ function renderOptBids(){
   bindPst('ob-stuckbump','stuckBumpDollar',v=>+v||0);
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
-  bind('ob-zerolow','zeroLowClicks',v=>+v||0); bind('ob-zeroinc','zeroIncPct',v=>+v||0);
   bind('ob-zerohi1','zeroHi1',v=>+v||0); bind('ob-zerodec1','zeroDec1',v=>+v||0);
   bind('ob-zerohi2','zeroHi2',v=>+v||0); bind('ob-zerodec2','zeroDec2',v=>+v||0);
   bind('ob-zerohi3','zeroHi3',v=>+v||0); bind('ob-zerodec3','zeroDec3',v=>+v||0);
