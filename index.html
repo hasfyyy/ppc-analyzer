@@ -2208,7 +2208,9 @@ function renderOptBids(){
   // shown in the "Placement (this campaign)" column / export, via placementChangesByCamp further down.
   const placementsByCamp={};
   const placementOpt=computePlacementOptRows(S.product, {});
-  placementOpt.allRows.forEach(pr=>{ if(!pr.isSingle) return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
+  // Amazon Business excluded here too, same reason as computePlacementOptRows — its totals duplicate the
+  // other placements' rather than being a real sibling sharing this campaign's bid.
+  placementOpt.allRows.forEach(pr=>{ if(!pr.isSingle || pr.placeType==='business') return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const pst=placementOpt.st; // Placement Optimizer's own state (stFor('optplace')) — the floor-override fields live there, not here; this is a shortcut onto the SAME values, not a separate copy.
   const floorBidOverrides=placementOpt.floorBidOverrides||{};
   const stuckHighByCamp=placementOpt.stuckHighByCamp||new Map();
@@ -2605,7 +2607,14 @@ function computePlacementOptRows(product, filters){
   if(st.floorBonusMinDollar===undefined) st.floorBonusMinDollar=0.05;
   const floorBidOverrides={};
   const byCampForFloor={};
-  allRows.forEach(r=>{ if(r.isSingle) (byCampForFloor[r.campaignId]=byCampForFloor[r.campaignId]||[]).push(r); });
+  // Amazon Business isn't a sibling placement like TOS/ROS/PP — Amazon reports its clicks/spend/sales as
+  // the B2B-buyer slice of the SAME traffic (its totals equal the sum of the other three, confirmed on a
+  // real account: 119 = 31+78+10 clicks), which is also why Amazon's own campaign UI never lists it
+  // alongside them. Folding it into this shared-bid math as if it were a fourth exclusive bucket double-
+  // counts that traffic and skews the anchor/compensation numbers for the real placements. It still shows
+  // up everywhere else (Overview, Placement tab) as its own row — just excluded from this specific
+  // single-bid-shared-across-siblings computation.
+  allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampForFloor[r.campaignId]=byCampForFloor[r.campaignId]||[]).push(r); });
   Object.keys(byCampForFloor).forEach(cid=>{
     const plc=byCampForFloor[cid];
     const target=singleTargetByCamp.get(cid);
@@ -2639,7 +2648,13 @@ function computePlacementOptRows(product, filters){
         p.action = pct>p.percentage ? 'compensate' : 'floor-bad';
         return;
       }
-      if(p.clicks<=0) return;
+      // The goodOnes.length check above only gates whether the CAMPAIGN qualifies for the override at all
+      // (is there at least one placement worth protecting) — it doesn't mean every OTHER non-bad placement
+      // here individually clears the bar. A placement sitting above floorGoal but not bad enough to be
+      // 'floor-bad' (e.g. ACoS 33% against a 30% goal, on a placement optimizer tier that only kicks in at
+      // 40%+) was still getting bumped by this loop just for being "not bad", identical to a genuinely good
+      // sibling — re-check the same ACoS<=floorGoal bar per placement, not just once for the whole campaign.
+      if(!(p.clicks>0 && p.orders>0 && p.acos<=st.floorGoal)) return;
       // Protect what this placement was ACTUALLY getting before (base × its own old %), not the campaign's
       // raw base bid — a good placement that already carried a big % of its own would otherwise get judged
       // against a number far below what it was really bidding, and get crushed toward 0% instead of kept
@@ -2653,7 +2668,9 @@ function computePlacementOptRows(product, filters){
     });
   });
   const byCampAll={};
-  allRows.forEach(r=>{ if(r.isSingle) (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
+  // Same reasoning as byCampForFloor above — Amazon Business duplicates the other three placements' totals,
+  // not a real sibling sharing the bid.
+  allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
   // singleTargetByCamp built up front now (needed by the ineffective-floor check above too) — indexed once,
   // not re-scanned per campaign, since a DATA.targets.find() inside this per-campaign loop is O(campaigns ×
   // targets) and is exactly what made the tab lock up the tab/browser on bigger accounts.
