@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 17:19</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 18:08</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -277,6 +277,7 @@ const MATCH = {
   adGroupName: t=>t[0]==='ad'&&t[1]==='group'&&t[2]==='name',
   portfolioName: t=>t[0]==='portfolio'&&t[1]==='name',
   targetingType: t=>t.join(' ')==='targeting type',
+  biddingStrategy: t=>t.join(' ')==='bidding strategy',
   state: t=>t.join(' ')==='state',
   dailyBudget: t=>(t.includes('daily')&&t.includes('budget'))||t.join(' ')==='budget',
   sku: t=>t.join(' ')==='sku',
@@ -366,8 +367,9 @@ function parseWorkbook(wb){
       }
       if(ent==='campaign'){
         const cn=String(g('campaignName')||'');
-        DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
-        DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), budget:toNum(g('dailyBudget'))};
+        const bidStrat=String(g('biddingStrategy')||'');
+        DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
+        DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, budget:toNum(g('dailyBudget'))};
       } else if(ent==='ad group'){
         DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
       } else if(ent==='product ad'){
@@ -2157,6 +2159,40 @@ function bidCategoryFor(t, brandTermsArr){
 function bidCategoryAdj(cat, st){
   return cat==='exact'? st.acosAdjExact : cat==='branded'? st.acosAdjBranded : st.acosAdjDiscovery;
 }
+/* ---- data freshness: did the bid/placement % change DURING the reporting window? ---------------- */
+// CPC is backward-looking (an average over the report window) while Bid and Placement % are the CURRENT
+// setting. If the settings were changed mid-window, the report describes an account that no longer exists —
+// and acting on it means re-cutting something already cut, or raising a bid based on performance that
+// predates your own change.
+// The tell is arithmetic, not a guess: with "Dynamic bids - down only" (and Fixed bids) Amazon can never pay
+// MORE than the effective bid, so CPC > effective bid is impossible under the current settings. With "up and
+// down" Amazon may bid up (+100% Top of Search, +50% elsewhere), so the ceiling is raised accordingly there
+// instead of flagging half the account by mistake.
+function bidUpCeilingFor(campaignId, placementName){
+  const s=String(DATA.campById[campaignId]?.biddingStrategy||'').toLowerCase();
+  if(s.includes('up and down')) return /top/i.test(placementName||'')? 2.0 : 1.5;
+  return 1.0; // down only / fixed / unknown
+}
+const STALE_MARGIN=1.05; // 5% slack for rounding and mid-window auction noise
+// Returns the placements whose CPC can't be explained by the current settings (empty = data looks current).
+function staleSignalsFor(campaignId, product){
+  const bids=DATA.targets.filter(t=>t.campaignId===campaignId && t.product===product && t.state==='enabled' && t.bid>0).map(t=>t.bid);
+  if(!bids.length) return [];
+  const baseBid=Math.max.apply(null,bids); // the most permissive bid in the campaign — avoids false positives
+  const byKey={};
+  DATA.placements.forEach(p=>{ if(p.campaignId!==campaignId) return; const k=placeName(p.placement);
+    if(!byKey[k]) byKey[k]={name:k,pct:p.percentage,clicks:0,spend:0};
+    byKey[k].clicks+=p.clicks; byKey[k].spend+=p.spend; });
+  const out=[];
+  Object.values(byKey).forEach(p=>{
+    if(!(p.clicks>0 && p.spend>0)) return;
+    const cpc=p.spend/p.clicks;
+    const eff=baseBid*(1+(p.pct||0)/100)*bidUpCeilingFor(campaignId,p.name);
+    if(eff>0 && cpc>eff*STALE_MARGIN) out.push({placement:p.name, cpc:+cpc.toFixed(2), ceiling:+eff.toFixed(2)});
+  });
+  return out;
+}
+function campaignRecentlyChanged(campaignId, product){ return staleSignalsFor(campaignId, product).length>0; }
 function singleKwCampaigns(product){
   const enabledCamps=optimizableCampaignIds(product);
   const counts={};
@@ -2207,6 +2243,13 @@ function renderOptBids(){
   const floorBidOverrides=placementOpt.floorBidOverrides||{};
   const stuckHighByCamp=placementOpt.stuckHighByCamp||new Map();
   const topTargetByCamp=placementOpt.topTargetByCamp||new Map();
+  // Stale data is FLAGGED, not blocked. Both cuts and raises converge on the goal over successive runs, so a
+  // half-done manual change just gets topped up next run — the flag exists so a surprising number has a
+  // visible explanation ("this campaign was edited mid-window"), not to suppress the suggestion. The real
+  // arithmetic hazard (a stale CPC producing a "cut" that RAISES the modifier) is handled by the clamp.
+  if(st.hideStale===undefined) st.hideStale=false;
+  const staleCache={};
+  const isStale=cid=>{ if(staleCache[cid]===undefined) staleCache[cid]=campaignRecentlyChanged(cid, S.product); return staleCache[cid]; };
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -2283,10 +2326,12 @@ function renderOptBids(){
     }
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason,category},t,d);
+    row.stale = isStale(t.campaignId);
     // Only the real, exportable placement moves — a 'floor-bad' entry has no percentage change to show.
     row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='stuck-high') : null;
     return row;
   }).filter(Boolean);
+  if(st.hideStale) rows=rows.filter(r=>!r.stale);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   // Stable identity (real keyword/PT ID), not a positional index — a positional "ob3" meant a different
@@ -2318,7 +2363,10 @@ function renderOptBids(){
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
     {key:'bid',label:'Current Bid',type:'money'},
     {key:'newBid',label:'New Bid',type:'money',cls:r=>r.newBid>r.bid?'num-green':'num-red'},
-    {key:'reason',label:'Why',l:true,wrap:true,noSort:true,cell:r=>r.reason? esc(r.reason) : '<span class="muted">—</span>'},
+    {key:'reason',label:'Why',l:true,wrap:true,noSort:true,cell:r=>{
+      const stale=r.stale? ` <span class="badge" style="background:#fef3e2;color:#c2760a;" title="This campaign's CPC is higher than its current bid allows — only possible if the bid or a placement % was changed DURING the report window. The metrics describe the settings as they were BEFORE that change, so expect this suggestion to look partly done already.">edited mid-window</span>` : '';
+      return (r.reason? esc(r.reason) : '<span class="muted">—</span>')+stale;
+    }},
     {key:'placementChanges',label:'Placement (this campaign)',l:true,wrap:true,noSort:true,cell:r=>{
       if(r.placementChanges===null) return '<span class="muted">multi-kw — see below</span>';
       if(!r.placementChanges.length) return '<span class="muted">no change suggested</span>';
@@ -2386,6 +2434,10 @@ function renderOptBids(){
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
         <div class="hint" style="align-self:center;" title="Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for keywords with impressions but 0 clicks.</div>
       </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-hidestale" ${st.hideStale?'checked':''}> Hide campaigns edited mid-window</label>
+        <div class="hint" style="align-self:center;" title="Detected arithmetically: with 'Dynamic bids - down only' Amazon can never pay more than your effective bid, so a CPC above it proves the bid or placement % changed during the report window (the ceiling is raised for 'up and down' campaigns, which may bid up +100% on Top of Search).">Campaigns whose bid or placement % changed during the report window are marked <span class="badge" style="background:#fef3e2;color:#c2760a;">edited mid-window</span> — their metrics describe the old settings. Suggestions still apply (they converge), tick this to hide them entirely.</div>
+      </div>
     </details>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
       ${kpi('Suggested changes',fInt(allRows.length))}${kpi('Decreases',fInt(allRows.filter(r=>r.action==='decrease').length),'red')}${kpi('Increases',fInt(allRows.filter(r=>r.action==='increase').length),'green')}${kpi('Woken up',fInt(allRows.filter(r=>r.action==='wake').length))}${kpi('Selected to export',fInt(allRows.filter(r=>sel.has(r._uid)).length),'pink')}
@@ -2431,6 +2483,7 @@ function renderOptBids(){
   bind('ob-zerohi3','zeroHi3',v=>+v||0); bind('ob-zerodec3','zeroDec3',v=>+v||0);
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
+  $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
