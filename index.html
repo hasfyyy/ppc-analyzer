@@ -1201,6 +1201,10 @@ function optimizableCampaignIds(product){
 function renderTargets(product){
   const tab = product==='SP'?'targets':product==='SB'?'targets-sb':'targets-sd';
   const st=stFor(tab); if(st.acos===undefined)st.acos=50; if(st.clicks===undefined)st.clicks=15; if(st.maxOrders===undefined)st.maxOrders=0; if(st.minSpend===undefined)st.minSpend=0;
+  // Separate click floor for the "has orders" branch — its own knob, not shared with the 0-sales one above.
+  // A target with 1-2 orders on a handful of clicks can look like "High ACoS" from pure noise, the same risk
+  // the 0-sales branch already guards against with its own threshold. 0 (default) leaves it off.
+  if(st.clicksHasOrders===undefined)st.clicksHasOrders=0;
   const enabledCamps=optimizableCampaignIds(product);
   const singleKw=singleKwCampaigns(product);
   const src=DATA.targets.filter(t=>t.product===product && t.state==='enabled' && enabledCamps.has(t.campaignId));
@@ -1211,7 +1215,7 @@ function renderTargets(product){
     // that a "prune this" pass shouldn't touch it, even if its ACoS looks bad on paper. 0 (the default) keeps
     // this branch uncapped, since "0 orders max" would otherwise make High ACoS (which requires orders≥1)
     // impossible to ever trigger.
-    if(t.orders>=1 && (st.maxOrders<=0 || t.orders<=st.maxOrders) && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
+    if(t.orders>=1 && t.clicks>=st.clicksHasOrders && (st.maxOrders<=0 || t.orders<=st.maxOrders) && (d.acos===Infinity||d.acos>st.acos)) reason='High ACoS';
     // True zero-orders only — no longer influenced by Max Order (a target WITH orders is never "No Sales",
     // regardless of how high Max Order is set).
     else if(t.clicks>=st.clicks && t.orders===0) reason='No Sales';
@@ -1247,6 +1251,7 @@ function renderTargets(product){
       <div class="ctrls">
         <div class="field"><label>Min Clicks (0 sales) ≥</label><input type="number" id="tg-clicks" min="0" value="${st.clicks}" style="width:90px;"></div>
         <div class="field"><label>ACoS Threshold (has sales) &gt;%</label><input type="number" id="tg-acos" min="0" value="${st.acos}" style="width:90px;"></div>
+        <div class="field"><label>Min Clicks (has orders) ≥</label><input type="number" id="tg-clickshaso" min="0" value="${st.clicksHasOrders}" style="width:90px;"></div>
         <div class="field"><label>Max Orders</label><input type="number" id="tg-mo" value="${st.maxOrders}"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="tg-ms" value="${st.minSpend}"></div>
         <div class="field"><label>Portfolio</label><select id="tg-port">${portOptions(st.port)}</select></div>
@@ -1273,6 +1278,7 @@ function renderTargets(product){
   const upd=()=>renderTargets(product);
   $('#tg-clicks').oninput=debounce(()=>{st.clicks=+$('#tg-clicks').value||0; upd();},350);
   $('#tg-acos').oninput=debounce(()=>{st.acos=+$('#tg-acos').value||0; upd();},350);
+  $('#tg-clickshaso').oninput=debounce(()=>{st.clicksHasOrders=+$('#tg-clickshaso').value||0; upd();},350);
   $('#tg-mo').oninput=debounce(()=>{st.maxOrders=+$('#tg-mo').value; upd();},250);
   $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; upd();},250);
   $('#tg-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
