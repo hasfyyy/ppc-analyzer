@@ -2235,7 +2235,22 @@ function renderOptBids(){
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc){
         const incPct=increaseTierFor(effAcos, st);
-        if(incPct!=null){ action='increase'; pct=incPct; newBid=+(t.bid*(1+incPct/100)).toFixed(2); reason=`healthy ACoS (${fAcos(d.acos)})`; }
+        if(incPct!=null){
+          let candidateBid=+(t.bid*(1+incPct/100)).toFixed(2);
+          // The keyword's overall ACoS can look healthy purely on the strength of its OTHER placements —
+          // raising the one shared bid still raises spend on every placement that shares it, including one
+          // that's individually bad. Cap the raise so it never pushes a bad placement's effective bid
+          // (bid × (1+its own %)) past that placement's own CPC; skip the increase entirely rather than
+          // apply a smaller one if even the OLD bid already clears it (nothing to safely raise here).
+          if(singleKw.has(t.campaignId)){
+            (placementsByCamp[t.campaignId]||[]).forEach(p=>{
+              if(!(p.clicks>0 && p.acos>pst.floorGoal)) return;
+              const cap=p.cpc>0 ? +(p.cpc/(1+(p.percentage||0)/100)).toFixed(2) : Infinity;
+              if(cap<candidateBid) candidateBid=cap;
+            });
+          }
+          if(candidateBid>t.bid){ action='increase'; pct=+(((candidateBid-t.bid)/t.bid)*100).toFixed(1); newBid=candidateBid; reason=`healthy ACoS (${fAcos(d.acos)})`; }
+        }
       }
     }
     // 0 orders has no ACoS to grade against (nothing to divide spend by), so it runs on its own click-based
