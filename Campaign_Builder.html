@@ -240,19 +240,28 @@ function extractBrandDataFromBulk(wb){
     const cAsin=headers.find(h=>normH(h).indexOf('asin')!==-1);
     const cState=headers.find(h=>normH(h)==='state');
     const cSales=headers.find(h=>normH(h)==='sales');
+    const cCampName=headers.find(h=>normH(h)==='campaign name') || headers.find(h=>normH(h).startsWith('campaign name'));
     json.forEach(row=>{
       const ent=String(row[cEntity]||'').trim().toLowerCase();
       const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':/display/i.test(row[cProduct])?'SD':'SP') : (/brand/i.test(sn)?'SB':/display/i.test(sn)?'SD':'SP');
       const campaignId=String(cCampId?row[cCampId]:'').trim();
       const state=String(cState?row[cState]:'').trim().toLowerCase();
-      if(ent==='campaign') campaigns.push({campaignId, portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod, state});
+      if(ent==='campaign') campaigns.push({campaignId, campaignName:String(cCampName?row[cCampName]:'').trim(), portfolioId:String(cPortId?row[cPortId]:'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod, state, sales:cSales?(+row[cSales]||0):0});
       else if(ent==='product ad') productAds.push({campaignId, asin:String(cAsin?row[cAsin]:'').trim(), sku:String(cSku?row[cSku]:'').trim(), state, sales:cSales?(+row[cSales]||0):0});
     });
   });
   // Only campaigns actually running (State=enabled) count for portfolio mapping / product extraction —
   // paused/archived campaigns can carry stale ASIN/SKU pairings the user no longer wants to see.
   const campEnabled={}; campaigns.forEach(c=>{ campEnabled[c.campaignId] = c.state==='enabled'; });
-  const campToPortfolio={}; campaigns.forEach(c=>{ if(c.portfolioId && campEnabled[c.campaignId]) campToPortfolio[c.campaignId]=c.portfolioId; });
+  // A catchall (CHA / "all SKUs" / mixed) campaign advertises every product in the account, so the ASINs in it
+  // say nothing about which product a portfolio is actually built around — letting them define a portfolio's
+  // product list is what filled a dedicated "KINDERSITZUNTERLAGE" portfolio with four unrelated ASINs. Only
+  // dedicated campaigns count for attribution; catchalls are skipped entirely here.
+  const isCatchallName=n=>/(^|[^a-z])(cha|catchall|catch\s*all)([^a-z]|$)|all\s*skus|alle\s*produkte|all\s*products|mixed/i.test(String(n||''));
+  const campSales={}, campIsCatchall={};
+  campaigns.forEach(c=>{ campSales[c.campaignId]=(campSales[c.campaignId]||0)+(c.sales||0); campIsCatchall[c.campaignId]=isCatchallName(c.campaignName); });
+  const campToPortfolio={};
+  campaigns.forEach(c=>{ if(c.portfolioId && campEnabled[c.campaignId] && !campIsCatchall[c.campaignId]) campToPortfolio[c.campaignId]=c.portfolioId; });
   const pfMap=new Map();
   campaigns.forEach(c=>{ if(!c.portfolioId || !campEnabled[c.campaignId]) return; if(!pfMap.has(c.portfolioId) || (!pfMap.get(c.portfolioId) && c.portfolioName)) pfMap.set(c.portfolioId, c.portfolioName); });
   const portfolios=[...pfMap.entries()].map(([id,name])=>({id,name}));
@@ -262,12 +271,36 @@ function extractBrandDataFromBulk(wb){
   const skuSales={};
   productAds.forEach(a=>{
     if(a.state!=='enabled' || !campEnabled[a.campaignId]) return;
+    if(campIsCatchall[a.campaignId]) return; // catchall ads never define a portfolio's products (see above)
     const key=(a.asin||a.sku||'').toLowerCase(); if(!key) return;
-    if(!byKey.has(key)) byKey.set(key,{asin:a.asin,skus:new Set(),portfolioId:campToPortfolio[a.campaignId]||''});
-    const e=byKey.get(key); if(a.sku) e.skus.add(a.sku); if(!e.asin && a.asin) e.asin=a.asin; if(!e.portfolioId && campToPortfolio[a.campaignId]) e.portfolioId=campToPortfolio[a.campaignId];
-    if(a.sku) skuSales[a.sku]=(skuSales[a.sku]||0)+(a.sales||0);
+    if(!byKey.has(key)) byKey.set(key,{asin:a.asin,skus:new Set(),portfolioId:'',bestCampSales:-1,ownSales:0,skuByCamp:{}});
+    const e=byKey.get(key);
+    if(!e.asin && a.asin) e.asin=a.asin;
+    e.ownSales+=(a.sales||0);
+    // Portfolio AND SKU both come from this product's best-performing dedicated campaign — not from whichever
+    // row happened to be read first, which is how a weak/legacy campaign's SKU could end up representing a
+    // product that a much stronger campaign in the same portfolio advertises under a different SKU.
+    const pf=campToPortfolio[a.campaignId]||'';
+    const cs=campSales[a.campaignId]||0;
+    if(pf && cs>e.bestCampSales){ e.bestCampSales=cs; e.portfolioId=pf; }
+    if(a.sku){
+      e.skus.add(a.sku);
+      (e.skuByCamp[a.campaignId]=e.skuByCamp[a.campaignId]||new Set()).add(a.sku);
+      skuSales[a.sku]=(skuSales[a.sku]||0)+(a.sales||0);
+    }
   });
-  const products=[...byKey.values()].map(e=>({brand:'',niche:'',name:'',asin:e.asin,portfolioId:e.portfolioId,skus:[...e.skus]}));
+  // Sorted so the portfolio's real hero product leads: strongest campaign first, then its own sales. The
+  // "Top SKUs by sales" picker and the checkbox list both read this order, so the top ASIN of the best
+  // campaign in that portfolio is what gets used by default.
+  const products=[...byKey.values()]
+    .sort((a,b)=> (b.bestCampSales-a.bestCampSales) || (b.ownSales-a.ownSales))
+    .map(e=>{
+      // Prefer the SKU(s) actually used by that best campaign, falling back to every SKU seen for this ASIN.
+      let bestCamp=null, best=-1;
+      Object.keys(e.skuByCamp).forEach(cid=>{ const s=campSales[cid]||0; if((campToPortfolio[cid]||'')===e.portfolioId && s>best){ best=s; bestCamp=cid; } });
+      const skus = bestCamp? [...e.skuByCamp[bestCamp]] : [...e.skus];
+      return {brand:'',niche:'',name:'',asin:e.asin,portfolioId:e.portfolioId,skus};
+    });
   return {products, portfolios, skuSales};
 }
 // Copying an existing campaign's naming verbatim would also copy its stale month/year (e.g. IAN26 from January).
