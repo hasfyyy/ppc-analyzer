@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 12:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 12:38</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2329,6 +2329,7 @@ function renderOptBids(){
   // named "low bids" for exactly that. Raising those would put two of your own campaigns into the same
   // auction against each other, so they are skipped by name and only listed further down.
   if(st.underbidPct===undefined) st.underbidPct=10;
+  if(st.underbidMaxPct===undefined) st.underbidMaxPct=15;
   if(st.underbidEnabled===undefined) st.underbidEnabled=true;
   if(st.underbidSkip===undefined) st.underbidSkip='low bid';
   const skipNeedle=(st.underbidSkip||'').trim().toLowerCase();
@@ -2407,8 +2408,16 @@ function renderOptBids(){
       const ref=refFor(t);
       if(ref && ref.cpc>0 && t.bid < ref.cpc*0.7){
         if(isDeliberateLowBid(t.campaignId)) underbidSkipped.push(Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t));
-        else { action='underbid'; pct=st.underbidPct; newBid=+(t.bid*(1+st.underbidPct/100)).toFixed(2);
-               reason=`bid ${fMoney(t.bid)} vs ${fMoney(ref.cpc)} going rate (${ref.src}) — not entering auctions`; }
+        else {
+          // Graduated by how far under the rate it sits, because a flat step ignores the size of the gap:
+          // at a quarter of the going rate, +10% a week takes months to arrive — the keyword stays stranded
+          // exactly as long as it would have without the rule. Still capped, so no single run overshoots.
+          const ratio=t.bid/ref.cpc;
+          const stepPct=Math.min(st.underbidMaxPct,
+            +(st.underbidPct+(st.underbidMaxPct-st.underbidPct)*Math.max(0, 1-ratio/0.7)).toFixed(1));
+          action='underbid'; pct=stepPct; newBid=+(t.bid*(1+stepPct/100)).toFixed(2);
+          reason=`bid ${fMoney(t.bid)} vs ${fMoney(ref.cpc)} going rate (${ref.src}) — not entering auctions`;
+        }
       }
     }
     // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
@@ -2556,7 +2565,8 @@ function renderOptBids(){
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-underbiden" ${st.underbidEnabled?'checked':''}> Raise keywords priced out of the auction</label>
-        <div class="field"><label>Raise by %</label><input type="number" id="ob-underbidpct" value="${st.underbidPct}" style="width:90px;"></div>
+        <div class="field"><label>Raise by %</label><input type="number" id="ob-underbidpct" value="${st.underbidPct}" style="width:80px;"></div>
+        <div class="field"><label>...up to %</label><input type="number" id="ob-underbidmax" value="${st.underbidMaxPct}" style="width:80px;" title="The step grows with the size of the gap — a keyword at a quarter of the going rate gets the full amount, one just under the line gets the base — but never exceeds this."></div>
         <div class="field"><label>Skip campaigns named</label><input type="text" id="ob-underbidskip" value="${esc(st.underbidSkip)}" style="width:130px;" title="Campaigns whose name contains this are left alone — a bid parked under the market there is a strategy, not an oversight."></div>
         <div class="hint" style="align-self:center;">Bid under 70% of the going rate with almost no impressions — it can never gather the traffic any other rule needs. Going rate is taken from the same keyword elsewhere in the account, else the campaign, portfolio or account CPC.</div>
       </div>
@@ -2621,6 +2631,7 @@ function renderOptBids(){
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
   $('#ob-underbiden').onchange=e=>{ st.underbidEnabled=e.target.checked; upd(); };
   bind('ob-underbidpct','underbidPct',v=>+v||0);
+  bind('ob-underbidmax','underbidMaxPct',v=>+v||0);
   $('#ob-underbidskip').oninput=debounce(()=>{ st.underbidSkip=$('#ob-underbidskip').value; upd(); },350);
   $('#ob-acosgoal').oninput=debounce(()=>{ goalTiers().acosGoal=+$('#ob-acosgoal').value||20; renderOptBids(); },350);
   $('#ob-derivetiers').onchange=e=>{ st.deriveTiers=e.target.checked; renderOptBids(); };
