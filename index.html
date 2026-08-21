@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 11:48</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 11:55</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2398,14 +2398,37 @@ function renderOptBids(){
   // nothing and going nowhere. Surfaced rather than auto-raised: bidding under the market is sometimes the
   // whole point (this account has campaigns literally named "low bids"), and nothing in the file separates
   // a deliberate floor from a forgotten one.
-  const campCpcMap={};
-  DATA.campaigns.forEach(c=>{ if(c.product===S.product && c.clicks>0) campCpcMap[c.campaignId]=c.spend/c.clicks; });
-  const neverServed=src.filter(t=>{
-    if(t.clicks>0 || t.impressions>=wakeImprFloor) return false;
-    const cc=campCpcMap[t.campaignId];
-    return cc>0 && t.bid < cc*0.7;
-  }).map(t=>Object.assign({campCpc:campCpcMap[t.campaignId], ratio:t.bid/campCpcMap[t.campaignId]}, t))
-    .sort((a,b)=>a.ratio-b.ratio);
+  // Reference price, in order of how well it describes THIS keyword's auction:
+  //   1. the same keyword text wherever else in the account it does get clicks — the actual going rate for it
+  //   2. this campaign's own CPC
+  //   3. the portfolio's, then 4. the account's
+  // The chain matters most for a campaign that was just launched: it has no CPC of its own (no clicks yet),
+  // so comparing against itself is impossible — which is exactly when an underbid keyword is invisible and
+  // most costly, since nothing in it will ever start. 37 campaigns in one account were in that state.
+  const kwCpcRef={}, campAgg={}, portAgg={};
+  DATA.targets.forEach(t=>{ if(t.product!==S.product || t.clicks<=0) return;
+    const k=String(t.text).trim().toLowerCase();
+    if(!kwCpcRef[k]) kwCpcRef[k]={cl:0,sp:0}; kwCpcRef[k].cl+=t.clicks; kwCpcRef[k].sp+=t.spend; });
+  DATA.campaigns.forEach(c=>{ if(c.product!==S.product || c.clicks<=0) return;
+    campAgg[c.campaignId]={cl:c.clicks, sp:c.spend};
+    const pf=c.portfolioName||'(No Portfolio)';
+    if(!portAgg[pf]) portAgg[pf]={cl:0,sp:0}; portAgg[pf].cl+=c.clicks; portAgg[pf].sp+=c.spend; });
+  const acctCpcRef=derive(agg(DATA.campaigns.filter(c=>c.product===S.product))).cpc;
+  const refFor=t=>{
+    const k=String(t.text).trim().toLowerCase();
+    if(kwCpcRef[k] && kwCpcRef[k].cl>0) return {cpc:kwCpcRef[k].sp/kwCpcRef[k].cl, src:'same keyword elsewhere'};
+    const c=campAgg[t.campaignId];
+    if(c) return {cpc:c.sp/c.cl, src:'this campaign'};
+    const pf=DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)';
+    if(portAgg[pf] && portAgg[pf].cl>0) return {cpc:portAgg[pf].sp/portAgg[pf].cl, src:'portfolio'};
+    return acctCpcRef>0? {cpc:acctCpcRef, src:'account'} : null;
+  };
+  const neverServed=src.map(t=>{
+    if(t.clicks>0 || t.impressions>=wakeImprFloor) return null;
+    const ref=refFor(t);
+    if(!ref || !(ref.cpc>0) || !(t.bid < ref.cpc*0.7)) return null;
+    return Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t);
+  }).filter(Boolean).sort((a,b)=>a.ratio-b.ratio);
   const allRows=rows;
   if(st.actionFilter===undefined) st.actionFilter='all';
   if(st.actionFilter!=='all') rows=rows.filter(r=>r.action===st.actionFilter);
@@ -2538,8 +2561,8 @@ function renderOptBids(){
       <div id="ob-table">${tbl.html}</div>
       ${neverServed.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Not entering auctions (${neverServed.length})</summary>
         <div class="hint" style="margin:8px 0;">Bidding well under what this campaign actually pays per click, and getting almost no impressions as a result — so they never accumulate the traffic any rule could judge them on. Deliberately NOT auto-raised: a low bid can be strategy (a "low bids" campaign is supposed to sit under the market) and the bulk file can't tell that apart from an oversight. Listed here so the choice stays yours.</div>
-        <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Campaign CPC</th><th>Bid vs CPC</th><th>Impressions</th></tr></thead><tbody>
-        ${neverServed.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fMoney(x.campCpc)}</td><td class="num-red">${x.ratio.toFixed(2)}×</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
+        <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Going rate</th><th class="l">Based on</th><th>Bid vs rate</th><th>Impressions</th></tr></thead><tbody>
+        ${neverServed.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fMoney(x.campCpc)}</td><td class="l muted">${esc(x.refSrc)}</td><td class="num-red">${x.ratio.toFixed(2)}×</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
         </tbody></table>${neverServed.length>40?`<div class="muted" style="margin-top:6px;">…+${neverServed.length-40} more</div>`:''}</details>`:''}
     </div>`;
   tbl.wire($('#ob-table'));
