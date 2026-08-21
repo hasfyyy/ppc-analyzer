@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-20 19:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 09:18</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2193,6 +2193,20 @@ function staleSignalsFor(campaignId, product){
   return out;
 }
 function campaignRecentlyChanged(campaignId, product){ return staleSignalsFor(campaignId, product).length>0; }
+// The ACoS goal and its tier ladder are ONE setting shared by the Bid and Placement optimizers — kept on the
+// placement state as the single source of truth so editing it in either tab moves both. Tiers are multiples
+// of the goal rather than fixed percentages: on a 20% target, cutting only above 50% ACoS means tolerating
+// 2.5x the goal before reacting, while on a 45% target a 50% threshold fires almost immediately. Expressed
+// as multiples, one number retunes the whole ladder for the account.
+function goalTiers(){
+  const g=stFor('optplace');
+  if(g.acosGoal===undefined) g.acosGoal=20;
+  if(g.t1Mult===undefined) g.t1Mult=1.25; if(g.t1Cut===undefined) g.t1Cut=10;
+  if(g.t2Mult===undefined) g.t2Mult=2.5;  if(g.t2Cut===undefined) g.t2Cut=15;
+  if(g.t3Mult===undefined) g.t3Mult=4.5;  if(g.t3Cut===undefined) g.t3Cut=25;
+  if(g.raiseStep===undefined) g.raiseStep=5;
+  return g;
+}
 function singleKwCampaigns(product){
   const enabledCamps=optimizableCampaignIds(product);
   const counts={};
@@ -2224,6 +2238,17 @@ function renderOptBids(){
   if(st.acosAdjBranded===undefined) st.acosAdjBranded=-15;
   if(st.brandTerms===undefined) st.brandTerms='';
   const brandTermsArr=st.brandTerms.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+  // Bid tiers ride on the same shared ACoS goal as the placement ones, so a placement and its own campaign's
+  // bid always agree on what "too expensive" means. Left on fixed thresholds they drift apart: at a 35% goal
+  // placements start cutting at 44% while bids waited for 50%, and at a 20% goal bids tolerated 2.5x the
+  // target before reacting at all. Unticking the box restores hand-set thresholds for an account that needs them.
+  const gt=goalTiers();
+  if(st.deriveTiers===undefined) st.deriveTiers=true;
+  if(st.deriveTiers){
+    st.hi1=+(gt.acosGoal*gt.t1Mult).toFixed(0); st.dec1=gt.t1Cut;
+    st.hi2=+(gt.acosGoal*gt.t2Mult).toFixed(0); st.dec2=gt.t2Cut;
+    st.hi3=+(gt.acosGoal*gt.t3Mult).toFixed(0); st.dec3=gt.t3Cut;
+  }
   const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=optimizableCampaignIds(S.product);
   // Single-keyword campaigns get their placement suggestions folded right into this same table — one bid
@@ -2396,14 +2421,19 @@ function renderOptBids(){
         <div class="field"><label>Branded: allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
         <div class="field grow"><label>Brand terms (comma-separated)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}" title="Matched against campaign name, portfolio name, AND the keyword/target text itself."></div>
       </div>
+      <div class="ctrls" style="margin-bottom:8px;">
+        <div class="field"><label>ACoS goal %</label><input type="number" id="ob-acosgoal" min="1" value="${gt.acosGoal}" style="width:90px;"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ob-derivetiers" ${st.deriveTiers?'checked':''}> Derive tiers from goal</label>
+        <div class="hint" style="align-self:center;">Shared with the Placement Optimizer — one goal drives both, so a placement and its campaign's bid never disagree on what counts as too expensive. Tiers sit at ${gt.t1Mult}× / ${gt.t2Mult}× / ${gt.t3Mult}× the goal. Untick to set thresholds by hand.</div>
+      </div>
       <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it. The category allowance above shifts the ACoS fed into these tiers, so the SAME thresholds end up stricter or looser depending on what's being targeted.">Graduated decrease — hover for details.</div>
       <div class="ctrls">
-        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
-        <div class="field"><label>-%</label><input type="number" id="ob-dec1" value="${st.dec1}" style="width:70px;"></div>
-        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="ob-hi2" value="${st.hi2}" style="width:80px;"></div>
-        <div class="field"><label>-%</label><input type="number" id="ob-dec2" value="${st.dec2}" style="width:70px;"></div>
-        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
-        <div class="field"><label>-%</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:70px;"></div>
+        <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-dec1" value="${st.dec1}" style="width:70px;" ${st.deriveTiers?'disabled':''}></div>
+        <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="ob-hi2" value="${st.hi2}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-dec2" value="${st.dec2}" style="width:70px;" ${st.deriveTiers?'disabled':''}></div>
+        <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
+        <div class="field"><label>-%</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:70px;" ${st.deriveTiers?'disabled':''}></div>
       </div>
       <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
@@ -2496,6 +2526,8 @@ function renderOptBids(){
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
+  $('#ob-acosgoal').oninput=debounce(()=>{ goalTiers().acosGoal=+$('#ob-acosgoal').value||20; renderOptBids(); },350);
+  $('#ob-derivetiers').onchange=e=>{ st.deriveTiers=e.target.checked; renderOptBids(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
@@ -2558,11 +2590,7 @@ function computePlacementOptRows(product, filters){
   // Target-bid engine (see the decision block below). Tier thresholds are multiples of the ACoS goal, so one
   // set of rules works across accounts with different targets; the cut is how far under the placement's own
   // CPC the effective bid should land.
-  if(st.acosGoal===undefined) st.acosGoal=20;
-  if(st.t1Mult===undefined) st.t1Mult=1.25; if(st.t1Cut===undefined) st.t1Cut=10;
-  if(st.t2Mult===undefined) st.t2Mult=2.5;  if(st.t2Cut===undefined) st.t2Cut=15;
-  if(st.t3Mult===undefined) st.t3Mult=4.5;  if(st.t3Cut===undefined) st.t3Cut=25;
-  if(st.raiseStep===undefined) st.raiseStep=5;
+  goalTiers(); // shared ACoS goal + tier ladder (same object as st here, see goalTiers)
   // Zero-order ladder runs on clicks, not money: with no orders there is no ACoS and no conversion value to
   // price against, just "how much traffic did it burn without producing anything".
   if(st.z1Clicks===undefined) st.z1Clicks=10; if(st.z1Cut===undefined) st.z1Cut=10;
