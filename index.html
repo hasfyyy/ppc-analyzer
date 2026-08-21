@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 14:48</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 15:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1061,6 +1061,21 @@ const STOP=new Set([
   'und','oder','für','fur','mit','auf','das','der','die','den','dem','des','ein','eine','einen','einem','einer',
   'ist','sind','war','waren','von','zu','zum','zur','im','am','als','auch','aber','nicht','sich','so','wie',
   'was','wer','wo','durch','über','uber','unter','vor','nach','bei','aus','an','es','man','sie','er','wir','ich',
+  // French — UK/CA storefronts also serve French shoppers, and KONKIKI runs a dedicated FR marketplace
+  'le','la','les','un','une','des','du','de','et','ou','mais','pour','avec','sans','dans','sur','sous','par',
+  'chez','entre','vers','ce','cette','ces','il','elle','ils','elles','nous','vous','je','tu','on','qui','que',
+  'quoi','où','est','sont','être','etre','avoir','ne','pas','plus','très','tres','aussi','comme','donc',
+  'car','si','ça','ca','cela','votre','notre','leur','mon','ton','son','au','aux','à','en',
+  // Italian
+  'il','lo','i','gli','uno','una','di','da','con','su','per','tra','fra','e','o','ma','non','che','chi',
+  'cui','come','dove','quando','è','sono','essere','avere','questo','questa','questi','queste','quello',
+  'quella','mio','tuo','suo','nostro','vostro','loro','ci','si','vi','del','della','dei','delle','degli','al',
+  'allo','alla','ai','agli','alle','dal','dallo','dalla','nel','nello','nella',
+  // Spanish
+  'el','los','las','unos','unas','al','sobre','hasta','desde','y','pero','quien','donde','cuando','es','son',
+  'ser','estar','este','esta','estos','estas','ese','esa','esos','esas','mi','tu','su','nuestro','vuestro',
+  'yo','él','ella','nosotros','vosotros','ellos','ellas','no','muy','más','mas','también','tambien','así',
+  'asi','porque',
 ]);
 // splits on anything that ISN'T a Unicode letter/number, so "ü/ö/ä/ß" stay part of the word instead of being cut as delimiters
 function wordsOf(s){ return String(s||'').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); }
@@ -1551,6 +1566,7 @@ function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x
 function renderNgRoots(){
   const st=stFor('ngroots'); if(st.ngAcos===undefined) st.ngAcos=20; if(st.ngMinOrders===undefined) st.ngMinOrders=1;
   if(st.ngCombine===undefined) st.ngCombine=false; if(st.ngExclude===undefined) st.ngExclude='';
+  if(st.ngBigrams===undefined) st.ngBigrams=true;
   const src=stByToggle();
   const ngSrc = st.port? src.filter(s=>(s.portfolioName||'(No Portfolio)')===st.port) : src;
   // Always aggregated per portfolio+root FIRST, and the Max ACoS / Min Orders thresholds are always applied
@@ -1558,11 +1574,25 @@ function renderNgRoots(){
   // portfolio's own numbers, not get dragged down by unrelated (and possibly bad) performance of the same
   // word in a totally different portfolio. "Combine" only merges rows that already individually qualified,
   // for display/launch purposes — it never re-tests the combined total against the thresholds.
+  const ngIsGoodWord=w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w);
   const ngMap=new Map();
   ngSrc.forEach(r=>{
     const pf=String(r.portfolioName||'(No Portfolio)');
-    const words=wordsOf(r.searchTerm).filter(w=>w.length>2 && !STOP.has(w) && !/^b0[a-z0-9]{8}$/.test(w));
-    new Set(words).forEach(w=>{
+    // Adjacency is taken from the ORIGINAL token order (before stopwords are dropped), so a 2-word root reads
+    // as a real phrase from the search term — not two unrelated words that only ended up next to each other
+    // once filler was stripped out. Both words still have to clear the same bar as a standalone root (length,
+    // not a stopword) — a bigram with a preposition on either side ("for kids") isn't a phrase Alex would
+    // target, so it's excluded rather than surfaced as a false "2-word root".
+    const allTokens=wordsOf(r.searchTerm);
+    const roots=new Set();
+    allTokens.forEach(w=>{ if(ngIsGoodWord(w)) roots.add(w); });
+    if(st.ngBigrams){
+      for(let i=0;i<allTokens.length-1;i++){
+        const a=allTokens[i], b=allTokens[i+1];
+        if(ngIsGoodWord(a) && ngIsGoodWord(b)) roots.add(a+' '+b);
+      }
+    }
+    roots.forEach(w=>{
       const key=pf+'|'+w;
       if(!ngMap.has(key)) ngMap.set(key,{root:w,portfolioName:pf,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
       const e=ngMap.get(key); e.impressions+=r.impressions; e.clicks+=r.clicks; e.spend+=r.spend; e.sales+=r.sales; e.orders+=r.orders;
@@ -1624,6 +1654,7 @@ function renderNgRoots(){
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="hv-ngcombine" ${st.ngCombine?'checked':''}> Combine same root across portfolios</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;" title="Adjacent word pairs from the actual search term, e.g. &quot;visual timer&quot; — not just single words. Pairs with a preposition/stopword on either side (&quot;for kids&quot;) are excluded, since that's not a phrase worth targeting on its own."><input type="checkbox" id="hv-ngbigrams" ${st.ngBigrams?'checked':''}> Include 2-word roots</label>
         <div class="field grow"><label>Exclude words (comma-separated, e.g. brand name)</label><input type="text" id="hv-ngexclude" placeholder="e.g. lunakai, insiders" value="${esc(st.ngExclude)}"></div>
       </div>
       <div class="hint" style="margin:8px 0;">Same root-word aggregation as Negative Phrase, but for finding GOOD roots already converting well — toggle one on to add it to the launch batch below, using the root text itself as the new keyword. Column headers (▾) also support per-column sort/filter, same as every other table.</div>
@@ -1645,6 +1676,7 @@ function renderNgRoots(){
   $('#hv-ngport').onchange=e=>{st.port=e.target.value; renderNgRoots();};
   $('#hv-ngterm').oninput=debounce(()=>{st.term=$('#hv-ngterm').value; renderNgRoots();},220);
   $('#hv-ngcombine').onchange=e=>{st.ngCombine=e.target.checked; renderNgRoots();};
+  $('#hv-ngbigrams').onchange=e=>{st.ngBigrams=e.target.checked; renderNgRoots();};
   $('#hv-ngexclude').oninput=debounce(()=>{st.ngExclude=$('#hv-ngexclude').value; renderNgRoots();},250);
   $('#hv-ngdl').onclick=()=>exportCSV(ngCols.filter(c=>c.key!=='sel'),ngRows,'ngroots_low_acos');
   $('#hv-ngselall').onclick=()=>{
