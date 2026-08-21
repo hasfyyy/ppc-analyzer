@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 11:55</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 12:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2300,6 +2300,40 @@ function renderOptBids(){
   const staleCache={};
   const isStale=cid=>{ if(staleCache[cid]===undefined) staleCache[cid]=campaignRecentlyChanged(cid, S.product); return staleCache[cid]; };
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
+  // Reference price, in order of how well it describes THIS keyword's auction:
+  //   1. the same keyword text wherever else in the account it does get clicks — the actual going rate for it
+  //   2. this campaign's own CPC
+  //   3. the portfolio's, then 4. the account's
+  // The chain matters most for a campaign that was just launched: it has no CPC of its own (no clicks yet),
+  // so comparing against itself is impossible — which is exactly when an underbid keyword is invisible and
+  // most costly, since nothing in it will ever start. 37 campaigns in one account were in that state.
+  const kwCpcRef={}, campAgg={}, portAgg={};
+  DATA.targets.forEach(t=>{ if(t.product!==S.product || t.clicks<=0) return;
+    const k=String(t.text).trim().toLowerCase();
+    if(!kwCpcRef[k]) kwCpcRef[k]={cl:0,sp:0}; kwCpcRef[k].cl+=t.clicks; kwCpcRef[k].sp+=t.spend; });
+  DATA.campaigns.forEach(c=>{ if(c.product!==S.product || c.clicks<=0) return;
+    campAgg[c.campaignId]={cl:c.clicks, sp:c.spend};
+    const pf=c.portfolioName||'(No Portfolio)';
+    if(!portAgg[pf]) portAgg[pf]={cl:0,sp:0}; portAgg[pf].cl+=c.clicks; portAgg[pf].sp+=c.spend; });
+  const acctCpcRef=derive(agg(DATA.campaigns.filter(c=>c.product===S.product))).cpc;
+  const refFor=t=>{
+    const k=String(t.text).trim().toLowerCase();
+    if(kwCpcRef[k] && kwCpcRef[k].cl>0) return {cpc:kwCpcRef[k].sp/kwCpcRef[k].cl, src:'same keyword elsewhere'};
+    const c=campAgg[t.campaignId];
+    if(c) return {cpc:c.sp/c.cl, src:'this campaign'};
+    const pf=DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)';
+    if(portAgg[pf] && portAgg[pf].cl>0) return {cpc:portAgg[pf].sp/portAgg[pf].cl, src:'portfolio'};
+    return acctCpcRef>0? {cpc:acctCpcRef, src:'account'} : null;
+  };
+  // A bid deliberately parked under the market is a strategy, not a mistake — these accounts run campaigns
+  // named "low bids" for exactly that. Raising those would put two of your own campaigns into the same
+  // auction against each other, so they are skipped by name and only listed further down.
+  if(st.underbidPct===undefined) st.underbidPct=10;
+  if(st.underbidEnabled===undefined) st.underbidEnabled=true;
+  if(st.underbidSkip===undefined) st.underbidSkip='low bid';
+  const skipNeedle=(st.underbidSkip||'').trim().toLowerCase();
+  const isDeliberateLowBid=cid=>skipNeedle? String(DATA.campById[cid]?.name||'').toLowerCase().includes(skipNeedle) : false;
+  const underbidSkipped=[];
   let rows=src.map(t=>{
     const d=derive(agg([t]));
     const category=bidCategoryFor(t, brandTermsArr);
@@ -2365,6 +2399,18 @@ function renderOptBids(){
     if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=wakeImprFloor){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
     }
+    // Priced out of the auction: too few impressions to have earned a verdict, and a bid well under what this
+    // keyword actually costs. Wake can't reach these — it needs impressions, and that is precisely what a bid
+    // this low never accumulates, so the keyword sits at a standstill forever. A freshly launched campaign is
+    // the common case: no clicks of its own yet, nothing to compare against except the going rate elsewhere.
+    if(action==='none' && st.underbidEnabled && t.clicks===0 && t.impressions<wakeImprFloor){
+      const ref=refFor(t);
+      if(ref && ref.cpc>0 && t.bid < ref.cpc*0.7){
+        if(isDeliberateLowBid(t.campaignId)) underbidSkipped.push(Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t));
+        else { action='underbid'; pct=st.underbidPct; newBid=+(t.bid*(1+st.underbidPct/100)).toFixed(2);
+               reason=`bid ${fMoney(t.bid)} vs ${fMoney(ref.cpc)} going rate (${ref.src}) — not entering auctions`; }
+      }
+    }
     // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
     // has proven it isn't the lever, so nudge the bid itself instead. Only the campaign's single highest-bid
     // target gets this (picked via topTargetByCamp), so a multi-keyword campaign doesn't get every keyword
@@ -2398,37 +2444,6 @@ function renderOptBids(){
   // nothing and going nowhere. Surfaced rather than auto-raised: bidding under the market is sometimes the
   // whole point (this account has campaigns literally named "low bids"), and nothing in the file separates
   // a deliberate floor from a forgotten one.
-  // Reference price, in order of how well it describes THIS keyword's auction:
-  //   1. the same keyword text wherever else in the account it does get clicks — the actual going rate for it
-  //   2. this campaign's own CPC
-  //   3. the portfolio's, then 4. the account's
-  // The chain matters most for a campaign that was just launched: it has no CPC of its own (no clicks yet),
-  // so comparing against itself is impossible — which is exactly when an underbid keyword is invisible and
-  // most costly, since nothing in it will ever start. 37 campaigns in one account were in that state.
-  const kwCpcRef={}, campAgg={}, portAgg={};
-  DATA.targets.forEach(t=>{ if(t.product!==S.product || t.clicks<=0) return;
-    const k=String(t.text).trim().toLowerCase();
-    if(!kwCpcRef[k]) kwCpcRef[k]={cl:0,sp:0}; kwCpcRef[k].cl+=t.clicks; kwCpcRef[k].sp+=t.spend; });
-  DATA.campaigns.forEach(c=>{ if(c.product!==S.product || c.clicks<=0) return;
-    campAgg[c.campaignId]={cl:c.clicks, sp:c.spend};
-    const pf=c.portfolioName||'(No Portfolio)';
-    if(!portAgg[pf]) portAgg[pf]={cl:0,sp:0}; portAgg[pf].cl+=c.clicks; portAgg[pf].sp+=c.spend; });
-  const acctCpcRef=derive(agg(DATA.campaigns.filter(c=>c.product===S.product))).cpc;
-  const refFor=t=>{
-    const k=String(t.text).trim().toLowerCase();
-    if(kwCpcRef[k] && kwCpcRef[k].cl>0) return {cpc:kwCpcRef[k].sp/kwCpcRef[k].cl, src:'same keyword elsewhere'};
-    const c=campAgg[t.campaignId];
-    if(c) return {cpc:c.sp/c.cl, src:'this campaign'};
-    const pf=DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)';
-    if(portAgg[pf] && portAgg[pf].cl>0) return {cpc:portAgg[pf].sp/portAgg[pf].cl, src:'portfolio'};
-    return acctCpcRef>0? {cpc:acctCpcRef, src:'account'} : null;
-  };
-  const neverServed=src.map(t=>{
-    if(t.clicks>0 || t.impressions>=wakeImprFloor) return null;
-    const ref=refFor(t);
-    if(!ref || !(ref.cpc>0) || !(t.bid < ref.cpc*0.7)) return null;
-    return Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t);
-  }).filter(Boolean).sort((a,b)=>a.ratio-b.ratio);
   const allRows=rows;
   if(st.actionFilter===undefined) st.actionFilter='all';
   if(st.actionFilter!=='all') rows=rows.filter(r=>r.action===st.actionFilter);
@@ -2437,6 +2452,7 @@ function renderOptBids(){
   const actionBadge=r=>{
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
     if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
+    if(r.action==='underbid') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (underbid)</span>`;
     if(r.action==='stuck-bump') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="${esc(r.reason||'')}">↑ +${fMoney(r.newBid-r.bid)} (stuck placement)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
   };
@@ -2539,6 +2555,12 @@ function renderOptBids(){
         <div class="hint" style="align-self:center;" title="Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for keywords with impressions but 0 clicks.</div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-underbiden" ${st.underbidEnabled?'checked':''}> Raise keywords priced out of the auction</label>
+        <div class="field"><label>Raise by %</label><input type="number" id="ob-underbidpct" value="${st.underbidPct}" style="width:90px;"></div>
+        <div class="field"><label>Skip campaigns named</label><input type="text" id="ob-underbidskip" value="${esc(st.underbidSkip)}" style="width:130px;" title="Campaigns whose name contains this are left alone — a bid parked under the market there is a strategy, not an oversight."></div>
+        <div class="hint" style="align-self:center;">Bid under 70% of the going rate with almost no impressions — it can never gather the traffic any other rule needs. Going rate is taken from the same keyword elsewhere in the account, else the campaign, portfolio or account CPC.</div>
+      </div>
+      <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-hidestale" ${st.hideStale?'checked':''}> Hide campaigns edited mid-window</label>
         <div class="hint" style="align-self:center;" title="Detected arithmetically: with 'Dynamic bids - down only' Amazon can never pay more than your effective bid, so a CPC above it proves the bid or placement % changed during the report window (the ceiling is raised for 'up and down' campaigns, which may bid up +100% on Top of Search).">Campaigns whose bid or placement % changed during the report window are marked <span class="badge" style="background:#fef3e2;color:#c2760a;">edited mid-window</span> — their metrics describe the old settings. Suggestions still apply (they converge), tick this to hide them entirely.</div>
       </div>
@@ -2554,16 +2576,17 @@ function renderOptBids(){
           <option value="increase" ${st.actionFilter==='increase'?'selected':''}>Increases only (${allRows.filter(r=>r.action==='increase').length})</option>
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
           <option value="stuck-bump" ${st.actionFilter==='stuck-bump'?'selected':''}>Stuck placement only (${allRows.filter(r=>r.action==='stuck-bump').length})</option>
+          <option value="underbid" ${st.actionFilter==='underbid'?'selected':''}>Priced out of auction only (${allRows.filter(r=>r.action==='underbid').length})</option>
         </select></div>
         <div class="spacer"></div>
         <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="ob-table">${tbl.html}</div>
-      ${neverServed.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Not entering auctions (${neverServed.length})</summary>
-        <div class="hint" style="margin:8px 0;">Bidding well under what this campaign actually pays per click, and getting almost no impressions as a result — so they never accumulate the traffic any rule could judge them on. Deliberately NOT auto-raised: a low bid can be strategy (a "low bids" campaign is supposed to sit under the market) and the bulk file can't tell that apart from an oversight. Listed here so the choice stays yours.</div>
+      ${underbidSkipped.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Left alone — deliberate low bids (${underbidSkipped.length})</summary>
+        <div class="hint" style="margin:8px 0;">Underbid against the going rate and barely served — but sitting in campaigns whose name contains "${esc(st.underbidSkip)}", so the low bid reads as intentional and no raise is proposed. Raising them would put two of your own campaigns into the same auction. Everything else in this situation is raised ${st.underbidPct}% in the table above. Change the name filter in the settings panel if your convention differs.</div>
         <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Going rate</th><th class="l">Based on</th><th>Bid vs rate</th><th>Impressions</th></tr></thead><tbody>
-        ${neverServed.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fMoney(x.campCpc)}</td><td class="l muted">${esc(x.refSrc)}</td><td class="num-red">${x.ratio.toFixed(2)}×</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
-        </tbody></table>${neverServed.length>40?`<div class="muted" style="margin-top:6px;">…+${neverServed.length-40} more</div>`:''}</details>`:''}
+        ${underbidSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fMoney(x.campCpc)}</td><td class="l muted">${esc(x.refSrc)}</td><td class="num-red">${x.ratio.toFixed(2)}×</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
+        </tbody></table>${underbidSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${underbidSkipped.length-40} more</div>`:''}</details>`:''}
     </div>`;
   tbl.wire($('#ob-table'));
   const upd=()=>renderOptBids();
@@ -2596,6 +2619,9 @@ function renderOptBids(){
   $('#ob-wakeauto').onchange=e=>{ st.wakeAutoImpr=e.target.checked; renderOptBids(); };
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
+  $('#ob-underbiden').onchange=e=>{ st.underbidEnabled=e.target.checked; upd(); };
+  bind('ob-underbidpct','underbidPct',v=>+v||0);
+  $('#ob-underbidskip').oninput=debounce(()=>{ st.underbidSkip=$('#ob-underbidskip').value; upd(); },350);
   $('#ob-acosgoal').oninput=debounce(()=>{ goalTiers().acosGoal=+$('#ob-acosgoal').value||20; renderOptBids(); },350);
   $('#ob-derivetiers').onchange=e=>{ st.deriveTiers=e.target.checked; renderOptBids(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
