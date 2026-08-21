@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 11:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 11:11</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2231,6 +2231,17 @@ function renderOptBids(){
   if(st.zeroHi2===undefined) st.zeroHi2=15; if(st.zeroDec2===undefined) st.zeroDec2=15;
   if(st.zeroHi3===undefined) st.zeroHi3=20; if(st.zeroDec3===undefined) st.zeroDec3=20;
   if(st.wakeMinImpr===undefined) st.wakeMinImpr=50; if(st.wakePct===undefined) st.wakePct=10; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
+  // "Impressions but no clicks" only means something once zero clicks is actually surprising, and that depends
+  // entirely on the account's CTR. At 0.71% CTR a 50-impression floor expects 0.36 clicks — getting none is the
+  // most likely outcome, so the rule fires on pure noise and bumps bids for keywords nobody has judged yet.
+  // Derived instead from "enough impressions to expect wakeExpectedClicks clicks": ~420 impressions on a 0.7%
+  // CTR account, ~150 on a 2% one. The manual floor stays as a lower bound for accounts with no CTR yet.
+  if(st.wakeExpectedClicks===undefined) st.wakeExpectedClicks=3;
+  if(st.wakeAutoImpr===undefined) st.wakeAutoImpr=true;
+  const acctCtr=derive(agg(DATA.campaigns.filter(c=>c.product===S.product))).ctr;
+  const wakeImprFloor = (st.wakeAutoImpr && acctCtr>0)
+    ? Math.max(st.wakeMinImpr, Math.ceil(st.wakeExpectedClicks/(acctCtr/100)))
+    : st.wakeMinImpr;
   // ACoS allowance per target category — shifts the ACoS fed into the tiers above, not a separate rule set.
   // +15 for Exact means it takes 15pp more ACoS to trigger the same cut (and 15pp less to trigger the same
   // bump) versus baseline; -15 for Branded means the opposite — the bar tightens instead of loosening.
@@ -2351,7 +2362,7 @@ function renderOptBids(){
     }
     // Plenty of impressions but ZERO clicks means the bid is losing every auction it's even entered —
     // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates.
-    if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=st.wakeMinImpr){
+    if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=wakeImprFloor){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
     }
     // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
@@ -2478,7 +2489,10 @@ function renderOptBids(){
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
-        <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;"></div>
+        <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;" ${st.wakeAutoImpr?'disabled':''}></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;" title="Zero clicks only means something once it would be surprising. Derived from the account's own CTR as 'enough impressions to expect this many clicks' — at a 0.7% CTR that is ~420 impressions, at 2% it is ~150. A fixed floor of 50 expects well under one click, so it fires on noise."><input type="checkbox" id="ob-wakeauto" ${st.wakeAutoImpr?'checked':''}> Auto (from CTR)</label>
+        <div class="field"><label>Expect ≥ clicks</label><input type="number" id="ob-wakeexp" min="1" value="${st.wakeExpectedClicks}" style="width:90px;" ${st.wakeAutoImpr?'':'disabled'}></div>
+        <div class="hint" style="align-self:center;">Account CTR ${acctCtr.toFixed(2)}% → currently waking at <b>${fInt(wakeImprFloor)}</b> impressions.</div>
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
         <div class="hint" style="align-self:center;" title="Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for keywords with impressions but 0 clicks.</div>
       </div>
@@ -2530,6 +2544,8 @@ function renderOptBids(){
   bind('ob-zerohi2','zeroHi2',v=>+v||0); bind('ob-zerodec2','zeroDec2',v=>+v||0);
   bind('ob-zerohi3','zeroHi3',v=>+v||0); bind('ob-zerodec3','zeroDec3',v=>+v||0);
   bind('ob-wakeimp','wakeMinImpr',v=>+v||0); bind('ob-wakepct','wakePct',v=>+v||0);
+  bind('ob-wakeexp','wakeExpectedClicks',v=>+v||1);
+  $('#ob-wakeauto').onchange=e=>{ st.wakeAutoImpr=e.target.checked; renderOptBids(); };
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
   $('#ob-acosgoal').oninput=debounce(()=>{ goalTiers().acosGoal=+$('#ob-acosgoal').value||20; renderOptBids(); },350);
