@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 12:38</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 14:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -252,6 +252,26 @@ function derive(a){
   });
 }
 function acosClass(a){ if(a===Infinity||a>60) return 'num-red'; if(a>=30) return 'num-amber'; return 'num-green'; }
+// Per-campaign CTR for the wake-floor calc (keyword and placement versions both use this). A campaign's own
+// CTR can differ sharply from the account average — measured on a real account: a catchall campaign ran at
+// 1.17% CTR against a 0.76% account CTR, the OPPOSITE of the "catchall = lower CTR" assumption this was built
+// to test. Anchoring every campaign's wake floor to one account-wide number over- or under-estimates what's
+// "expected" depending on how that campaign's own CTR compares, so this cascades down to the campaign's own
+// CTR when it has enough impressions to trust it, and falls back to the account CTR otherwise (same cascade
+// shape as the bid reference lookup: own data first, broader scope only when own data is too thin).
+const CAMP_CTR_MIN_IMPR = 300;
+function campCtrTable(product){
+  const t={};
+  DATA.campaigns.filter(c=>c.product===product).forEach(c=>{
+    const e=t[c.campaignId]||(t[c.campaignId]={impressions:0,clicks:0});
+    e.impressions+=c.impressions; e.clicks+=c.clicks;
+  });
+  return t;
+}
+function wakeCtrFor(campaignId, campCtr, acctCtr){
+  const e=campCtr[campaignId];
+  return (e && e.impressions>=CAMP_CTR_MIN_IMPR) ? (e.clicks/e.impressions*100) : acctCtr;
+}
 
 /* ============================ parsing ============================ */
 const DATA = {
@@ -2239,9 +2259,15 @@ function renderOptBids(){
   if(st.wakeExpectedClicks===undefined) st.wakeExpectedClicks=3;
   if(st.wakeAutoImpr===undefined) st.wakeAutoImpr=true;
   const acctCtr=derive(agg(DATA.campaigns.filter(c=>c.product===S.product))).ctr;
+  const campCtr=campCtrTable(S.product);
   const wakeImprFloor = (st.wakeAutoImpr && acctCtr>0)
     ? Math.max(st.wakeMinImpr, Math.ceil(st.wakeExpectedClicks/(acctCtr/100)))
     : st.wakeMinImpr;
+  function wakeImprFloorFor(campaignId){
+    if(!st.wakeAutoImpr) return st.wakeMinImpr;
+    const ctr=wakeCtrFor(campaignId, campCtr, acctCtr);
+    return ctr>0 ? Math.max(st.wakeMinImpr, Math.ceil(st.wakeExpectedClicks/(ctr/100))) : st.wakeMinImpr;
+  }
   // ACoS allowance per target category — shifts the ACoS fed into the tiers above, not a separate rule set.
   // +15 for Exact means it takes 15pp more ACoS to trigger the same cut (and 15pp less to trigger the same
   // bump) versus baseline; -15 for Branded means the opposite — the bar tightens instead of loosening.
@@ -2397,14 +2423,14 @@ function renderOptBids(){
     }
     // Plenty of impressions but ZERO clicks means the bid is losing every auction it's even entered —
     // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates.
-    if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=wakeImprFloor){
+    if(action==='none' && st.wakeEnabled && t.clicks===0 && t.impressions>=wakeImprFloorFor(t.campaignId)){
       action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=`${fInt(t.impressions)} impressions, 0 clicks`;
     }
     // Priced out of the auction: too few impressions to have earned a verdict, and a bid well under what this
     // keyword actually costs. Wake can't reach these — it needs impressions, and that is precisely what a bid
     // this low never accumulates, so the keyword sits at a standstill forever. A freshly launched campaign is
     // the common case: no clicks of its own yet, nothing to compare against except the going rate elsewhere.
-    if(action==='none' && st.underbidEnabled && t.clicks===0 && t.impressions<wakeImprFloor){
+    if(action==='none' && st.underbidEnabled && t.clicks===0 && t.impressions<wakeImprFloorFor(t.campaignId)){
       const ref=refFor(t);
       if(ref && ref.cpc>0 && t.bid < ref.cpc*0.7){
         if(isDeliberateLowBid(t.campaignId)) underbidSkipped.push(Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t));
@@ -2559,7 +2585,7 @@ function renderOptBids(){
         <div class="field"><label>Min impressions</label><input type="number" id="ob-wakeimp" value="${st.wakeMinImpr}" style="width:100px;" ${st.wakeAutoImpr?'disabled':''}></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;" title="Zero clicks only means something once it would be surprising. Derived from the account's own CTR as 'enough impressions to expect this many clicks' — at a 0.7% CTR that is ~420 impressions, at 2% it is ~150. A fixed floor of 50 expects well under one click, so it fires on noise."><input type="checkbox" id="ob-wakeauto" ${st.wakeAutoImpr?'checked':''}> Auto (from CTR)</label>
         <div class="field"><label>Expect ≥ clicks</label><input type="number" id="ob-wakeexp" min="1" value="${st.wakeExpectedClicks}" style="width:90px;" ${st.wakeAutoImpr?'':'disabled'}></div>
-        <div class="hint" style="align-self:center;">Account CTR ${acctCtr.toFixed(2)}% → currently waking at <b>${fInt(wakeImprFloor)}</b> impressions.</div>
+        <div class="hint" style="align-self:center;">Account CTR ${acctCtr.toFixed(2)}% → baseline <b>${fInt(wakeImprFloor)}</b> impressions (campaigns with ≥${CAMP_CTR_MIN_IMPR} impressions of their own use their own CTR instead — catchall campaigns can run well above or below the account average).</div>
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
         <div class="hint" style="align-self:center;" title="Impressions with zero clicks — bid is losing every auction it enters. There's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for keywords with impressions but 0 clicks.</div>
       </div>
@@ -2756,7 +2782,11 @@ function computePlacementOptRows(product, filters){
   // impressions it takes before zero clicks is surprising rather than routine.
   if(st.placeWakeExpectedClicks===undefined) st.placeWakeExpectedClicks=3;
   const acctCtrP=derive(agg(DATA.campaigns.filter(c=>c.product===product))).ctr;
-  const placeWakeImpr = acctCtrP>0 ? Math.ceil(st.placeWakeExpectedClicks/(acctCtrP/100)) : 400;
+  const campCtrP=campCtrTable(product);
+  function placeWakeImprFor(campaignId){
+    const ctr=wakeCtrFor(campaignId, campCtrP, acctCtrP);
+    return ctr>0 ? Math.ceil(st.placeWakeExpectedClicks/(ctr/100)) : 400;
+  }
   const effSingleKw=new Set(singleKw);
   dominantTargetByCamp.forEach((t,cid)=>{
     const tot=campClicks[cid]||0;
@@ -2841,7 +2871,7 @@ function computePlacementOptRows(product, filters){
       // (unbounded). One keyword's placement figures ARE that keyword's; an average across many hides how
       // unevenly it's distributed, so it has to clear a higher bar to be acted on.
       action='increase'; newPct=Math.min(900, e.percentage+st.raiseStep); why=`ACoS ${fAcos(d.acos)} at or under goal`;
-    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImpr && e.percentage<st.pushCeiling){
+    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImprFor(e.campaignId) && e.percentage<st.pushCeiling){
       // The placement-level twin of the keyword "wake" rule: showing plenty and still buying nothing. With no
       // clicks there is no CPC to test the bid against, so the impression count has to carry the whole
       // argument — which is why it uses the CTR-derived floor rather than a fixed number. At a 0.7% CTR,
