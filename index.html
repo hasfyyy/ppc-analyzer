@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 09:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 10:53</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2632,6 +2632,26 @@ function computePlacementOptRows(product, filters){
   // campaign bumped redundantly.
   const topTargetByCamp=new Map();
   DATA.targets.forEach(t=>{ if(t.product!==product || t.state!=='enabled' || t.bid<=0) return; const cur=topTargetByCamp.get(t.campaignId); if(!cur || t.bid>cur.bid) topTargetByCamp.set(t.campaignId, t); });
+  // The target that actually BOUGHT the traffic, not the one with the biggest number on it. Plenty of
+  // campaigns carry leftover keywords sitting at a high bid that win nothing — one here has a €1.08 keyword
+  // with zero clicks next to a €0.42 one taking all 401. Anchoring the CPC maths to the highest bid would
+  // compare a placement's real cost against a bid that never competed for it.
+  const dominantTargetByCamp=new Map(), campClicks={};
+  DATA.targets.forEach(t=>{ if(t.product!==product || t.state!=='enabled' || t.bid<=0) return;
+    campClicks[t.campaignId]=(campClicks[t.campaignId]||0)+t.clicks;
+    const cur=dominantTargetByCamp.get(t.campaignId);
+    if(!cur || t.clicks>cur.clicks || (t.clicks===cur.clicks && t.spend>cur.spend)) dominantTargetByCamp.set(t.campaignId, t); });
+  // A campaign with five keywords where one takes 90% of the clicks behaves like a single-keyword campaign,
+  // because in practice one bid is doing all the work — so it earns the precise CPC-target maths rather than
+  // the blunt proportional treatment meant for genuinely mixed campaigns. Requires real volume before the
+  // share means anything: 9 of 10 clicks is dominance, 9 of 10 is not.
+  if(st.effSingleShare===undefined) st.effSingleShare=80;
+  if(st.effSingleMinClicks===undefined) st.effSingleMinClicks=10;
+  const effSingleKw=new Set(singleKw);
+  dominantTargetByCamp.forEach((t,cid)=>{
+    const tot=campClicks[cid]||0;
+    if(tot>=st.effSingleMinClicks && (t.clicks/tot)*100>=st.effSingleShare) effSingleKw.add(cid);
+  });
   let rowsRaw=DATA.placements.filter(p=>p.product===product && enabledCamps.has(p.campaignId));
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
@@ -2643,7 +2663,7 @@ function computePlacementOptRows(product, filters){
   });
   let allRows=Object.values(byKey).map(e=>{
     const d=derive(e);
-    const isSingle=singleKw.has(e.campaignId);
+    const isSingle=effSingleKw.has(e.campaignId); // true single-keyword, or one keyword taking ~all the clicks
     let action='none', newPct=e.percentage;
     // Below zeroOrderClicks there isn't enough traffic yet to tell a slow starter from a dead end, so a
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
@@ -2657,8 +2677,8 @@ function computePlacementOptRows(product, filters){
     // ALREADY is: if a previous run (or a manual edit) already brought it down, there is nothing left to do
     // and no suggestion is produced, instead of blindly cutting the same placement a second time.
     const goal=st.acosGoal>0? st.acosGoal : 20;
-    const topT=topTargetByCamp.get(e.campaignId);
-    const baseBid=topT? topT.bid : 0;
+    const domT=dominantTargetByCamp.get(e.campaignId);
+    const baseBid=domT? domT.bid : 0;
     let cutPct=null, cutWhy='';
     if(e.orders>=1){
       // Thresholds ride on the account's ACoS goal rather than being fixed numbers, so the same tiers work
@@ -2778,7 +2798,7 @@ function computePlacementOptRows(product, filters){
   allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampForFloor[r.campaignId]=byCampForFloor[r.campaignId]||[]).push(r); });
   Object.keys(byCampForFloor).forEach(cid=>{
     const plc=byCampForFloor[cid];
-    const target=singleTargetByCamp.get(cid);
+    const target=dominantTargetByCamp.get(cid); // the bid that actually bought this campaign's traffic
     if(!target) return;
     const floorBad=plc.filter(p=>(p.action==='floor-bad'||p.ineffectiveFloor) && p.clicks>0);
     if(!floorBad.length) return;
@@ -2838,7 +2858,7 @@ function computePlacementOptRows(product, filters){
   Object.keys(byCampAll).forEach(cid=>{
     if(floorBidOverrides[cid]) return; // handled by the CPC/goal override above instead
     const plc=byCampAll[cid];
-    const target=singleTargetByCamp.get(cid);
+    const target=dominantTargetByCamp.get(cid); // the bid that actually bought this campaign's traffic
     if(!target) return;
     const td=derive(agg([target]));
     // Mirrors the Bid Optimizer's own decision exactly — same two paths (ACoS tiers when there's at least one
@@ -2879,8 +2899,8 @@ function computePlacementOptRows(product, filters){
   // placement really bids, because the base it multiplies just dropped. Reading the % column alone made a
   // correct cut look like a raise — so carry the before/after effective bid on every row and show that too.
   allRows.forEach(r=>{
-    const topT=topTargetByCamp.get(r.campaignId);
-    const oldBid=topT? topT.bid : 0;
+    const domT=dominantTargetByCamp.get(r.campaignId);
+    const oldBid=domT? domT.bid : 0;
     const ov=floorBidOverrides[r.campaignId];
     const newBid=ov? ov.newBid : oldBid;
     if(oldBid>0){
