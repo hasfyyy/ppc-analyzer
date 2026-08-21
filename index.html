@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 10:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 11:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2303,7 +2303,12 @@ function renderOptBids(){
       action='decrease'; newBid=floorOverride.newBid;
       pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
       reason=`placement stuck at 0% floor — bid set to its CPC minus buffer`;
-    } else if(t.clicks>=st.minClicks && t.spend>=st.minSpend){
+    // Conversions outrank the click floor. Min Clicks is there to stop a ratio built on too little data being
+    // acted on — but the uncertainty comes from having few CONVERSIONS, not few clicks, and the gate had that
+    // backwards: 10 clicks with a single order sailed through while 9 clicks with three orders was blocked,
+    // even though the second is strictly stronger evidence. Real cases here were keywords converting at 10-12%
+    // ACoS against a 35% goal, frozen on a shared bid purely for being one click short.
+    } else if((t.clicks>=st.minClicks || t.orders>=st.minOrdersInc) && t.spend>=st.minSpend){
       let decPct = t.orders>=1? decreaseTierFor(effAcos, st) : null;
       // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
       // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
