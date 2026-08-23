@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-23 13:37</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-23 14:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2611,6 +2611,7 @@ function renderOptBids(){
         <div class="field"><label>...or min $</label><input type="number" step="0.01" id="ob-floorbufferdollar" value="${pst.floorBufferMinDollar}" style="width:80px;"></div>
         <div class="field"><label>Bonus %</label><input type="number" id="ob-floorbonuspct" value="${pst.floorBonusPct}" style="width:80px;"></div>
         <div class="field"><label>...or min $</label><input type="number" step="0.01" id="ob-floorbonusdollar" value="${pst.floorBonusMinDollar}" style="width:80px;"></div>
+        <div class="field"><label>Cap compensation at CPC +%</label><input type="number" id="ob-floorcompceil" value="${pst.floorCompCeilingPct}" style="width:80px;" title="Protecting a good placement's old effective bid can itself overbid it, if that old modifier was already generous relative to what it actually costs to win there. Compensation (with bonus) never pushes the new effective bid past this placement's own CPC plus this margin."></div>
         <div class="hint" style="align-self:center;">Step sizes — how far under CPC the new bid lands, and how big the bonus is. These are tuning, not thresholds, so they stay manual.</div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
@@ -2702,6 +2703,7 @@ function renderOptBids(){
   bindPst('ob-floorbufferdollar','floorBufferMinDollar',v=>+v||0);
   bindPst('ob-floorbonusgap','floorBonusGap',v=>+v||0); bindPst('ob-floorbonuspct','floorBonusPct',v=>+v||0);
   bindPst('ob-floorbonusdollar','floorBonusMinDollar',v=>+v||0);
+  bindPst('ob-floorcompceil','floorCompCeilingPct',v=>+v||0);
   bindPst('ob-stuckbump','stuckBumpDollar',v=>+v||0);
   $('#ob-floorauto').onchange=e=>{ pst.floorAuto=e.target.checked; renderOptBids(); };
   bind('ob-mo','minOrdersInc',v=>+v||0);
@@ -3011,6 +3013,7 @@ function computePlacementOptRows(product, filters){
   if(st.floorBonusGap===undefined) st.floorBonusGap=25;
   if(st.floorBonusPct===undefined) st.floorBonusPct=10;
   if(st.floorBonusMinDollar===undefined) st.floorBonusMinDollar=0.05;
+  if(st.floorCompCeilingPct===undefined) st.floorCompCeilingPct=25;
   const floorBidOverrides={};
   const byCampForFloor={};
   // Amazon Business isn't a sibling placement like TOS/ROS/PP — Amazon reports its clicks/spend/sales as
@@ -3068,7 +3071,15 @@ function computePlacementOptRows(product, filters){
       const oldEffective=target.bid*(1+(p.percentage||0)/100);
       const gap=st.floorGoal-p.acos;
       const bonusDollar=(p.orders>0 && gap>=st.floorBonusGap)?Math.max(oldEffective*st.floorBonusPct/100, st.floorBonusMinDollar):0;
-      const targetEff=oldEffective+bonusDollar;
+      // "Protect the old effective bid" can itself be the bug: if this placement's modifier was already set
+      // generously (55%/45% while its own CPC shows auctions were won for far less), protecting — then
+      // bonus-ing — that old effective bid just compounds the over-bid instead of fixing anything. Measured on
+      // a real campaign: CPC $1.88, old effective bid already $4.09, and this formula wanted to push it to
+      // $4.49 — more than double the going rate on 4 clicks of evidence. Cap at this placement's own CPC plus
+      // a margin, same anchor-to-reality principle the cut side already uses, so compensation can protect a
+      // placement from collateral damage without ever bidding it up past what it actually costs to win there.
+      const cpcCeiling = p.cpc>0 ? p.cpc*(1+st.floorCompCeilingPct/100) : Infinity;
+      const targetEff=Math.min(oldEffective+bonusDollar, cpcCeiling);
       const compPct=Math.max(0, Math.min(900, Math.round((targetEff/newBid-1)*100)));
       if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none'||p.action==='compensate') p.action='compensate'; }
     });
@@ -3199,6 +3210,7 @@ function renderOptPlacements(){
         <div class="field"><label>Bonus if beating goal by ≥ pts</label><input type="number" id="op-floorbonusgap" value="${st.floorBonusGap}" style="width:90px;"></div>
         <div class="field"><label>Bonus %</label><input type="number" id="op-floorbonuspct" value="${st.floorBonusPct}" style="width:90px;"></div>
         <div class="field"><label>...or min $ bonus</label><input type="number" step="0.01" id="op-floorbonusdollar" value="${st.floorBonusMinDollar}" style="width:90px;"></div>
+        <div class="field"><label>Cap compensation at CPC +%</label><input type="number" id="op-floorcompceil" value="${st.floorCompCeilingPct}" style="width:90px;" title="Protecting a good placement's old effective bid can itself overbid it, if that old modifier was already generous relative to what it actually costs to win there. Compensation (with bonus) never pushes the new effective bid past this placement's own CPC plus this margin."></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Raise by (points)</label><input type="number" id="op-raisestep" min="1" value="${st.raiseStep}" style="width:90px;" title="Added to a placement's % when its ACoS is at or under the goal. The threshold itself comes from the ACoS goal above — there is no separate 'increase if ACoS <' setting, which used to be a hardcoded 20 that quietly overrode the goal on accounts targeting less than that."></div>
@@ -3251,6 +3263,7 @@ function renderOptPlacements(){
   bind('op-floorbufferdollar','floorBufferMinDollar',v=>+v||0);
   bind('op-floorbonusgap','floorBonusGap',v=>+v||0); bind('op-floorbonuspct','floorBonusPct',v=>+v||0);
   bind('op-floorbonusdollar','floorBonusMinDollar',v=>+v||0);
+  bind('op-floorcompceil','floorCompCeilingPct',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
