@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-21 15:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-23 13:37</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2960,7 +2960,7 @@ function computePlacementOptRows(product, filters){
     // (A legacy "raise if ACoS < 20" branch used to sit here. It could only ever fire on accounts whose goal
     // was BELOW 20 — and then it raised placements that were above that goal, because the 20 was hardcoded
     // and silently outranked the setting. The goal-relative raise above covers every case it was meant to.)
-    return Object.assign({action,newPct,isSingle,ineffectiveFloor},e,d);
+    return Object.assign({action,newPct,isSingle,isStrictSingle:singleKw.has(e.campaignId),ineffectiveFloor},e,d);
   });
   // Compensation pass: a floor-bad placement (0%, bad performance) can't be fixed here, so the Bid Optimizer
   // will cut the shared bid instead. That bid cut also drags down every OTHER placement's effective bid
@@ -3144,7 +3144,12 @@ function renderOptPlacements(){
   // Single-keyword campaigns' placement suggestions are already bundled into their SP Bid Changes row above
   // (same underlying computation) — showing them here too invites doing the same export twice, so they're
   // hidden by default. Multi-keyword campaigns only ever get decrease suggestions, which live here exclusively.
-  let rows = st.hideSingleKw ? rowsAll.filter(r=>!r.isSingle) : rowsAll;
+  // Gated on STRICT single-keyword (one enabled target), not the broader "effectively single" (one keyword
+  // taking ~80%+ of clicks) that floorBidOverrides above uses — Bid Optimizer's own inline placement bundle
+  // (row.placementChanges) only fires for the strict case too. Using the broader flag here hid the compensate
+  // rows for a real 2-target AUTO campaign (dominant keyword at 87% share) from BOTH places at once — its Bid
+  // Optimizer row said "multi-kw — see below" while "below" was itself filtered out here, by default.
+  let rows = st.hideSingleKw ? rowsAll.filter(r=>!r.isStrictSingle) : rowsAll;
   // Stable identity (campaign + placement), not a positional index — same reasoning as Bid Optimizer above.
   rows.forEach(r=>r._uid=r.campaignId+'|'+r.rawPlacement);
   const sel=selFor('optplace');
