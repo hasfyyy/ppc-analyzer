@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-25 16:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-25 17:21</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -315,6 +315,18 @@ function refreshDateToken(text){
   const abbrUpper=m[1].toUpperCase();
   const lang=MONTH_ABBR.en.includes(abbrUpper)?'en':'ro';
   return text.slice(0,m.index)+currentMonthYearIn(lang)+text.slice(m.index+m[0].length);
+}
+// The copied suffix also carries the agent number of whoever built the original campaign — the segment right
+// before the month/year, e.g. the "19" in "MGM_B0DN2YNDNP_19_AUG26_Insiders®". Left alone, every campaign you
+// create inherits someone else's number and the Agent field above silently does nothing (it only applies when
+// no existing naming was found at all). Same treatment as the date: rewrite it to whoever is building now.
+function refreshAgentToken(text, agent){
+  const a=String(agent||'').trim();
+  if(!a) return text;
+  const re=/_(\d{1,3})_((?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|IAN|MAI|IUN|IUL|NOI)\d{2})(?!\d)/i;
+  const m=String(text||'').match(re);
+  if(!m) return text;
+  return text.slice(0,m.index)+'_'+a+'_'+m[2]+text.slice(m.index+m[0].length);
 }
 // Only matches campaigns using the given PREFIX (default BSQ = multi-keyword). Anchoring to the exact prefix
 // keeps this from picking up single-keyword conventions like SUP_EXACT when building multi-keyword ones (or vice versa).
@@ -560,7 +572,7 @@ function templateFor(cfg,match){
 function buildName(cfg,match,num){
   const tmpl=templateFor(cfg,match);
   if(tmpl){
-    const suffix=refreshDateToken(tmpl.suffix);
+    const suffix=refreshAgentToken(refreshDateToken(tmpl.suffix), cfg.agent);
     const first = (cfg.type==='pt'||cfg.type==='sd')? (num!=null? `${tmpl.prefix} ${num}` : String(tmpl.prefix)) : null;
     const parts = first!=null? [first] : [tmpl.prefix, num!=null? `${match}${num}` : match];
     parts.push(suffix);
@@ -667,8 +679,8 @@ function namingBannerHtml(cfg){
   if(cfg.ignoreNaming) return `Ignoring existing naming (checkbox below) — campaigns will use the manual fields below, regardless of what's already in this portfolio.`;
   const tmpl=templateFor(cfg,m);
   if(tmpl){
-    const suffix=refreshDateToken(tmpl.suffix);
-    return `Found existing naming in this portfolio: <b>${esc(tmpl.fullName)}</b> → campaigns will use <b>${esc(tmpl.prefix)}_${esc(m)}_…_${esc(suffix)}</b> (month/year refreshed to the current one, no duplicates).${matches.length>1?' Other checked match types are matched independently.':''}`;
+    const suffix=refreshAgentToken(refreshDateToken(tmpl.suffix), cfg.agent);
+    return `Found existing naming in this portfolio: <b>${esc(tmpl.fullName)}</b> → campaigns will use <b>${esc(tmpl.prefix)}_${esc(m)}_…_${esc(suffix)}</b> (month/year and your agent number refreshed, no duplicates).${matches.length>1?' Other checked match types are matched independently.':''}`;
   }
   return REF.campaigns.length? `No existing ${esc(m)} campaign with prefix "${esc(cfg.prefix)}" found in this portfolio — using the manual fields below.` : `No Reference Bulk loaded — using the manual fields below. Upload one (top of page) to copy naming from an existing campaign.`;
 }
@@ -900,7 +912,7 @@ function skwTemplate(cfg){
 function buildSkwName(cfg, keyword, template){
   const slug=slugifyKeyword(keyword);
   const sep=cfg.separator||'_';
-  if(template){ const suffix=refreshDateToken(template.suffix); return [cfg.prefix, cfg.matchType, slug, suffix].filter(x=>x!=='').join(sep); }
+  if(template){ const suffix=refreshAgentToken(refreshDateToken(template.suffix), cfg.agent); return [cfg.prefix, cfg.matchType, slug, suffix].filter(x=>x!=='').join(sep); }
   return [cfg.prefix, cfg.matchType, slug, cfg.tip, cfg.brand, cfg.asin, cfg.agent, cfg.monthyear, cfg.agency].map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(sep);
 }
 function skwIssues(cfg){
@@ -935,7 +947,7 @@ function buildSkwRows(cfg){
 }
 function skwNamingBannerHtml(cfg){
   const tmpl=skwTemplate(cfg);
-  if(tmpl){ const suffix=refreshDateToken(tmpl.suffix); return `Found existing naming in this portfolio: <b>${esc(tmpl.fullName)}</b> → campaigns will be <b>${esc(cfg.prefix)}_${esc(cfg.matchType)}_{keyword}_${esc(suffix)}</b> (month/year refreshed, no duplicates).`; }
+  if(tmpl){ const suffix=refreshAgentToken(refreshDateToken(tmpl.suffix), cfg.agent); return `Found existing naming in this portfolio: <b>${esc(tmpl.fullName)}</b> → campaigns will be <b>${esc(cfg.prefix)}_${esc(cfg.matchType)}_{keyword}_${esc(suffix)}</b> (month/year and your agent number refreshed, no duplicates).`; }
   return REF.campaigns.length? `No existing numbered ${esc(cfg.prefix)}_${esc(cfg.matchType)}_&lt;N&gt;_… campaign found in this portfolio to copy naming from — using the manual fields below (the keyword is always included regardless).` : `No Reference Bulk loaded — using the manual fields below (the keyword is always included regardless). Upload one (top of page) to copy naming from an existing campaign.`;
 }
 function renderSingleKw(){
