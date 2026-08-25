@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-23 14:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-25 16:50</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -585,7 +585,12 @@ const NUMERIC_COL_TYPES=['money','int','num','pct','acos','roas'];
 const FILTER_OPS={eq:(a,b)=>a===b, gt:(a,b)=>a>b, gte:(a,b)=>a>=b, lt:(a,b)=>a<b, lte:(a,b)=>a<=b};
 const FILTER_OP_LABEL={eq:'=', gt:'>', gte:'≥', lt:'<', lte:'≤'};
 function buildTable(opts){
-  const {columns, rows, tab, selectable, totals, idKey, sortDef, onChange} = opts;
+  const {columns, rows, tab, selectable, totals, idKey, sortDef, onChange:rawOnChange} = opts;
+  // Every tick of a checkbox re-renders the whole tab, which resets the scroll position to the top. On a long
+  // list that makes deselecting a handful of rows unusable — you get thrown back up the page after each click
+  // and have to scroll down to find your place again. Restoring the offset around the re-render is done here,
+  // once, so it holds for every table rather than each tab remembering to do it.
+  const onChange = rawOnChange ? ()=>{ const y=window.scrollY; rawOnChange(); window.scrollTo(0,y); } : null;
   const sort = sortFor(tab, sortDef);
   const colFilt = colFiltersFor(tab);
   let data = rows.slice();
@@ -981,10 +986,14 @@ function renderNegatives(product){
   const sel=selFor(tab);
   const tot=derive(totals);
   const cols=[
-    {key:'action',label:'Action',l:true,noSort:true,cell:r=>ASIN_RE.test(String(r.searchTerm||'').trim())?`<span class="badge neg" style="border-color:#f59e0b;color:#b45309;">Negative Product</span>`:`<span class="badge neg">Negative Exact</span>`},
-    {key:'searchTerm',label:'Search Term',l:true,type:'text'},
-    {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>esc(r.portfolioName||'(No Portfolio)')},
-    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'action',label:'Action',l:true,noSort:true,cell:r=>ASIN_RE.test(String(r.searchTerm||'').trim())?`<span class="badge neg" style="border-color:#f59e0b;color:#b45309;" title="Exported as a negative product target — this search term is an ASIN">Product</span>`:`<span class="badge neg" title="Exported as a negative exact keyword">Exact</span>`},
+    // Portfolio and campaign names in this account run 40-70 characters ("20. MGG | Magnesium Gummies |
+    // B0DNFS6R5T | budget 450"), and at full width they pushed every metric off the right edge — the columns
+    // you actually decide on. Clamped with an ellipsis and the full text on hover: the name only needs to be
+    // recognisable here, not complete.
+    {key:'searchTerm',label:'Search Term',l:true,type:'text',cell:r=>`<span style="display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(r.searchTerm||'')}">${esc(r.searchTerm||'')}</span>`},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>{const v=r.portfolioName||'(No Portfolio)';return `<span style="display:inline-block;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
+    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>{const v=r.campaignName||'';return `<span style="display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
     {key:'negated',label:'Already Negated',l:true,noSort:true,cell:r=>r.negated?'<span class="badge negd">Yes</span>':'—'},
     {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
@@ -998,8 +1007,9 @@ function renderNegatives(product){
     {key:'cpa',label:'CPA',type:'money',fmtTotal:t=>fMoney(derive(t).cpa)},
     {key:'spendPct',label:'Spend %',type:'pct',fmtTotal:()=>'100%'},
     {key:'salesPct',label:'Sales %',type:'pct',fmtTotal:()=>'100%'},
-    {key:'campaignId',label:'Campaign ID',l:true,type:'text'},
-    {key:'adGroupId',label:'Ad Group ID',l:true,type:'text'},
+    // Campaign ID and Ad Group ID used to sit here as columns. Nobody reads a 15-digit number off a screen —
+    // they exist for the export, which builds them from the row data regardless — and together they cost ~200px
+    // of width that pushed Spend/Sales/ACoS off the right edge, which is what this tab is actually for.
   ];
   const tbl=buildTable({columns:cols,rows:cand,tab,selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:()=>renderNegatives(product)});
   const spTip = product==='SP';
