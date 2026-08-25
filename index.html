@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-25 16:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-25 16:59</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -584,13 +584,24 @@ function passesSidebar(row){
 const NUMERIC_COL_TYPES=['money','int','num','pct','acos','roas'];
 const FILTER_OPS={eq:(a,b)=>a===b, gt:(a,b)=>a>b, gte:(a,b)=>a>=b, lt:(a,b)=>a<b, lte:(a,b)=>a<=b};
 const FILTER_OP_LABEL={eq:'=', gt:'>', gte:'≥', lt:'<', lte:'≤'};
+const TABLE_SCROLL={}; // per-tab scroll offset of the inner .tablewrap, preserved across re-renders
 function buildTable(opts){
   const {columns, rows, tab, selectable, totals, idKey, sortDef, onChange:rawOnChange} = opts;
   // Every tick of a checkbox re-renders the whole tab, which resets the scroll position to the top. On a long
   // list that makes deselecting a handful of rows unusable — you get thrown back up the page after each click
   // and have to scroll down to find your place again. Restoring the offset around the re-render is done here,
   // once, so it holds for every table rather than each tab remembering to do it.
-  const onChange = rawOnChange ? ()=>{ const y=window.scrollY; rawOnChange(); window.scrollTo(0,y); } : null;
+  // The page offset is only half of it: the table lives inside its own `.tablewrap` scroller (max-height 70vh,
+  // overflow auto), and a re-render throws that element away and builds a fresh one at scrollTop 0 — so on a
+  // long list you get dropped back to the first row after every single tick, plus back to the left-hand
+  // columns on a wide one. Both offsets are stashed per tab and restored by wire() once the new table exists.
+  const onChange = rawOnChange ? ()=>{
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    if(w) TABLE_SCROLL[tab]={top:w.scrollTop, left:w.scrollLeft};
+    rawOnChange();
+    window.scrollTo(0,y);
+  } : null;
   const sort = sortFor(tab, sortDef);
   const colFilt = colFiltersFor(tab);
   let data = rows.slice();
@@ -651,6 +662,9 @@ function buildTable(opts){
   if(!data.length) h+=`<tr><td colspan="${columns.length+(selectable?1:0)}" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No rows match the current filters.</td></tr>`;
   h+='</tbody></table></div>';
   return {html:h, wire(container){
+    const wrap=container.classList && container.classList.contains('tablewrap') ? container : container.querySelector('.tablewrap');
+    const keep=TABLE_SCROLL[tab];
+    if(wrap && keep){ wrap.scrollTop=keep.top; wrap.scrollLeft=keep.left; }
     container.querySelectorAll('th.sortable').forEach(th=>th.onclick=(e)=>{
       if(e.target.closest('.th-menu-btn')) return; // menu button handles its own click, below
       const k=th.dataset.sort;
