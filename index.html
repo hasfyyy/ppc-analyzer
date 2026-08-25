@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-25 16:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-25 17:21</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1009,7 +1009,6 @@ function renderNegatives(product){
     {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>{const v=r.portfolioName||'(No Portfolio)';return `<span style="display:inline-block;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
     {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>{const v=r.campaignName||'';return `<span style="display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
     {key:'negated',label:'Already Negated',l:true,noSort:true,cell:r=>r.negated?'<span class="badge negd">Yes</span>':'—'},
-    {key:'impressions',label:'Impr.',type:'int',fmtTotal:t=>fInt(t.impressions)},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
     {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
@@ -1017,10 +1016,7 @@ function renderNegatives(product){
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
     {key:'ctr',label:'CTR',type:'pct'},
     {key:'cvr',label:'CVR',type:'pct'},
-    {key:'cpc',label:'CPC',type:'money'},
-    {key:'cpa',label:'CPA',type:'money',fmtTotal:t=>fMoney(derive(t).cpa)},
     {key:'spendPct',label:'Spend %',type:'pct',fmtTotal:()=>'100%'},
-    {key:'salesPct',label:'Sales %',type:'pct',fmtTotal:()=>'100%'},
     // Campaign ID and Ad Group ID used to sit here as columns. Nobody reads a 15-digit number off a screen —
     // they exist for the export, which builds them from the row data regardless — and together they cost ~200px
     // of width that pushed Spend/Sales/ACoS off the right edge, which is what this tab is actually for.
@@ -1136,18 +1132,14 @@ function renderNgram(){
   const sel=selFor('ngram');
   const cols=[
     {key:'root',label:'N-gram',l:true,type:'text',sortVal:r=>r.root,cell:r=>`<span class="ng-root link" data-uid="${esc(r._uid)}">▸ ${esc(r.root)}</span>`},
-    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>{const v=r.portfolioName||'(No Portfolio)';return `<span style="display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
     {key:'negated',label:'Negated',l:true,noSort:true,cell:r=>r.allNegated?`<span class="badge nt" title="Already negated in every campaign this root came from — exporting it again would be rejected as a duplicate.">already negated</span>`:r.someNegated?`<span class="badge" style="background:#fef3e2;color:#c2760a;" title="Already negated in some, but not all, of the campaigns this root came from — export will skip the ones already covered.">partially</span>`:''},
-    {key:'impressions',label:'Impressions',type:'int'},
     {key:'clicks',label:'Clicks',type:'int'},
     {key:'spend',label:'Spend',type:'money'},
     {key:'orders',label:'Orders',type:'int'},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
-    {key:'ctr',label:'CTR %',type:'pct'},
-    {key:'cpc',label:'CPC',type:'money'},
     {key:'cvr',label:'CVR %',type:'pct'},
     {key:'acos',label:'ACOS %',type:'acos',cls:r=>acosClass(r.acos)},
-    {key:'roas',label:'ROAS',type:'roas'},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'ngram',selectable:true,idKey:'_uid',sortDef:{key:'spend',dir:-1},onChange:renderNgram});
   $('#app').innerHTML=`
