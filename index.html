@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-25 17:21</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-27 16:18</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2431,7 +2431,13 @@ function renderOptBids(){
     const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
     let action='none', newBid=t.bid, pct=null, reason=null;
     const floorOverride=floorBidOverrides[t.campaignId];
-    if(floorOverride){
+    // Computed off the campaign's DOMINANT target's bid (computePlacementOptRows already guards newBid against
+    // that one), but an Auto campaign's other targeting buckets (close-match/loose-match/substitutes/
+    // complements) each carry their OWN bid — one of those can already sit BELOW this campaign-wide newBid,
+    // in which case applying it here would silently RAISE that target's bid while still showing a "decrease"
+    // badge (the two minus signs — "↓ --24%" — are the tell). Only take the override if it's really a cut
+    // for THIS specific target too; otherwise fall through to its own normal tiered logic below.
+    if(floorOverride && floorOverride.newBid<t.bid){
       // A sibling placement is stuck at 0% and still bleeding — the Placement Optimizer already worked out
       // the CPC/ACoS-goal bid this campaign needs (see computePlacementOptRows) instead of guessing from
       // this keyword's own ACoS tier, which has nothing to do with what that specific placement costs.
