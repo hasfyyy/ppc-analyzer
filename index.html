@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:24</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:39</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3260,7 +3260,7 @@ function renderOptPlacements(){
   tbl.wire($('#op-table'));
   const upd=()=>renderOptPlacements();
   $('#op-acosgoal').oninput=debounce(()=>{st.acosGoal=+$('#op-acosgoal').value||20; renderOptPlacements();},350);
-  $('#op-raiseminord').oninput=debounce(()=>{st.raiseMinOrders=+$('#op-raiseminord').value||1; renderOptPlacements();},350);
+  const raiseMinOrdEl=$('#op-raiseminord'); if(raiseMinOrdEl) raiseMinOrdEl.oninput=debounce(()=>{st.raiseMinOrders=+raiseMinOrdEl.value||1; renderOptPlacements();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-raisestep','raiseStep',v=>+v||1);
   bind('op-pushclicks','pushClicks',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
