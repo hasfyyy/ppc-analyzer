@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:19</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2862,7 +2862,11 @@ function computePlacementOptRows(product, filters){
     const d=derive(e);
     const isSingle=singleKw.has(e.campaignId); // strictly single-keyword campaigns only — no "one keyword takes 80% of clicks" exception
     let action='none', newPct=e.percentage;
-    if(st.singleOnly && !isSingle) return Object.assign({action,newPct,isSingle,isStrictSingle:isSingle,ineffectiveFloor:false},e,d);
+    // Decreasing a multi-keyword placement is safe even when singleOnly is on — at worst it underbids a good
+    // keyword sharing it (bounded, you just save money). Raising/pushing is the risky direction (can pour
+    // spend into keywords that don't convert, hidden by the average), so singleOnly only gates THAT half —
+    // it never blocks the correction of a placement that's already been left bad.
+    const allowRaise = !st.singleOnly || isSingle;
     // Below zeroOrderClicks there isn't enough traffic yet to tell a slow starter from a dead end, so a
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
     // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
@@ -2920,7 +2924,7 @@ function computePlacementOptRows(product, filters){
       }
     } else if(cutPct!=null){
       action='floor-bad'; why=cutWhy;
-    } else if(e.placeType!=='business' && d.acos<=goal && (isSingle? e.orders>=1 : e.orders>=st.raiseMinOrders)){
+    } else if(allowRaise && e.placeType!=='business' && d.acos<=goal && (isSingle? e.orders>=1 : e.orders>=st.raiseMinOrders)){
       // Amazon Business is left out of raises deliberately — it's a separate audience with its own dynamics,
       // not one of the three placements this workflow steers.
       // Multi-keyword campaigns need more evidence than single-keyword ones before a raise. The asymmetry is
@@ -2929,14 +2933,14 @@ function computePlacementOptRows(product, filters){
       // (unbounded). One keyword's placement figures ARE that keyword's; an average across many hides how
       // unevenly it's distributed, so it has to clear a higher bar to be acted on.
       action='increase'; newPct=Math.min(900, e.percentage+st.raiseStep); why=`ACoS ${fAcos(d.acos)} at or under goal`;
-    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImprFor(e.campaignId) && e.percentage<st.pushCeiling){
+    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImprFor(e.campaignId) && e.percentage<st.pushCeiling){
       // The placement-level twin of the keyword "wake" rule: showing plenty and still buying nothing. With no
       // clicks there is no CPC to test the bid against, so the impression count has to carry the whole
       // argument — which is why it uses the CTR-derived floor rather than a fixed number. At a 0.7% CTR,
       // 4 impressions with no clicks is the expected outcome and says nothing; 842 of them is a real signal.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
       why=`${fInt(e.impressions)} impressions, no clicks`;
-    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage<st.pushCeiling && baseBid>0 && d.cpc>0 && baseBid*(1+e.percentage/100)<=d.cpc*1.05){
+    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage<st.pushCeiling && baseBid>0 && d.cpc>0 && baseBid*(1+e.percentage/100)<=d.cpc*1.05){
       // Only push when the bid is actually the binding constraint — i.e. the effective bid is at or below what
       // this placement's auctions really cost. If the effective bid already clears the CPC comfortably, more %
       // buys nothing: it isn't losing auctions on price, it simply isn't getting the volume, and pushing a
@@ -2948,7 +2952,7 @@ function computePlacementOptRows(product, filters){
       // stuck at the floor — the % isn't the thing holding it back, the auction volume is. Product Pages is
       // deliberately excluded — it's usually the placement doing the crowding-out, not the one needing help.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
-    } else if(st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage>=st.pushCeiling){
+    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage>=st.pushCeiling){
       // Already pushed past the ceiling and STILL can't buy clicks — more % clearly isn't the lever anymore.
       // No % change proposed (nothing to export here); flagged so it surfaces as "needs a bid review" instead
       // of silently repeating an ineffective push every week.
@@ -3195,7 +3199,7 @@ function renderOptPlacements(){
         ${!st.singleOnly?`<div class="field"><label>Raise needs orders (multi-kw)</label><input type="number" id="op-raiseminord" min="1" value="${st.raiseMinOrders}" style="width:110px;" title="How many orders a placement must have before a MULTI-keyword campaign's % is raised. Higher than the single-keyword bar (1) because the figure is an average across every keyword sharing that placement — a good average can hide keywords that don't convert, and raising the shared % scales spend on all of them."></div>`:''}
         <div class="hint" style="align-self:center;">Every tier below is a multiple of this, so one number retunes the whole ladder for the account: cut ${st.t1Cut}% above <b>${(st.acosGoal*st.t1Mult).toFixed(0)}%</b> (${st.t1Mult}×), ${st.t2Cut}% above <b>${(st.acosGoal*st.t2Mult).toFixed(0)}%</b> (${st.t2Mult}×), ${st.t3Cut}% above <b>${(st.acosGoal*st.t3Mult).toFixed(0)}%</b> (${st.t3Mult}×) — and raise by ${st.raiseStep}pp at or under <b>${st.acosGoal}%</b>.</div>
       </div>
-      <div class="hint" style="margin-bottom:10px;">${st.singleOnly? `Only single-keyword campaigns get placement suggestions here (see the checkbox below) — raises need just 1 order.` : `Raises apply to both campaign types, but a multi-keyword campaign needs ${st.raiseMinOrders}+ orders on the placement (a single-keyword one needs 1) — its % is shared, so a good average can still hide keywords that don't convert.`} Cuts aim at a <b>target effective bid</b> (this placement's own CPC minus the tier %), then act only on whatever gap is left — so a placement already brought down by a previous run or a manual edit produces no suggestion instead of being cut twice.${st.singleOnly?'':' Single-keyword campaigns use their real bid for that maths; multi-keyword ones scale the multiplier itself by the same percentage, since their keywords\' bids can differ many times over.'}</div>
+      <div class="hint" style="margin-bottom:10px;">${st.singleOnly? `Multi-keyword campaigns only get decreases here (raises/push are single-keyword only — see the checkbox below); single-keyword raises need just 1 order.` : `Raises apply to both campaign types, but a multi-keyword campaign needs ${st.raiseMinOrders}+ orders on the placement (a single-keyword one needs 1) — its % is shared, so a good average can still hide keywords that don't convert.`} Cuts aim at a <b>target effective bid</b> (this placement's own CPC minus the tier %), then act only on whatever gap is left — so a placement already brought down by a previous run or a manual edit produces no suggestion instead of being cut twice. Single-keyword campaigns use their real bid for that maths; multi-keyword ones scale the multiplier itself by the same percentage, since their keywords' bids can differ many times over.</div>
       <div class="hint" style="margin-bottom:8px;">Graduated decrease — the worse the ACoS, the bigger the cut. Uses the SAME Tier 1/2/3 as the Bid Optimizer tab (currently &gt;${bst.hi1}%→-${bst.dec1}pp, &gt;${bst.hi2}%→-${bst.dec2}pp, &gt;${bst.hi3}%→-${bst.dec3}pp) — edit them there, not here, so a placement and its own campaign's bid always agree on what counts as "bad".</div>
       <div class="hint" style="margin:12px 0 4px;"><b>Floor override</b> (single-keyword campaigns only) — when a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid entirely; instead the bid is set to (that placement's own CPC) minus whichever is BIGGER, the buffer % or the min $ (a % alone is a rounding error at a $0.50 CPC and overkill at a $4 one), and sibling placements at/below this goal get raised back to the old bid plus a bonus (again whichever is bigger, % or min $) once they're beating goal by a wide margin. Independent of the ACoS tiers above — tuning one doesn't affect the other.</div>
       <div class="ctrls">
@@ -3233,8 +3237,8 @@ function renderOptPlacements(){
         <div class="hint" style="align-self:center;">Their placement suggestions are already bundled into the SP Bid Changes row above — showing them here too just invites exporting the same change twice. Uncheck to review them here anyway.</div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-singleonly" ${st.singleOnly?'checked':''}> Only suggest placement changes for single-keyword campaigns</label>
-        <div class="hint" style="align-self:center;">A multi-keyword campaign's placement % is shared by every keyword in it, so one cut based on the AVERAGE can hurt a good keyword to punish a bad one. Leave this checked to skip multi-keyword campaigns here entirely and control them through the Bid Optimizer's per-keyword bids instead — uncheck to see (and export) multi-keyword suggestions again.</div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-singleonly" ${st.singleOnly?'checked':''}> Only raise/push placements for single-keyword campaigns</label>
+        <div class="hint" style="align-self:center;">A multi-keyword campaign's placement % is shared by every keyword in it, so raising it on a good AVERAGE can pour spend into keywords that don't convert — that risk is skipped here for multi-keyword campaigns (control those through the Bid Optimizer's per-keyword bids instead). Decreasing a bad placement stays on either way, since a cut on a bad average is safe — it only ever underbids a good keyword sharing it, never overspends.</div>
       </div>
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
