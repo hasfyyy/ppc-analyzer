@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2831,17 +2831,10 @@ function computePlacementOptRows(product, filters){
   // campaigns carry leftover keywords sitting at a high bid that win nothing — one here has a €1.08 keyword
   // with zero clicks next to a €0.42 one taking all 401. Anchoring the CPC maths to the highest bid would
   // compare a placement's real cost against a bid that never competed for it.
-  const dominantTargetByCamp=new Map(), campClicks={};
+  const dominantTargetByCamp=new Map();
   DATA.targets.forEach(t=>{ if(t.product!==product || t.state!=='enabled' || t.bid<=0) return;
-    campClicks[t.campaignId]=(campClicks[t.campaignId]||0)+t.clicks;
     const cur=dominantTargetByCamp.get(t.campaignId);
     if(!cur || t.clicks>cur.clicks || (t.clicks===cur.clicks && t.spend>cur.spend)) dominantTargetByCamp.set(t.campaignId, t); });
-  // A campaign with five keywords where one takes 90% of the clicks behaves like a single-keyword campaign,
-  // because in practice one bid is doing all the work — so it earns the precise CPC-target maths rather than
-  // the blunt proportional treatment meant for genuinely mixed campaigns. Requires real volume before the
-  // share means anything: 9 of 10 clicks is dominance, 9 of 10 is not.
-  if(st.effSingleShare===undefined) st.effSingleShare=80;
-  if(st.effSingleMinClicks===undefined) st.effSingleMinClicks=10;
   // Multi-keyword placements share one % across keywords whose ACoS can differ wildly (a "Catch ALL" campaign
   // mixing a 50%-ACoS bestseller with a 130%-ACoS dud both eat the same cut) — accounts that keep these
   // campaigns as a deliberate structure (not a mistake to fix) get real control from the Bid Optimizer's
@@ -2856,11 +2849,6 @@ function computePlacementOptRows(product, filters){
     const ctr=wakeCtrFor(campaignId, campCtrP, acctCtrP);
     return ctr>0 ? Math.ceil(st.placeWakeExpectedClicks/(ctr/100)) : 400;
   }
-  const effSingleKw=new Set(singleKw);
-  dominantTargetByCamp.forEach((t,cid)=>{
-    const tot=campClicks[cid]||0;
-    if(tot>=st.effSingleMinClicks && (t.clicks/tot)*100>=st.effSingleShare) effSingleKw.add(cid);
-  });
   let rowsRaw=DATA.placements.filter(p=>p.product===product && enabledCamps.has(p.campaignId));
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
   const byKey={};
@@ -2872,9 +2860,9 @@ function computePlacementOptRows(product, filters){
   });
   let allRows=Object.values(byKey).map(e=>{
     const d=derive(e);
-    const isSingle=effSingleKw.has(e.campaignId); // true single-keyword, or one keyword taking ~all the clicks
+    const isSingle=singleKw.has(e.campaignId); // strictly single-keyword campaigns only — no "one keyword takes 80% of clicks" exception
     let action='none', newPct=e.percentage;
-    if(st.singleOnly && !isSingle) return Object.assign({action,newPct,isSingle,isStrictSingle:singleKw.has(e.campaignId),ineffectiveFloor:false},e,d);
+    if(st.singleOnly && !isSingle) return Object.assign({action,newPct,isSingle,isStrictSingle:isSingle,ineffectiveFloor:false},e,d);
     // Below zeroOrderClicks there isn't enough traffic yet to tell a slow starter from a dead end, so a
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
     // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
@@ -2969,7 +2957,7 @@ function computePlacementOptRows(product, filters){
     // (A legacy "raise if ACoS < 20" branch used to sit here. It could only ever fire on accounts whose goal
     // was BELOW 20 — and then it raised placements that were above that goal, because the 20 was hardcoded
     // and silently outranked the setting. The goal-relative raise above covers every case it was meant to.)
-    return Object.assign({action,newPct,isSingle,isStrictSingle:singleKw.has(e.campaignId),ineffectiveFloor},e,d);
+    return Object.assign({action,newPct,isSingle,isStrictSingle:isSingle,ineffectiveFloor},e,d);
   });
   // Compensation pass: a floor-bad placement (0%, bad performance) can't be fixed here, so the Bid Optimizer
   // will cut the shared bid instead. That bid cut also drags down every OTHER placement's effective bid
