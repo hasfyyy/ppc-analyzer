@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-27 16:18</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2863,6 +2863,11 @@ function computePlacementOptRows(product, filters){
   // share means anything: 9 of 10 clicks is dominance, 9 of 10 is not.
   if(st.effSingleShare===undefined) st.effSingleShare=80;
   if(st.effSingleMinClicks===undefined) st.effSingleMinClicks=10;
+  // Multi-keyword placements share one % across keywords whose ACoS can differ wildly (a "Catch ALL" campaign
+  // mixing a 50%-ACoS bestseller with a 130%-ACoS dud both eat the same cut) — accounts that keep these
+  // campaigns as a deliberate structure (not a mistake to fix) get real control from the Bid Optimizer's
+  // per-keyword bids instead, so placement suggestions here are limited to single-keyword campaigns by default.
+  if(st.singleOnly===undefined) st.singleOnly=true;
   // Same CTR-derived floor the keyword-level wake uses, for the placement-level version of it below: how many
   // impressions it takes before zero clicks is surprising rather than routine.
   if(st.placeWakeExpectedClicks===undefined) st.placeWakeExpectedClicks=3;
@@ -2890,6 +2895,7 @@ function computePlacementOptRows(product, filters){
     const d=derive(e);
     const isSingle=effSingleKw.has(e.campaignId); // true single-keyword, or one keyword taking ~all the clicks
     let action='none', newPct=e.percentage;
+    if(st.singleOnly && !isSingle) return Object.assign({action,newPct,isSingle,isStrictSingle:singleKw.has(e.campaignId),ineffectiveFloor:false},e,d);
     // Below zeroOrderClicks there isn't enough traffic yet to tell a slow starter from a dead end, so a
     // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
     // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
@@ -3259,6 +3265,10 @@ function renderOptPlacements(){
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-hidesingle" ${st.hideSingleKw?'checked':''}> Hide single-keyword (SUP) campaigns here</label>
         <div class="hint" style="align-self:center;">Their placement suggestions are already bundled into the SP Bid Changes row above — showing them here too just invites exporting the same change twice. Uncheck to review them here anyway.</div>
       </div>
+      <div class="ctrls" style="margin-top:12px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-singleonly" ${st.singleOnly?'checked':''}> Only suggest placement changes for single-keyword campaigns</label>
+        <div class="hint" style="align-self:center;">A multi-keyword campaign's placement % is shared by every keyword in it, so one cut based on the AVERAGE can hurt a good keyword to punish a bad one. Leave this checked to skip multi-keyword campaigns here entirely and control them through the Bid Optimizer's per-keyword bids instead — uncheck to see (and export) multi-keyword suggestions again.</div>
+      </div>
       ${!rowsRaw.some(p=>p.impressions||p.clicks||p.spend)?`<div class="banner" style="margin-top:10px;">This bulk file has no placement-level performance metrics — nothing to optimize here. Export a bulk that includes performance data for the period you want (e.g. last 7 days) from the Amazon Ads console.</div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
@@ -3288,6 +3298,7 @@ function renderOptPlacements(){
   bind('op-floorcompceil','floorCompCeilingPct',v=>+v||0);
   $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
+  $('#op-singleonly').onchange=e=>{st.singleOnly=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#op-camp').oninput=debounce(()=>{st.camp=$('#op-camp').value; upd();},220);
   $('#op-export').onclick=()=>exportPlacementOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
