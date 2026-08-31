@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:19</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-08-31 12:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2476,9 +2476,15 @@ function renderOptBids(){
     // Priced out of the auction: a bid well under what this keyword actually costs, so it never even gets
     // shown enough to accumulate impressions. Checked before wake below — this graduated bump (bigger the
     // further under the going rate) is the more useful fix for THIS specific keyword than wake's flat step.
+    // underbidApplicable tracks whether THIS rule had anything to say about the keyword at all, independent of
+    // whether it actually acted (skipped as deliberate, skipped by the kw-count gate, or applied) — wake below
+    // must never re-examine a keyword underbid already ruled on, or a deliberately low bid gets skipped here
+    // only to have wake raise it anyway, and a kw-gated one gets listed twice ("would underbid" + "would wake").
+    let underbidApplicable=false;
     if(action==='none' && st.underbidEnabled && t.clicks===0){
       const ref=refFor(t);
       if(ref && ref.cpc>0 && t.bid < ref.cpc*0.7){
+        underbidApplicable=true;
         if(isDeliberateLowBid(t.campaignId)) underbidSkipped.push(Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t));
         else if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'underbid', campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc, newBid:null, kwCount:kwCounts[t.campaignId]||0}, t));
         else {
@@ -2498,7 +2504,7 @@ function renderOptBids(){
     // requires a minimum impression count first: a keyword sitting at 0 clicks / 0 impressions because its bid
     // is too low to win anything (but not low enough to trip underbid above) used to get no help at all —
     // now it gets the same flat bump as one that has impressions but still isn't converting into clicks.
-    if(action==='none' && st.wakeEnabled && t.clicks===0){
+    if(action==='none' && st.wakeEnabled && t.clicks===0 && !underbidApplicable){
       if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'wake', campCpc:null, refSrc:null, ratio:null, newBid:+(t.bid*(1+st.wakePct/100)).toFixed(2), kwCount:kwCounts[t.campaignId]||0}, t));
       else { action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=t.impressions>0?`${fInt(t.impressions)} impressions, 0 clicks`:`0 impressions, 0 clicks`; }
     }
