@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-02 18:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-02 18:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -606,6 +606,11 @@ function recomputeSkusFromChildren(cfg){
     skus.sort((a,b)=>(sales[b]||0)-(sales[a]||0));
     skus.length=topN;
   }
+  // Detection only sees a product if it has a live, dedicated (non-catchall, enabled) campaign somewhere in
+  // the account — a product only advertised via a catchall campaign, or one whose only dedicated campaign is
+  // paused, never appears here even if it's genuinely the portfolio's top seller. Extra SKUs are the manual
+  // escape hatch for exactly that case, added AFTER the Top-N trim so they're never cut by that limit.
+  linesOf(cfg.extraSkus).forEach(s=>{ if(s && !skus.includes(s)) skus.push(s); });
   cfg.skus=skus.join('\n');
 }
 function buildCampaignRows(cfg){
@@ -721,6 +726,10 @@ function renderCampaignCreate(){
           <div class="field grow" style="align-self:center;"><div class="hint">Ranks by Sales from your last imported bulk (Brand Table → Import) and keeps only the top performer(s) per checked product — useful when testing several SKU variations and narrowing down to the winner(s).</div></div>
         </div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
+      ${cfg.portfolioId? `<div style="margin-bottom:14px;">
+        <div class="field grow"><label>Extra SKUs (not auto-detected — one per line)</label><input type="text" id="cc-extrasku" placeholder="e.g. HEALTH-GUMMY-COLLA-60-2020" style="width:100%;"></div>
+        <div class="hint">A product only shows above if it has a live, dedicated campaign somewhere in the account — one only advertised via a catchall, or whose only dedicated campaign is paused, won't be detected even if it's the real top seller. Type its SKU here and press Enter to add it regardless. Current extras: ${linesOf(cfg.extraSkus).length? esc(linesOf(cfg.extraSkus).join(', ')) : '<span class="muted">none</span>'}${linesOf(cfg.extraSkus).length? ` <a href="#" id="cc-extrasku-clear" style="color:#dc2626;">clear</a>` : ''}</div>
+      </div>` : ''}
       <div class="ctrls" id="cc-matches" style="${cfg.type==='auto'?'display:none;':''}">
         <div class="field" id="cc-matchtypes-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'display:none;':''}"><label>Match types (one campaign each)</label>
           <div style="display:flex;gap:14px;height:32px;align-items:center;">
@@ -830,6 +839,20 @@ function renderCampaignCreate(){
     $('#cc-skus').value=cfg.skus;
     updateBuilderOutputs();
   },300);
+  const extraSkuEl=$('#cc-extrasku');
+  if(extraSkuEl) extraSkuEl.onkeydown=e=>{
+    if(e.key!=='Enter') return; e.preventDefault();
+    const v=extraSkuEl.value.trim(); if(!v) return;
+    cfg.extraSkus=(linesOf(cfg.extraSkus).concat([v])).join('\n');
+    recomputeSkusFromChildren(cfg);
+    renderCampaignCreate();
+  };
+  const extraSkuClearEl=$('#cc-extrasku-clear');
+  if(extraSkuClearEl) extraSkuClearEl.onclick=e=>{
+    e.preventDefault(); cfg.extraSkus='';
+    recomputeSkusFromChildren(cfg);
+    renderCampaignCreate();
+  };
   $('#cc-m-exact').onchange=e=>{ cfg.m_exact=e.target.checked; updateBuilderOutputs(); };
   // Phrase/Broad, unlike Exact, re-render the whole card — checking either toggles the "negate own
   // keywords" checkbox's visibility, which only exists in the full render, not the lightweight preview patch.
