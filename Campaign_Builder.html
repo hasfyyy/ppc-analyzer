@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-08-31 12:42</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-02 18:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -645,7 +645,11 @@ function buildCampaignRows(cfg){
       out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
       (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
       if(cfg.type==='auto'){
-        AUTO_GROUPS.forEach(g=>{ if(cfg[g.key]) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':g.expr})); });
+        // Amazon adds ALL FOUR auto targeting groups itself, enabled, at the ad group's default bid, for any
+        // group that has no Product Targeting row at all — omitting the unchecked groups here doesn't leave
+        // them off, it leaves Amazon free to turn them on. So an unchecked group still gets a row, just paused,
+        // to actually keep it off instead of silently reappearing.
+        AUTO_GROUPS.forEach(g=>{ out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':cfg[g.key]?'enabled':'paused','Bid':cfg.bid,'Product Targeting Expression':g.expr})); });
       } else if(cfg.type==='pt'){
         grp.forEach(asin=>{ const a=String(asin).trim().toUpperCase(); if(!a) return; const expr=cfg.ptExpanded?`asin-expanded="${a}"`:`asin="${a}"`; out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':expr})); });
       } else {
