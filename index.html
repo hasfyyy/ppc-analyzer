@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 17:41</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 17:52</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2541,7 +2541,10 @@ function renderOptBids(){
     const row=Object.assign({action,pct,newBid,reason,category},t,d);
     row.stale = isStale(t.campaignId);
     // Only the real, exportable placement moves — a 'floor-bad' entry has no percentage change to show.
-    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='stuck-high') : null;
+    // 'none' placements carry newPct===percentage (nothing suggested) — left in here they still rendered as
+    // "↑ 200%→200%" below (the arrow ternary defaults to ↑ for anything that isn't literally 'decrease'),
+    // showing a change that never happened next to every real one.
+    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='stuck-high' && p.action!=='none') : null;
     return row;
   }).filter(Boolean);
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
