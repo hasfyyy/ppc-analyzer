@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 18:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 18:19</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2192,7 +2192,12 @@ function scaleDecByPlacementCoverage(decPct, placements){
   // doesn't count as "handled", and forces the full base-bid cut since that's genuinely the only lever left.
   const hasFloorBad = placements.some(p=>p.action==='floor-bad' || p.ineffectiveFloor);
   if(hasFloorBad) return decPct;
-  const decreasedSpend = placements.filter(p=>p.action==='decrease' && !p.ineffectiveFloor).reduce((s,p)=>s+p.spend,0);
+  // alreadyAtTarget counts too, not just an active 'decrease' this run — it means THIS placement had a real
+  // ACoS problem (cutPct!=null) that a previous run (or a manual edit) already brought down to where a cut
+  // would land it. Only crediting the live 'decrease' rows meant a placement fixed last week stopped counting
+  // as "handled" the moment it stopped needing further action, so the bid took the FULL tier cut all over
+  // again on a problem that was mostly already solved on the placement side.
+  const decreasedSpend = placements.filter(p=>(p.action==='decrease' || p.alreadyAtTarget) && !p.ineffectiveFloor).reduce((s,p)=>s+p.spend,0);
   const totalSpend = placements.reduce((s,p)=>s+p.spend,0);
   const coverage = totalSpend>0 ? Math.min(1, decreasedSpend/totalSpend) : 0;
   // Once a placement fix already covers most of the campaign's spend, the leftover bid cut it scales down to
@@ -2993,7 +2998,7 @@ function computePlacementOptRows(product, filters){
     // (A legacy "raise if ACoS < 20" branch used to sit here. It could only ever fire on accounts whose goal
     // was BELOW 20 — and then it raised placements that were above that goal, because the 20 was hardcoded
     // and silently outranked the setting. The goal-relative raise above covers every case it was meant to.)
-    return Object.assign({action,newPct,isSingle,isStrictSingle:isSingle,ineffectiveFloor},e,d);
+    return Object.assign({action,newPct,isSingle,isStrictSingle:isSingle,ineffectiveFloor,alreadyAtTarget},e,d);
   });
   // Compensation pass: a floor-bad placement (0%, bad performance) can't be fixed here, so the Bid Optimizer
   // will cut the shared bid instead. That bid cut also drags down every OTHER placement's effective bid
