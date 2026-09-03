@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 17:52</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 18:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2195,6 +2195,10 @@ function scaleDecByPlacementCoverage(decPct, placements){
   const decreasedSpend = placements.filter(p=>p.action==='decrease' && !p.ineffectiveFloor).reduce((s,p)=>s+p.spend,0);
   const totalSpend = placements.reduce((s,p)=>s+p.spend,0);
   const coverage = totalSpend>0 ? Math.min(1, decreasedSpend/totalSpend) : 0;
+  // Once a placement fix already covers most of the campaign's spend, the leftover bid cut it scales down to
+  // is a 1-2 cent nudge on a $1 bid — not wrong, but not worth a suggestion either. Skip the bid entirely once
+  // the placement fix is handling the clear majority of the spend, instead of exporting a symbolic residual.
+  if(coverage>=0.8) return null;
   const scaled = +(decPct*(1-coverage)).toFixed(1);
   return scaled>0.05 ? scaled : null;
 }
