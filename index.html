@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-02 18:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-03 17:41</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -346,85 +346,96 @@ function fixSheetRange(ws){
   }
   if(maxR>=0) ws['!ref']=XLSX.utils.encode_range({s:{r:minR,c:minC},e:{r:maxR,c:maxC}});
 }
+function sheetProductFor(name){ return /brand/i.test(name)?'SB':(/display/i.test(name)?'SD':(/product/i.test(name)?'SP':null)); }
+// Split out of parseWorkbook's per-row loop so the SAME ingestion logic can run either over an in-memory
+// sheet_to_json() array (the normal path) or over rows streamed straight out of the zip one at a time for a
+// sheet too large to hold in memory at all (see streamParseHugeSheet below) — two very different sources
+// feeding one unchanged set of rules, instead of two parsers that could quietly drift apart.
+function campStatePassRow(row, c, campState){
+  const g=f=>c[f]!==undefined?row[c[f]]:'';
+  if(String(g('entity')||'').trim().toLowerCase()==='campaign'){
+    campState[String(g('campaignId')||'').trim()]=String(g('state')||'').trim().toLowerCase();
+  }
+}
+function ingestDataRow(row, c, sheetProduct, campState){
+  const g=f=>c[f]!==undefined?row[c[f]]:'';
+  const ent=String(g('entity')||'').trim().toLowerCase();
+  const product = c.product!==undefined ? detectProduct(g('product')) : (sheetProduct||'SP');
+  const campaignId=String(g('campaignId')||'').trim();
+  if(campaignId && campState[campaignId] && campState[campaignId]!=='enabled') return;
+  const adGroupId=String(g('adGroupId')||'').trim();
+  const st=String(g('searchTerm')||'').trim();
+  const met={ impressions:toNum(g('impressions')), clicks:toNum(g('clicks')), spend:toNum(g('spend')), sales:toNum(g('sales')), orders:toNum(g('orders')), units:toNum(g('units')) };
+
+  if(st && c.searchTerm!==undefined){
+    DATA.searchTerms.push(Object.assign({
+      product, campaignId, adGroupId,
+      campaignName:String(g('campaignName')||''), adGroupName:String(g('adGroupName')||''),
+      portfolioName:String(g('portfolioName')||''),
+      searchTerm:st, matchType:String(g('matchType')||'')
+    },met));
+    return;
+  }
+  if(ent==='campaign'){
+    const cn=String(g('campaignName')||'');
+    const bidStrat=String(g('biddingStrategy')||'');
+    DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
+    DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, budget:toNum(g('dailyBudget'))};
+  } else if(ent==='ad group'){
+    DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
+  } else if(ent==='product ad'){
+    const sku=String(g('sku')||''), asin=String(g('asin')||''), adId=String(g('adId')||'').trim();
+    const paState=String(g('state')||'').toLowerCase();
+    DATA.productAds.push(Object.assign({product,campaignId,adGroupId,adId,sku,asin,state:paState},met));
+    // Only ENABLED product ads feed a new campaign's SKU list — a paused/archived one may have gone
+    // ineligible (discontinued, suppressed listing) since it was turned off, and Amazon rejects it wholesale
+    // when Harvesting/Low ACOS Roots reuses the source campaign's SKUs to build a new campaign around it.
+    if(paState==='enabled') (DATA.skuByCampaign[campaignId]=DATA.skuByCampaign[campaignId]||[]).push({sku,asin});
+  } else if(ent==='keyword'){
+    DATA.targets.push(Object.assign({kind:'keyword',product,campaignId,adGroupId,id:String(g('keywordId')||''),text:String(g('keywordText')||''),matchType:String(g('matchType')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
+  } else if(ent==='product targeting'){
+    DATA.targets.push(Object.assign({kind:'target',product,campaignId,adGroupId,id:String(g('productTargetingId')||''),text:String(g('ptExpr')||''),matchType:String(g('ptExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
+  } else if(ent==='contextual targeting'||ent==='audience targeting'){
+    // Sponsored Display has no keyword-style targeting at all — both of its targeting types (contextual:
+    // product/category context, audience: remarketing/lifestyle audiences) use a Targeting ID + Targeting
+    // Expression pair that lines up with the same {kind:'target', id, text} shape product-targeting rows
+    // already use, so the rest of the Bid Optimizer machinery (built for keyword + PT) works unmodified.
+    // srcEntity is kept so a bid-update export writes back the SAME entity type it came from.
+    const srcEntity = ent==='contextual targeting'?'Contextual Targeting':'Audience Targeting';
+    DATA.targets.push(Object.assign({kind:'target',srcEntity,product,campaignId,adGroupId,id:String(g('targetingId')||''),text:String(g('targetingExpr')||''),matchType:String(g('targetingExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
+  } else if(ent.indexOf('negative')!==-1 && ent.indexOf('keyword')!==-1){
+    DATA.negatives.push({product,campaignId,adGroupId,text:String(g('keywordText')||'').trim().toLowerCase(),matchType:String(g('matchType')||''),scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
+  } else if(ent.indexOf('negative')!==-1 && ent.indexOf('product targeting')!==-1){
+    // "Negative Product Targeting" / "Campaign Negative Product Targeting" negates an ASIN, carried as
+    // asin="B0XXXXXXXX" in the PT Expression column, not Keyword Text. Missing this branch meant an
+    // already-negated ASIN kept showing up as a fresh Negatives candidate — isNegated() never saw it,
+    // since it only ever recorded entities with "keyword" in the name.
+    const m=String(g('ptExpr')||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i);
+    if(m) DATA.negatives.push({product,campaignId,adGroupId,text:m[1].toLowerCase(),matchType:'asin',scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
+  } else if(ent==='bidding adjustment'){
+    DATA.placements.push(Object.assign({product,campaignId,placement:String(g('placement')||''),percentage:toNum(g('percentage'))},met));
+  }
+}
+function ingestSheetJson(json, name){
+  if(!json.length) return;
+  const headers=Object.keys(json[0]); const c=colmap(headers);
+  if(c.entity===undefined && c.searchTerm===undefined && c.campaignId===undefined) return; // not a bulk sheet
+  const sheetProduct=sheetProductFor(name);
+  // Paused/archived campaigns are never touched by any optimizer tab, but their rows can dwarf the
+  // enabled ones in a mature account (seen: 3,397 paused vs 130 enabled campaigns, 90% of all rows).
+  // Dropping them here — before anything is pushed into DATA — keeps big accounts from blowing the
+  // browser's memory on a bulk upload, with zero effect on what any tab actually shows.
+  const campState={};
+  json.forEach(row=>campStatePassRow(row,c,campState));
+  json.forEach(row=>ingestDataRow(row,c,sheetProduct,campState));
+}
 function parseWorkbook(wb){
   Object.assign(DATA,{campaigns:[],adGroups:[],productAds:[],targets:[],searchTerms:[],negatives:[],placements:[],campById:{},skuByCampaign:{}});
   wb.SheetNames.forEach(name=>{
     const ws=wb.Sheets[name]; if(!ws) return;
     fixSheetRange(ws);
-    const json=XLSX.utils.sheet_to_json(ws,{defval:''}); if(!json.length) return;
-    const headers=Object.keys(json[0]); const c=colmap(headers);
-    if(c.entity===undefined && c.searchTerm===undefined && c.campaignId===undefined) return; // not a bulk sheet
-    const sheetProduct = /brand/i.test(name)?'SB':(/display/i.test(name)?'SD':(/product/i.test(name)?'SP':null));
-    // Paused/archived campaigns are never touched by any optimizer tab, but their rows can dwarf the
-    // enabled ones in a mature account (seen: 3,397 paused vs 130 enabled campaigns, 90% of all rows).
-    // Dropping them here — before anything is pushed into DATA — keeps big accounts from blowing the
-    // browser's memory on a bulk upload, with zero effect on what any tab actually shows.
-    const campState={};
-    json.forEach(row=>{
-      const g=f=>c[f]!==undefined?row[c[f]]:'';
-      if(String(g('entity')||'').trim().toLowerCase()==='campaign'){
-        campState[String(g('campaignId')||'').trim()]=String(g('state')||'').trim().toLowerCase();
-      }
-    });
-    json.forEach(row=>{
-      const g=f=>c[f]!==undefined?row[c[f]]:'';
-      const ent=String(g('entity')||'').trim().toLowerCase();
-      const product = c.product!==undefined ? detectProduct(g('product')) : (sheetProduct||'SP');
-      const campaignId=String(g('campaignId')||'').trim();
-      if(campaignId && campState[campaignId] && campState[campaignId]!=='enabled') return;
-      const adGroupId=String(g('adGroupId')||'').trim();
-      const st=String(g('searchTerm')||'').trim();
-      const met={ impressions:toNum(g('impressions')), clicks:toNum(g('clicks')), spend:toNum(g('spend')), sales:toNum(g('sales')), orders:toNum(g('orders')), units:toNum(g('units')) };
-
-      if(st && c.searchTerm!==undefined){
-        DATA.searchTerms.push(Object.assign({
-          product, campaignId, adGroupId,
-          campaignName:String(g('campaignName')||''), adGroupName:String(g('adGroupName')||''),
-          portfolioName:String(g('portfolioName')||''),
-          searchTerm:st, matchType:String(g('matchType')||'')
-        },met));
-        return;
-      }
-      if(ent==='campaign'){
-        const cn=String(g('campaignName')||'');
-        const bidStrat=String(g('biddingStrategy')||'');
-        DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
-        DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, budget:toNum(g('dailyBudget'))};
-      } else if(ent==='ad group'){
-        DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
-      } else if(ent==='product ad'){
-        const sku=String(g('sku')||''), asin=String(g('asin')||''), adId=String(g('adId')||'').trim();
-        const paState=String(g('state')||'').toLowerCase();
-        DATA.productAds.push(Object.assign({product,campaignId,adGroupId,adId,sku,asin,state:paState},met));
-        // Only ENABLED product ads feed a new campaign's SKU list — a paused/archived one may have gone
-        // ineligible (discontinued, suppressed listing) since it was turned off, and Amazon rejects it wholesale
-        // when Harvesting/Low ACOS Roots reuses the source campaign's SKUs to build a new campaign around it.
-        if(paState==='enabled') (DATA.skuByCampaign[campaignId]=DATA.skuByCampaign[campaignId]||[]).push({sku,asin});
-      } else if(ent==='keyword'){
-        DATA.targets.push(Object.assign({kind:'keyword',product,campaignId,adGroupId,id:String(g('keywordId')||''),text:String(g('keywordText')||''),matchType:String(g('matchType')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
-      } else if(ent==='product targeting'){
-        DATA.targets.push(Object.assign({kind:'target',product,campaignId,adGroupId,id:String(g('productTargetingId')||''),text:String(g('ptExpr')||''),matchType:String(g('ptExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
-      } else if(ent==='contextual targeting'||ent==='audience targeting'){
-        // Sponsored Display has no keyword-style targeting at all — both of its targeting types (contextual:
-        // product/category context, audience: remarketing/lifestyle audiences) use a Targeting ID + Targeting
-        // Expression pair that lines up with the same {kind:'target', id, text} shape product-targeting rows
-        // already use, so the rest of the Bid Optimizer machinery (built for keyword + PT) works unmodified.
-        // srcEntity is kept so a bid-update export writes back the SAME entity type it came from.
-        const srcEntity = ent==='contextual targeting'?'Contextual Targeting':'Audience Targeting';
-        DATA.targets.push(Object.assign({kind:'target',srcEntity,product,campaignId,adGroupId,id:String(g('targetingId')||''),text:String(g('targetingExpr')||''),matchType:String(g('targetingExpr')||'').toLowerCase(),state:String(g('state')||'').toLowerCase(),bid:toNum(g('bid'))},met));
-      } else if(ent.indexOf('negative')!==-1 && ent.indexOf('keyword')!==-1){
-        DATA.negatives.push({product,campaignId,adGroupId,text:String(g('keywordText')||'').trim().toLowerCase(),matchType:String(g('matchType')||''),scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
-      } else if(ent.indexOf('negative')!==-1 && ent.indexOf('product targeting')!==-1){
-        // "Negative Product Targeting" / "Campaign Negative Product Targeting" negates an ASIN, carried as
-        // asin="B0XXXXXXXX" in the PT Expression column, not Keyword Text. Missing this branch meant an
-        // already-negated ASIN kept showing up as a fresh Negatives candidate — isNegated() never saw it,
-        // since it only ever recorded entities with "keyword" in the name.
-        const m=String(g('ptExpr')||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i);
-        if(m) DATA.negatives.push({product,campaignId,adGroupId,text:m[1].toLowerCase(),matchType:'asin',scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
-      } else if(ent==='bidding adjustment'){
-        DATA.placements.push(Object.assign({product,campaignId,placement:String(g('placement')||''),percentage:toNum(g('percentage'))},met));
-      }
-    });
+    const json=XLSX.utils.sheet_to_json(ws,{defval:''});
+    ingestSheetJson(json, name);
   });
   // fill portfolio/campaign name on search terms from campaign map when missing
   DATA.searchTerms.forEach(s=>{
@@ -2513,13 +2524,16 @@ function renderOptBids(){
     // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
     // has proven it isn't the lever, so nudge the bid itself instead. Only the campaign's single highest-bid
     // target gets this (picked via topTargetByCamp), so a multi-keyword campaign doesn't get every keyword
-    // bumped for the same one stuck placement. A flat $ bump, not a %, since there's too little data here for
-    // a tier-based percentage to mean anything.
+    // bumped for the same one stuck placement. Sized off THIS target's own bid (% + a small $ floor for very
+    // cheap keywords), not the account's average CPC — a flat account-wide dollar figure meant for the
+    // account's expensive keywords landed as a 30%+ jump on a $1.49 one, which is what "too aggressive" meant
+    // here: the bump wasn't wrong to try, its SIZE just wasn't scaled to what it was actually bumping.
     if(action==='none'){
       const stuckPlacements=stuckHighByCamp.get(t.campaignId);
       const top=topTargetByCamp.get(t.campaignId);
       if(stuckPlacements && stuckPlacements.length && top && top.id===t.id){
-        action='stuck-bump'; newBid=+(t.bid+pst.stuckBumpDollar).toFixed(2);
+        const bump=Math.max(pst.stuckBumpMinDollar||0.02, +(t.bid*(pst.stuckBumpPct||10)/100).toFixed(2));
+        action='stuck-bump'; newBid=+(t.bid+bump).toFixed(2);
         reason=`${stuckPlacements.join(' & ')} stuck past ${pst.pushCeiling}% with too few clicks — testing a bid bump since % isn't working`;
       }
     }
@@ -2615,11 +2629,12 @@ function renderOptBids(){
       </div>
       <div class="hint" style="margin:12px 0 4px;" title="Single-keyword campaigns, shortcut — same settings as the Placement Optimizer tab. When a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid; instead the bid is set to (that placement's own CPC) × (1 − buffer%), and siblings at/below this goal get raised back to the old bid (plus a bonus if beating goal by a wide margin).">Floor override — hover for details.</div>
       <div class="ctrls">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;" title="Derives the two thresholds from the ACoS goal instead of leaving them to be typed in. They are coupled — the bonus test is (Floor Goal − ACoS) ≥ Bonus Gap — so setting Floor Goal by hand without adjusting the gap silently stops the bonus from ever firing. The dollar bump scales with this account's average CPC."><input type="checkbox" id="ob-floorauto" ${pst.floorAuto?'checked':''}> Auto from goal</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;" title="Derives the two thresholds from the ACoS goal instead of leaving them to be typed in. They are coupled — the bonus test is (Floor Goal − ACoS) ≥ Bonus Gap — so setting Floor Goal by hand without adjusting the gap silently stops the bonus from ever firing."><input type="checkbox" id="ob-floorauto" ${pst.floorAuto?'checked':''}> Auto from goal</label>
         <div class="field"><label>Floor ACoS Goal %</label><input type="number" id="ob-floorgoal" value="${pst.floorGoal}" style="width:90px;" ${pst.floorAuto?'disabled':''}></div>
         <div class="field"><label>Bonus if beating by ≥pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;" ${pst.floorAuto?'disabled':''}></div>
-        <div class="field"><label>Stuck placement bump $</label><input type="number" step="0.01" id="ob-stuckbump" value="${pst.stuckBumpDollar}" style="width:90px;" ${pst.floorAuto?'disabled':''} title="A campaign's highest-bid keyword/target gets bumped by this much when one of its placements is stuck past the push ceiling with too few clicks — % has already proven it isn't the lever there."></div>
-        <div class="hint" style="align-self:center;">${pst.floorAuto?`Protects placements at or under <b>${pst.floorGoal}%</b> (tier 1), rewards those at or under <b>${pst.acosGoal}%</b> (the goal), bump scaled to this account's CPC.`:'Manual — remember the bonus fires only when (Floor Goal − ACoS) ≥ Bonus Gap.'}</div>
+        <div class="field"><label>Stuck placement bump %</label><input type="number" step="0.5" id="ob-stuckbumppct" value="${pst.stuckBumpPct}" style="width:80px;" title="A campaign's highest-bid keyword/target gets bumped by this % of ITS OWN bid when one of its placements is stuck past the push ceiling with too few clicks — % has already proven it isn't the lever there. Scaled to the target's own bid, not the account average, so a cheap keyword doesn't get a bump sized for an expensive one."></div>
+        <div class="field"><label>...or min $</label><input type="number" step="0.01" id="ob-stuckbumpdollar" value="${pst.stuckBumpMinDollar}" style="width:80px;" title="Whichever is BIGGER, the % or this — a % alone is a rounding error on a very cheap bid."></div>
+        <div class="hint" style="align-self:center;">${pst.floorAuto?`Protects placements at or under <b>${pst.floorGoal}%</b> (tier 1), rewards those at or under <b>${pst.acosGoal}%</b> (the goal).`:'Manual — remember the bonus fires only when (Floor Goal − ACoS) ≥ Bonus Gap.'}</div>
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <div class="field"><label>Buffer % under CPC</label><input type="number" id="ob-floorbuffer" value="${pst.floorBuffer}" style="width:90px;"></div>
@@ -2715,7 +2730,8 @@ function renderOptBids(){
   bindPst('ob-floorbonusgap','floorBonusGap',v=>+v||0); bindPst('ob-floorbonuspct','floorBonusPct',v=>+v||0);
   bindPst('ob-floorbonusdollar','floorBonusMinDollar',v=>+v||0);
   bindPst('ob-floorcompceil','floorCompCeilingPct',v=>+v||0);
-  bindPst('ob-stuckbump','stuckBumpDollar',v=>+v||0);
+  bindPst('ob-stuckbumppct','stuckBumpPct',v=>+v||0);
+  bindPst('ob-stuckbumpdollar','stuckBumpMinDollar',v=>+v||0);
   $('#ob-floorauto').onchange=e=>{ pst.floorAuto=e.target.checked; renderOptBids(); };
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
@@ -2809,7 +2825,8 @@ function computePlacementOptRows(product, filters){
   // just single-keyword, since it never touches the shared bid, only that placement's own %.
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushClicks===undefined) st.pushClicks=5; if(st.pushStep===undefined) st.pushStep=10;
   if(st.pushCeiling===undefined) st.pushCeiling=300;
-  if(st.stuckBumpDollar===undefined) st.stuckBumpDollar=0.10;
+  if(st.stuckBumpPct===undefined) st.stuckBumpPct=10;
+  if(st.stuckBumpMinDollar===undefined) st.stuckBumpMinDollar=0.02;
   // 0 orders has no ACoS to grade against, so it runs on its own click-based ladder — same graduated shape,
   // mirroring the Bid Optimizer's own 0-order tiers one axis over (clicks instead of ACoS).
   if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
@@ -3003,14 +3020,10 @@ function computePlacementOptRows(product, filters){
   // negative ACoS and it stopped firing entirely. Derived together they stay coherent:
   //   protect what is not bad enough to cut  → floorGoal = the tier-1 threshold
   //   reward what is actually meeting target → bonus when acos <= the goal itself
-  // The dollar bump has the same fixed-number problem the wake threshold had — 10 cents is half the bid on a
-  // €0.20 CPC account and a rounding error on a €3 one — so it scales with what this account's clicks cost.
   if(st.floorAuto===undefined) st.floorAuto=true;
   if(st.floorAuto){
     st.floorGoal=Math.round(st.acosGoal*st.t1Mult);
     st.floorBonusGap=Math.max(1, Math.round(st.floorGoal-st.acosGoal));
-    const acctCpcF=derive(agg(DATA.campaigns.filter(c=>c.product===product))).cpc;
-    if(acctCpcF>0) st.stuckBumpDollar=+Math.max(0.02, acctCpcF*0.2).toFixed(2);
   }
   // A pure % cut/bonus falls apart at the extremes: 15% off a $0.50 CPC is a $0.075 nudge (meaningless —
   // won't change what auctions get won), while a flat $ amount big enough to matter there would be a
