@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 11:22</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -869,11 +869,21 @@ function renderOverview(){
   $('#ov-dl').onclick=()=>exportCSV(cols.filter(c=>c.key!=='name'? true:true), rows, 'overview_'+st.group);
 }
 function updateOverview(){ renderOverview(); }
-function portOptions(sel){
+function allPortfolioNames(){
   const set=new Set(); DATA.campaigns.forEach(c=>set.add(c.portfolioName||'(No Portfolio)'));
   DATA.targets.forEach(t=>set.add(t.portfolioName||'(No Portfolio)'));
-  const arr=[...set].filter(Boolean).sort();
+  return [...set].filter(Boolean).sort();
+}
+function portOptions(sel){
+  const arr=allPortfolioNames();
   return `<option value="">All Portfolios</option>`+arr.map(p=>`<option value="${esc(p)}" ${sel===p?'selected':''}>${esc(p)}</option>`).join('');
+}
+// Multi-select "hide these portfolios" list — for a view that wants everything EXCEPT a couple of noisy
+// portfolios (a test/catchall one, say), picking that from a single-select "include only this one" dropdown
+// means re-selecting it from a checklist every time; this lets those stay excluded while everything else shows.
+function portExcludeOptions(selArr){
+  const arr=allPortfolioNames(); const sel=new Set(selArr||[]);
+  return arr.map(p=>`<option value="${esc(p)}" ${sel.has(p)?'selected':''}>${esc(p)}</option>`).join('');
 }
 function campOptions(sel,product){
   const set=new Set(); DATA.campaigns.forEach(c=>{ if(!product||c.product===product) set.add(c.campaignName); });
@@ -892,8 +902,10 @@ function placeName(pl){ const s=(pl||'').toLowerCase(); if(s.includes('business'
 function placeType(pl){ const s=(pl||'').toLowerCase(); if(s.includes('business')) return 'business'; if(s.includes('top')) return 'top'; if(s.includes('product')||s.includes('detail')) return 'pp'; if(s.includes('rest')||s.includes('other')||s.includes('remaining')) return 'rest'; return null; }
 function renderPlacement(){
   const st=stFor('placement');
+  if(st.excludePorts===undefined) st.excludePorts=[];
   let rowsRaw=DATA.placements.filter(p=>p.product===S.product);
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
+  if(st.excludePorts.length) rowsRaw=rowsRaw.filter(p=>!st.excludePorts.includes(p.portfolioName||'(No Portfolio)'));
   const hasMetrics = rowsRaw.some(p=>p.impressions||p.clicks||p.spend);
   const totals=agg(rowsRaw);
   // summary by placement
@@ -920,7 +932,9 @@ function renderPlacement(){
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Placement Summary</h3>
         <div class="field"><label>Filter by Portfolio</label><select id="pl-port">${portOptions(st.port)}</select></div>
+        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click for more than one)</label><select id="pl-portexclude" multiple size="5" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
         <div class="spacer"></div><button class="btn ghost" id="pl-dl">Download</button></div>
+      ${st.excludePorts.length?`<div class="hint" style="margin-bottom:8px;">Hiding ${st.excludePorts.length} portfolio(s): ${esc(st.excludePorts.join(', '))} <a href="#" id="pl-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
       ${!hasMetrics?`<div class="banner">This bulk file has no placement-level performance metrics — showing configured bid adjustments only. For placement performance, download a Placement report from the Amazon Ads console.</div>`:''}
       ${rowsRaw.length? `<div id="pl-table">${tbl.html}</div>` :'<div class="empty"><div class="ic"></div><p>No bidding adjustment / placement rows found in this file.</p></div>'}
     </div>
@@ -929,6 +943,8 @@ function renderPlacement(){
       <div id="pl-camp">${camptbl.html}</div>
     </div>`:''}`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacement();};
+  const plExcl=$('#pl-portexclude'); if(plExcl) plExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); renderPlacement(); };
+  const plExclClear=$('#pl-portexclude-clear'); if(plExclClear) plExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; renderPlacement(); };
   if(rowsRaw.length){ tbl.wire($('#pl-table')); camptbl.wire($('#pl-camp')); $('#pl-dl').onclick=()=>exportCSV(cols,rows,'placement_summary'); $('#pl-dl2').onclick=()=>exportCSV(campCols,campRows,'placement_by_campaign'); }
 }
 
