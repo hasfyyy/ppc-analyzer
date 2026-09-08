@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1846,7 +1846,16 @@ function renderKwCheck(){
   const selAllExactBtn=$('#kw-selall-exact'); if(selAllExactBtn) selAllExactBtn.onclick=toggleAllFor('inExact','EXACT');
   const selAllPhraseBtn=$('#kw-selall-phrase'); if(selAllPhraseBtn) selAllPhraseBtn.onclick=toggleAllFor('inPhrase','PHRASE');
   const selAllBroadBtn=$('#kw-selall-broad'); if(selAllBroadBtn) selAllBroadBtn.onclick=toggleAllFor('inBroad','BROAD');
-  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const k=t.dataset.tog; sel.has(k)?sel.delete(k):sel.add(k); const y=window.scrollY; renderKwCheck(); window.scrollTo(0,y); });
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{
+    const k=t.dataset.tog; sel.has(k)?sel.delete(k):sel.add(k);
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    const keep=w?{top:w.scrollTop,left:w.scrollLeft}:null;
+    renderKwCheck();
+    window.scrollTo(0,y);
+    const w2=document.querySelector('.tablewrap');
+    if(w2 && keep){ w2.scrollTop=keep.top; w2.scrollLeft=keep.left; }
+  });
   const lp=$('#kw-lprefix'); if(lp) lp.oninput=debounce(()=>{ st.lPrefix=lp.value; renderKwCheck(); },300);
   const lc=$('#kw-lcount'); if(lc) lc.oninput=debounce(()=>{ st.lCount=+lc.value||1; renderKwCheck(); },250);
   const lb=$('#kw-lbid'); if(lb) lb.oninput=debounce(()=>{ st.lBid=lb.value; },300);
