@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:07</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1862,6 +1862,14 @@ function exportKwCheckCampaigns(byMatch, portfolioName, settings){
   const skus=skusForPortfolio(portfolioName, settings.topSkus||0);
   if(!skus.length){ alert('No SKUs found for this portfolio — add products to it first.'); return; }
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
+  // Resolved from the portfolio NAME (that's all this launch panel has) by finding any existing campaign
+  // already in it and reusing its real Portfolio ID — same lookup Harvesting/Low ACOS Roots use. Missing
+  // this meant every campaign created here landed in "(no portfolio)" regardless of which one was picked.
+  const portfolioId=(()=>{
+    if(!portfolioName || portfolioName==='(No Portfolio)') return '';
+    const c=DATA.campaigns.find(c=>(c.portfolioName||'(No Portfolio)')===portfolioName && c.portfolioId);
+    return c? c.portfolioId : '';
+  })();
   const out=[]; let totalCamps=0;
   const perKwBid = ()=> settings.bidOverride || 0.75;
   const matchTypeCount=Object.keys(byMatch).length;
@@ -1894,7 +1902,9 @@ function exportKwCheckCampaigns(byMatch, portfolioName, settings){
     const realGroups=[]; for(let i=0;i<kws.length;i+=perCampaign) realGroups.push(kws.slice(i,i+perCampaign));
     realGroups.forEach(g=>{
       const cname=nextFreeName(); const agname=cname;
-      out.push(bulkRow({'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'}));
+      const campRow={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'};
+      if(portfolioId) campRow['Portfolio ID']=portfolioId;
+      out.push(bulkRow(campRow));
       out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':perKwBid()}));
       skus.forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
       g.forEach(kw=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':kw,'Match Type':matchTypeCap,'Bid':perKwBid()})));
