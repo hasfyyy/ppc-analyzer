@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 09:56</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1762,6 +1762,13 @@ function renderKwCheck(){
   }
   results.forEach((r,i)=>r._uid='kw'+i);
   const sel=selFor('kwcheck'); // keys are "keyword|MATCHTYPE" — only missing (NO) combos are selectable
+  // Missing-only, and only among what's currently on screen — with an empty results list every match type
+  // trivially has "all" (zero) missing rows selected, which would show a pointless "Deselect all" on a blank
+  // page, so this only reports true once there's at least one real missing row to toggle.
+  const allMissingSelected=(flagKey,matchType)=>{
+    const missing=results.filter(r=>!r[flagKey]);
+    return missing.length>0 && missing.every(r=>sel.has(r.keyword+'|'+matchType));
+  };
   const missBadge=(r, key, matchType)=>{
     if(r[key]) return '<span class="badge tg">YES</span>';
     const k=r.keyword+'|'+matchType; const isSel=sel.has(k);
@@ -1790,7 +1797,11 @@ function renderKwCheck(){
       <textarea class="kwbox" id="kw-text" placeholder="Enter keywords to check (one per line)&#10;&#10;Example:&#10;wireless headphones&#10;bluetooth speaker&#10;phone charger">${esc(st.text||'')}</textarea></div>
       <div class="countnote" style="margin-top:6px;">${kws.length} keyword(s) entered · Searching across ${fInt(src.length)} ${S.product} search term records</div>
     </div>
-    ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div><button class="btn ghost" id="kw-selall">Select all missing</button><button class="btn ghost" id="kw-selnone">Deselect all</button><button class="btn ghost" id="kw-dl">Download</button></div>
+    ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div>
+      <button class="btn ghost" id="kw-selall-exact">${allMissingSelected('inExact','EXACT')?'Deselect all Exact':'Select all missing Exact'}</button>
+      <button class="btn ghost" id="kw-selall-phrase">${allMissingSelected('inPhrase','PHRASE')?'Deselect all Phrase':'Select all missing Phrase'}</button>
+      <button class="btn ghost" id="kw-selall-broad">${allMissingSelected('inBroad','BROAD')?'Deselect all Broad':'Select all missing Broad'}</button>
+      <button class="btn ghost" id="kw-dl">Download</button></div>
       <div class="hint" style="margin:0 0 8px;">Click a red "NO" badge (Exact/Phrase/Broad) to select that keyword for launch in that match type — click again to deselect.</div>
       <div id="kw-table">${tbl.html}</div></div>`:''}
     ${sel.size?`<div class="card pad">
@@ -1820,15 +1831,18 @@ function renderKwCheck(){
   $('#kw-port').onchange=e=>{st.port=e.target.value; renderKwCheck();};
   $('#kw-clear').onclick=()=>{st.text=''; renderKwCheck();};
   if(tbl){ tbl.wire($('#kw-table')); $('#kw-dl').onclick=()=>exportCSV(cols,results,'keyword_check'); }
-  const selAllBtn=$('#kw-selall'); if(selAllBtn) selAllBtn.onclick=()=>{
+  const toggleAllFor=(flagKey,matchType)=>()=>{
+    const turnOff=allMissingSelected(flagKey,matchType);
     results.forEach(r=>{
-      if(!r.inExact) sel.add(r.keyword+'|EXACT');
-      if(!r.inPhrase) sel.add(r.keyword+'|PHRASE');
-      if(!r.inBroad) sel.add(r.keyword+'|BROAD');
+      if(r[flagKey]) return;
+      const k=r.keyword+'|'+matchType;
+      if(turnOff) sel.delete(k); else sel.add(k);
     });
     renderKwCheck();
   };
-  const selNoneBtn=$('#kw-selnone'); if(selNoneBtn) selNoneBtn.onclick=()=>{ sel.clear(); renderKwCheck(); };
+  const selAllExactBtn=$('#kw-selall-exact'); if(selAllExactBtn) selAllExactBtn.onclick=toggleAllFor('inExact','EXACT');
+  const selAllPhraseBtn=$('#kw-selall-phrase'); if(selAllPhraseBtn) selAllPhraseBtn.onclick=toggleAllFor('inPhrase','PHRASE');
+  const selAllBroadBtn=$('#kw-selall-broad'); if(selAllBroadBtn) selAllBroadBtn.onclick=toggleAllFor('inBroad','BROAD');
   document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const k=t.dataset.tog; sel.has(k)?sel.delete(k):sel.add(k); const y=window.scrollY; renderKwCheck(); window.scrollTo(0,y); });
   const lp=$('#kw-lprefix'); if(lp) lp.oninput=debounce(()=>{ st.lPrefix=lp.value; renderKwCheck(); },300);
   const lc=$('#kw-lcount'); if(lc) lc.oninput=debounce(()=>{ st.lCount=+lc.value||1; renderKwCheck(); },250);
