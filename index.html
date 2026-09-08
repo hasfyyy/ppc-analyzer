@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:07</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 10:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1736,6 +1736,7 @@ function renderKwCheck(){
   if(st.lPrefix===undefined) st.lPrefix='BSQ'; if(st.lCount===undefined) st.lCount=1; if(st.lBid===undefined) st.lBid='';
   if(st.lIgnoreNaming===undefined) st.lIgnoreNaming=false; if(st.lManualName===undefined) st.lManualName='';
   if(st.lTopSkus===undefined) st.lTopSkus=2;
+  if(st.lSkuOverride===undefined) st.lSkuOverride='';
   const src=stByToggle().filter(s=>!st.port || (s.portfolioName||'(No Portfolio)')===st.port);
   const kws=(st.text||'').split('\n').map(x=>x.trim()).filter(Boolean);
   // Exact/Phrase/Broad here must answer "is this an actual KEYWORD TARGET (in this portfolio)", not "does it
@@ -1789,7 +1790,8 @@ function renderKwCheck(){
   const tbl=results.length?buildTable({columns:cols,rows:results,tab:'kwcheck',sortDef:{key:'count',dir:-1},onChange:renderKwCheck}):null;
   const byMatch={}; sel.forEach(k=>{ const i=k.lastIndexOf('|'); const mt=k.slice(i+1); (byMatch[mt]=byMatch[mt]||[]).push(k.slice(0,i)); });
   const matchTypesSel=Object.keys(byMatch);
-  const skuPreview = st.port? skusForPortfolio(st.port, +st.lTopSkus||0) : [];
+  const skuOverrideList=(st.lSkuOverride||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  const skuPreview = skuOverrideList.length ? skuOverrideList : (st.port? skusForPortfolio(st.port, +st.lTopSkus||0) : []);
   $('#app').innerHTML=`
     <div class="card pad">
       <div class="rowbar"><div class="field"><label>Portfolio</label><select id="kw-port">${portOptions(st.port)}</select></div><div class="spacer"></div><button class="btn ghost" id="kw-clear">Clear</button></div>
@@ -1821,7 +1823,8 @@ function renderKwCheck(){
       <div class="hint" style="margin-top:8px;">${st.lIgnoreNaming
         ? `Using your custom name as the base${matchTypesSel.length>1?' (match type appended to keep each campaign unique)':''} — no auto-detected naming applied.`
         : matchTypesSel.map(mt=>{ const t=detectNamingTemplate(st.port, mt, 'SP', st.lPrefix); return t? `Found existing naming for <b>${esc(mt)}</b> in this portfolio: <b>${esc(t.fullName)}</b> → next will be <b>${esc(t.prefix)}_${esc(mt)} ${t.num+1}_${esc(refreshDateToken(t.suffix))}</b>.` : `No existing <b>${esc(mt)}</b> campaign found in "${esc(st.port)}" to copy naming from — will fall back to <b>KWCHK_${esc(mt)} 1, 2, …</b>.`; }).join('<br>')}</div>
-      <div class="hint" style="margin-top:4px;">${(+st.lTopSkus>0)?`Top ${st.lTopSkus} SKU(s) by sales`:'SKUs'} pulled from campaigns already in "${esc(st.port)}": ${skuPreview.length? esc(skuPreview.join(', ')) : '<span style="color:#dc2626;">none found — add products to this portfolio first.</span>'}</div>
+      <div class="field grow" style="margin-top:8px;"><label>SKUs to advertise (override — one per line, leave blank to auto-detect)</label><textarea class="kwbox" id="kw-lskus" style="min-height:60px;" placeholder="SKU-001&#10;SKU-002">${esc(st.lSkuOverride)}</textarea></div>
+      <div class="hint" style="margin-top:4px;">${skuOverrideList.length? `Using your ${skuOverrideList.length} manually entered SKU(s), not auto-detection.` : `${(+st.lTopSkus>0)?`Top ${st.lTopSkus} SKU(s) by sales`:'SKUs'} auto-detected from campaigns already in "${esc(st.port)}": ${skuPreview.length? esc(skuPreview.join(', ')) : '<span style="color:#dc2626;">none found — add products to this portfolio first, or type SKUs manually above.</span>'}`}</div>
       <div class="rowbar"><div class="spacer"></div>
         <button class="btn ghost" id="kw-copy" title="Copies the selected keyword(s) grouped by match type, one per line — paste into Campaign Builder or Amazon's own 'Add keywords' box to launch them yourself instead of the automatic bulk export.">Copy selected</button>
         <button class="btn grad" id="kw-launch" ${skuPreview.length?'':'disabled'}>Create campaigns</button>
@@ -1850,7 +1853,8 @@ function renderKwCheck(){
   const li=$('#kw-lignore'); if(li) li.onchange=e=>{ st.lIgnoreNaming=e.target.checked; renderKwCheck(); };
   const ln=$('#kw-lname'); if(ln) ln.oninput=debounce(()=>{ st.lManualName=ln.value; renderKwCheck(); },300);
   const lt=$('#kw-ltopskus'); if(lt) lt.oninput=debounce(()=>{ st.lTopSkus=+lt.value||0; renderKwCheck(); },250);
-  const launchBtn=$('#kw-launch'); if(launchBtn) launchBtn.onclick=()=>exportKwCheckCampaigns(byMatch, st.port, {prefix:st.lPrefix, numPerGroup:st.lCount, bidOverride: st.lBid?+st.lBid:null, ignoreNaming:st.lIgnoreNaming, manualName:st.lManualName, topSkus:+st.lTopSkus||0});
+  const lsk=$('#kw-lskus'); if(lsk) lsk.oninput=debounce(()=>{ st.lSkuOverride=lsk.value; renderKwCheck(); },300);
+  const launchBtn=$('#kw-launch'); if(launchBtn) launchBtn.onclick=()=>exportKwCheckCampaigns(byMatch, st.port, {prefix:st.lPrefix, numPerGroup:st.lCount, bidOverride: st.lBid?+st.lBid:null, ignoreNaming:st.lIgnoreNaming, manualName:st.lManualName, topSkus:+st.lTopSkus||0, skuOverride:skuOverrideList});
   const copyBtn=$('#kw-copy'); if(copyBtn) copyBtn.onclick=()=>{
     const text=Object.keys(byMatch).map(mt=>`${mt}:\n${[...new Set(byMatch[mt])].sort().join('\n')}`).join('\n\n');
     const done=()=>{ const old=copyBtn.textContent; copyBtn.textContent='Copied'; setTimeout(()=>{copyBtn.textContent=old;},1500); };
@@ -1859,8 +1863,11 @@ function renderKwCheck(){
   };
 }
 function exportKwCheckCampaigns(byMatch, portfolioName, settings){
-  const skus=skusForPortfolio(portfolioName, settings.topSkus||0);
-  if(!skus.length){ alert('No SKUs found for this portfolio — add products to it first.'); return; }
+  // Auto-detection reads SKUs off whatever campaign already exists in this portfolio — wrong or missing
+  // when that campaign's own SKU list is stale, or when nothing's been launched in this portfolio yet.
+  // A manual override skips that lookup entirely and uses exactly what was typed in.
+  const skus=(settings.skuOverride&&settings.skuOverride.length)? settings.skuOverride : skusForPortfolio(portfolioName, settings.topSkus||0);
+  if(!skus.length){ alert('No SKUs found for this portfolio — add products to it first, or type SKUs manually.'); return; }
   const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
   // Resolved from the portfolio NAME (that's all this launch panel has) by finding any existing campaign
   // already in it and reusing its real Portfolio ID — same lookup Harvesting/Low ACOS Roots use. Missing
