@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 11:24</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 11:30</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -910,9 +910,9 @@ function renderPlacement(){
   const totals=agg(rowsRaw);
   // summary by placement
   const byPl={}; rowsRaw.forEach(p=>{ const k=placeName(p.placement); (byPl[k]=byPl[k]||[]).push(p); });
-  const rows=Object.keys(byPl).map(k=>{ const list=byPl[k]; const d=derive(agg(list)); const avgAdj=list.reduce((s,x)=>s+x.percentage,0)/list.length; return Object.assign({name:k, campaigns:list.length, adj:avgAdj}, d); });
+  const rows=Object.keys(byPl).map(k=>{ const list=byPl[k]; const d=derive(agg(list)); const avgAdj=list.reduce((s,x)=>s+x.percentage,0)/list.length; const spendPct=totals.spend>0?d.spend/totals.spend*100:0; return Object.assign({name:k, campaigns:list.length, adj:avgAdj, spendPct}, d); });
   let cols=[{key:'name',label:'Placement',l:true,type:'text'},{key:'campaigns',label:'Campaigns',type:'int',fmtTotal:t=>fInt(rowsRaw.length)},{key:'adj',label:'Avg Bid Adj %',type:'pct',fmtTotal:()=>''}];
-  if(hasMetrics) cols=cols.concat(metricCols().concat([{key:'cpa',label:'CPA',type:'money',fmtTotal:t=>fMoney(derive(t).cpa)}]));
+  if(hasMetrics) cols=cols.concat(metricCols().concat([{key:'cpa',label:'CPA',type:'money',fmtTotal:t=>fMoney(derive(t).cpa)},{key:'spendPct',label:'Spend %',type:'pct',fmtTotal:()=>'100%'}]));
   const tbl=buildTable({columns:cols,rows,tab:'placement',totals:hasMetrics?totals:null,sortDef:{key:hasMetrics?'spend':'adj',dir:-1},onChange:renderPlacement});
   // per-campaign pivot (Top / Product Pages / Rest of Search adjustment %)
   const byCamp={}; rowsRaw.forEach(p=>{ const cid=p.campaignId; if(!byCamp[cid]) byCamp[cid]={campaignName:p.campaignName||cid, portfolioName:p.portfolioName||'(No Portfolio)', top:'—', pp:'—', rest:'—', business:'—'}; const t=placeType(p.placement); if(t) byCamp[cid][t]=p.percentage; });
