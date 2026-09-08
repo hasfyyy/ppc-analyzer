@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 11:22</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 11:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -921,10 +921,10 @@ function renderPlacement(){
   const campCols=[
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
-    {key:'top',label:'Top of Search',type:'num',noSort:true,cell:r=>fpct(r.top)},
-    {key:'pp',label:'Product Pages',type:'num',noSort:true,cell:r=>fpct(r.pp)},
-    {key:'rest',label:'Rest of Search',type:'num',noSort:true,cell:r=>fpct(r.rest)},
-    {key:'business',label:'Amazon Business',type:'num',noSort:true,cell:r=>fpct(r.business)},
+    {key:'top',label:'Top of Search',type:'num',sortVal:r=>r.top==='—'?-1:r.top,cell:r=>fpct(r.top)},
+    {key:'pp',label:'Product Pages',type:'num',sortVal:r=>r.pp==='—'?-1:r.pp,cell:r=>fpct(r.pp)},
+    {key:'rest',label:'Rest of Search',type:'num',sortVal:r=>r.rest==='—'?-1:r.rest,cell:r=>fpct(r.rest)},
+    {key:'business',label:'Amazon Business',type:'num',sortVal:r=>r.business==='—'?-1:r.business,cell:r=>fpct(r.business)},
   ];
   const camptbl=buildTable({columns:campCols,rows:campRows,tab:'placement-camp',sortDef:{key:'campaignName',dir:1},onChange:renderPlacement});
   $('#app').innerHTML=`
