@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-09 17:15</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-09 17:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2395,7 +2395,7 @@ function tiersForGoal(goal, gt){
 // manual override on one portfolio survives unless that portfolio itself later crosses a threshold.
 function classifyPortfolios(product){
   const pst=stFor('optplace');
-  if(pst.newLaunchClicks===undefined) pst.newLaunchClicks=30;
+  if(pst.newLaunchSpend===undefined) pst.newLaunchSpend=50;
   if(pst.newLaunchGoalMult===undefined) pst.newLaunchGoalMult=1.5;
   if(pst.underperformCvrPct===undefined) pst.underperformCvrPct=50;
   if(pst.underperformGoalMult===undefined) pst.underperformGoalMult=0.7;
@@ -2407,7 +2407,7 @@ function classifyPortfolios(product){
   return Object.values(byPort).map(e=>{
     const d=derive(e);
     let tier='Mature', suggestedGoal=pst.acosGoal;
-    if(e.clicks<pst.newLaunchClicks){ tier='New / Low Data'; suggestedGoal=+(pst.acosGoal*pst.newLaunchGoalMult).toFixed(1); }
+    if(e.spend<pst.newLaunchSpend){ tier='New / Low Data'; suggestedGoal=+(pst.acosGoal*pst.newLaunchGoalMult).toFixed(1); }
     else if(acctCvr>0 && d.cvr<acctCvr*(pst.underperformCvrPct/100)){ tier='Underperformer'; suggestedGoal=+(pst.acosGoal*pst.underperformGoalMult).toFixed(1); }
     return Object.assign({tier,suggestedGoal},e,d);
   }).sort((a,b)=>b.spend-a.spend);
@@ -2420,22 +2420,22 @@ function renderPortfolioGoalPanel(product){
     <summary class="sectitle" style="cursor:pointer;">ACoS goal by portfolio${overrideCount?` (${overrideCount} overridden)`:''} — click to edit</summary>
     <div class="hint" style="margin:8px 0;">Shared with Placement Optimizer. No real launch date in this file, so click volume stands in for "new or tiny". Auto-classify sets a goal per portfolio; edit any number below to override it by hand afterward.</div>
     <div class="ctrls" style="margin-bottom:8px;">
-      <div class="field"><label>New / Low Data: under clicks</label><input type="number" id="pg-newclicks" min="0" value="${pst.newLaunchClicks}" style="width:90px;"></div>
+      <div class="field"><label>New / Low Data: under spend $</label><input type="number" id="pg-newspend" min="0" value="${pst.newLaunchSpend}" style="width:90px;"></div>
       <div class="field"><label>...goal ×</label><input type="number" step="0.1" id="pg-newmult" min="0" value="${pst.newLaunchGoalMult}" style="width:80px;"></div>
       <div class="field"><label>Underperformer: CVR under % of account avg</label><input type="number" id="pg-badcvr" min="0" value="${pst.underperformCvrPct}" style="width:90px;"></div>
       <div class="field"><label>...goal ×</label><input type="number" step="0.1" id="pg-badmult" min="0" value="${pst.underperformGoalMult}" style="width:80px;"></div>
       <button class="btn ghost" id="pg-autoclassify">Auto-classify all portfolios</button>
       ${overrideCount?`<button class="btn ghost" id="pg-clearall">Clear all overrides</button>`:''}
     </div>
-    <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Clicks</th><th>CVR</th><th class="l">Tier (auto)</th><th>ACoS Goal</th></tr></thead><tbody>
-    ${rows.map(r=>`<tr><td class="l">${esc(r.portfolioName)}</td><td>${fInt(r.clicks)}</td><td>${fPct(r.cvr)}</td><td class="l muted">${esc(r.tier)}</td><td><input type="number" step="0.1" min="0" data-pg-goal="${esc(r.portfolioName)}" placeholder="${pst.acosGoal}" value="${pst.portfolioGoals[r.portfolioName]||''}" style="width:80px;"></td></tr>`).join('')}
+    <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Spend</th><th>Clicks</th><th>CVR</th><th class="l">Tier (auto)</th><th>ACoS Goal</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td class="l">${esc(r.portfolioName)}</td><td>${fMoney(r.spend)}</td><td>${fInt(r.clicks)}</td><td>${fPct(r.cvr)}</td><td class="l muted">${esc(r.tier)}</td><td><input type="number" step="0.1" min="0" data-pg-goal="${esc(r.portfolioName)}" placeholder="${pst.acosGoal}" value="${pst.portfolioGoals[r.portfolioName]||''}" style="width:80px;"></td></tr>`).join('')}
     </tbody></table>
   </details>`;
 }
 function wirePortfolioGoalPanel(product, onChange){
   const pst=stFor('optplace');
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ pst[key]=parse(el.value); onChange(); },300); };
-  bind('pg-newclicks','newLaunchClicks',v=>+v||0);
+  bind('pg-newspend','newLaunchSpend',v=>+v||0);
   bind('pg-newmult','newLaunchGoalMult',v=>+v||1);
   bind('pg-badcvr','underperformCvrPct',v=>+v||0);
   bind('pg-badmult','underperformGoalMult',v=>+v||1);
