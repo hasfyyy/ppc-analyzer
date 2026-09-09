@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-08 11:30</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-09 11:18</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2390,15 +2390,15 @@ function renderOptBids(){
   if(st.zeroHi2===undefined) st.zeroHi2=15; if(st.zeroDec2===undefined) st.zeroDec2=15;
   if(st.zeroHi3===undefined) st.zeroHi3=20; if(st.zeroDec3===undefined) st.zeroDec3=20;
   if(st.wakePct===undefined) st.wakePct=10; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
-  // Wake and underbid both raise a bid to buy more visibility — fine for a small campaign Alex wants to give
-  // traction to (single-keyword or a handful of top keywords), wrong for a 100+ keyword catchall/mixed-ASIN
-  // campaign deliberately kept cheap, where raising every sleeping keyword would drift it toward bids nobody
-  // wanted. Gated on keyword count rather than name, since "low bid" naming isn't consistently applied — but
-  // it's a heuristic, not a rule (some small campaigns are deliberately low-bid too), so it defaults ON with a
+  // Wake raises a bid to buy more visibility — fine for a small campaign Alex wants to give traction to
+  // (single-keyword or a handful of top keywords), wrong for a 100+ keyword catchall/mixed-ASIN campaign
+  // deliberately kept cheap, where waking every sleeping keyword would drift it toward bids nobody wanted.
+  // Gated on keyword count rather than name, since "low bid" naming isn't consistently applied — but it's a
+  // heuristic, not a rule (some small campaigns are deliberately low-bid too), so it defaults ON with a
   // manual override rather than silently dropping large campaigns from consideration.
   if(st.maxKwForRaise===undefined) st.maxKwForRaise=10;
   // Off by default now — catchall/multi-keyword campaigns are steered through bids only (placement suggestions
-  // are single-keyword-only, see Placement Optimizer's singleOnly), so wake/underbid need to reach them too.
+  // are single-keyword-only, see Placement Optimizer's singleOnly), so Wake needs to reach them too.
   if(st.maxKwGateEnabled===undefined) st.maxKwGateEnabled=false;
   const kwCounts=campaignTargetCounts(S.product);
   const eligibleForRaise=cid => !st.maxKwGateEnabled || (kwCounts[cid]||0)<=st.maxKwForRaise;
@@ -2460,41 +2460,13 @@ function renderOptBids(){
   const staleCache={};
   const isStale=cid=>{ if(staleCache[cid]===undefined) staleCache[cid]=campaignRecentlyChanged(cid, S.product); return staleCache[cid]; };
   const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
-  // Reference price, in order of how well it describes THIS keyword's auction:
-  //   1. the same keyword text wherever else in the account it does get clicks — the actual going rate for it
-  //   2. this campaign's own CPC
-  //   3. the portfolio's, then 4. the account's
-  // The chain matters most for a campaign that was just launched: it has no CPC of its own (no clicks yet),
-  // so comparing against itself is impossible — which is exactly when an underbid keyword is invisible and
-  // most costly, since nothing in it will ever start. 37 campaigns in one account were in that state.
-  const kwCpcRef={}, campAgg={}, portAgg={};
-  DATA.targets.forEach(t=>{ if(t.product!==S.product || t.clicks<=0) return;
-    const k=String(t.text).trim().toLowerCase();
-    if(!kwCpcRef[k]) kwCpcRef[k]={cl:0,sp:0}; kwCpcRef[k].cl+=t.clicks; kwCpcRef[k].sp+=t.spend; });
-  DATA.campaigns.forEach(c=>{ if(c.product!==S.product || c.clicks<=0) return;
-    campAgg[c.campaignId]={cl:c.clicks, sp:c.spend};
-    const pf=c.portfolioName||'(No Portfolio)';
-    if(!portAgg[pf]) portAgg[pf]={cl:0,sp:0}; portAgg[pf].cl+=c.clicks; portAgg[pf].sp+=c.spend; });
-  const acctCpcRef=derive(agg(DATA.campaigns.filter(c=>c.product===S.product))).cpc;
-  const refFor=t=>{
-    const k=String(t.text).trim().toLowerCase();
-    if(kwCpcRef[k] && kwCpcRef[k].cl>0) return {cpc:kwCpcRef[k].sp/kwCpcRef[k].cl, src:'same keyword elsewhere'};
-    const c=campAgg[t.campaignId];
-    if(c) return {cpc:c.sp/c.cl, src:'this campaign'};
-    const pf=DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)';
-    if(portAgg[pf] && portAgg[pf].cl>0) return {cpc:portAgg[pf].sp/portAgg[pf].cl, src:'portfolio'};
-    return acctCpcRef>0? {cpc:acctCpcRef, src:'account'} : null;
-  };
   // A bid deliberately parked under the market is a strategy, not a mistake — these accounts run campaigns
-  // named "low bids" for exactly that. Raising those would put two of your own campaigns into the same
-  // auction against each other, so they are skipped by name and only listed further down.
-  if(st.underbidPct===undefined) st.underbidPct=10;
-  if(st.underbidMaxPct===undefined) st.underbidMaxPct=15;
-  if(st.underbidEnabled===undefined) st.underbidEnabled=true;
-  if(st.underbidSkip===undefined) st.underbidSkip='low bid';
-  const skipNeedle=(st.underbidSkip||'').trim().toLowerCase();
+  // named "low bids" for exactly that. Waking those would put two of your own campaigns into the same
+  // race against each other, so they are skipped by name and only listed further down.
+  if(st.wakeSkip===undefined) st.wakeSkip='low bid';
+  const skipNeedle=(st.wakeSkip||'').trim().toLowerCase();
   const isDeliberateLowBid=cid=>skipNeedle? String(DATA.campById[cid]?.name||'').toLowerCase().includes(skipNeedle) : false;
-  const underbidSkipped=[];
+  const wakeSkipped=[];
   const kwGateSkipped=[];
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -2565,36 +2537,14 @@ function renderOptBids(){
     // Priced out of the auction: a bid well under what this keyword actually costs, so it never even gets
     // shown enough to accumulate impressions. Checked before wake below — this graduated bump (bigger the
     // further under the going rate) is the more useful fix for THIS specific keyword than wake's flat step.
-    // underbidApplicable tracks whether THIS rule had anything to say about the keyword at all, independent of
-    // whether it actually acted (skipped as deliberate, skipped by the kw-count gate, or applied) — wake below
-    // must never re-examine a keyword underbid already ruled on, or a deliberately low bid gets skipped here
-    // only to have wake raise it anyway, and a kw-gated one gets listed twice ("would underbid" + "would wake").
-    let underbidApplicable=false;
-    if(action==='none' && st.underbidEnabled && t.clicks===0){
-      const ref=refFor(t);
-      if(ref && ref.cpc>0 && t.bid < ref.cpc*0.7){
-        underbidApplicable=true;
-        if(isDeliberateLowBid(t.campaignId)) underbidSkipped.push(Object.assign({campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc}, t));
-        else if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'underbid', campCpc:ref.cpc, refSrc:ref.src, ratio:t.bid/ref.cpc, newBid:null, kwCount:kwCounts[t.campaignId]||0}, t));
-        else {
-          // Graduated by how far under the rate it sits, because a flat step ignores the size of the gap:
-          // at a quarter of the going rate, +10% a week takes months to arrive — the keyword stays stranded
-          // exactly as long as it would have without the rule. Still capped, so no single run overshoots.
-          const ratio=t.bid/ref.cpc;
-          const stepPct=Math.min(st.underbidMaxPct,
-            +(st.underbidPct+(st.underbidMaxPct-st.underbidPct)*Math.max(0, 1-ratio/0.7)).toFixed(1));
-          action='underbid'; pct=stepPct; newBid=+(t.bid*(1+stepPct/100)).toFixed(2);
-          reason=`bid ${fMoney(t.bid)} vs ${fMoney(ref.cpc)} going rate (${ref.src}) — not entering auctions`;
-        }
-      }
-    }
     // ZERO clicks means the bid is losing every auction it's even entered (or not getting shown at all) —
-    // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates. No longer
-    // requires a minimum impression count first: a keyword sitting at 0 clicks / 0 impressions because its bid
-    // is too low to win anything (but not low enough to trip underbid above) used to get no help at all —
-    // now it gets the same flat bump as one that has impressions but still isn't converting into clicks.
-    if(action==='none' && st.wakeEnabled && t.clicks===0 && !underbidApplicable){
-      if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'wake', campCpc:null, refSrc:null, ratio:null, newBid:+(t.bid*(1+st.wakePct/100)).toFixed(2), kwCount:kwCounts[t.campaignId]||0}, t));
+    // there's no ACoS to evaluate (no spend), so this can't wait for the usual clicks/orders gates. One flat
+    // rule for any 0-click keyword, whether or not it has impressions — a separate graduated "how far below
+    // market is this bid" rule used to run first, but it overlapped enough with this one in practice that it
+    // was just extra settings to reason about for a very similar outcome, so it's gone.
+    if(action==='none' && st.wakeEnabled && t.clicks===0){
+      if(isDeliberateLowBid(t.campaignId)) wakeSkipped.push(t);
+      else if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'wake', newBid:+(t.bid*(1+st.wakePct/100)).toFixed(2), kwCount:kwCounts[t.campaignId]||0}, t));
       else { action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=t.impressions>0?`${fInt(t.impressions)} impressions, 0 clicks`:`0 impressions, 0 clicks`; }
     }
     // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
@@ -2644,7 +2594,6 @@ function renderOptBids(){
   const actionBadge=r=>{
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
     if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
-    if(r.action==='underbid') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (underbid)</span>`;
     if(r.action==='stuck-bump') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="${esc(r.reason||'')}">↑ +${fMoney(r.newBid-r.bid)} (stuck placement)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
   };
@@ -2686,7 +2635,7 @@ function renderOptBids(){
       <div class="ctrls" style="margin-bottom:8px;">
         <div class="field"><label>ACoS goal %</label><input type="number" id="ob-acosgoal" min="1" value="${gt.acosGoal}" style="width:90px;"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ob-derivetiers" ${st.deriveTiers?'checked':''}> Derive tiers from goal</label>
-        <div class="hint" style="align-self:center;">Shared with the Placement Optimizer — one goal drives both, so a placement and its campaign's bid never disagree on what counts as too expensive. Tiers sit at ${gt.t1Mult}× / ${gt.t2Mult}× / ${gt.t3Mult}× the goal. Untick to set thresholds by hand.</div>
+        <div class="hint" style="align-self:center;">Shared with the Placement Optimizer — one goal drives both, so a placement and its campaign's bid never disagree on what counts as too expensive. Tiers sit at ${gt.t1Mult}× / ${gt.t2Mult}× / ${gt.t3Mult}× the goal. Uncheck to set thresholds manually.</div>
       </div>
       <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it. The category allowance above shifts the ACoS fed into these tiers, so the SAME thresholds end up stricter or looser depending on what's being targeted.">Graduated decrease — hover for details.</div>
       <div class="ctrls">
@@ -2708,12 +2657,12 @@ function renderOptBids(){
       </div>
       <div class="hint" style="margin:12px 0 4px;" title="Single-keyword campaigns, shortcut — same settings as the Placement Optimizer tab. When a placement is stuck at 0% and still bad, the tiers above are skipped for that campaign's bid; instead the bid is set to (that placement's own CPC) × (1 − buffer%), and siblings at/below this goal get raised back to the old bid (plus a bonus if beating goal by a wide margin).">Floor override — hover for details.</div>
       <div class="ctrls">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;" title="Derives the two thresholds from the ACoS goal instead of leaving them to be typed in. They are coupled — the bonus test is (Floor Goal − ACoS) ≥ Bonus Gap — so setting Floor Goal by hand without adjusting the gap silently stops the bonus from ever firing."><input type="checkbox" id="ob-floorauto" ${pst.floorAuto?'checked':''}> Auto from goal</label>
-        <div class="field"><label>Floor ACoS Goal %</label><input type="number" id="ob-floorgoal" value="${pst.floorGoal}" style="width:90px;" ${pst.floorAuto?'disabled':''}></div>
-        <div class="field"><label>Bonus if beating by ≥pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;" ${pst.floorAuto?'disabled':''}></div>
-        <div class="field"><label>Stuck placement bump %</label><input type="number" step="0.5" id="ob-stuckbumppct" value="${pst.stuckBumpPct}" style="width:80px;" title="A campaign's highest-bid keyword/target gets bumped by this % of ITS OWN bid when one of its placements is stuck past the push ceiling with too few clicks — % has already proven it isn't the lever there. Scaled to the target's own bid, not the account average, so a cheap keyword doesn't get a bump sized for an expensive one."></div>
-        <div class="field"><label>...or min $</label><input type="number" step="0.01" id="ob-stuckbumpdollar" value="${pst.stuckBumpMinDollar}" style="width:80px;" title="Whichever is BIGGER, the % or this — a % alone is a rounding error on a very cheap bid."></div>
-        <div class="hint" style="align-self:center;">${pst.floorAuto?`Protects placements at or under <b>${pst.floorGoal}%</b> (tier 1), rewards those at or under <b>${pst.acosGoal}%</b> (the goal).`:'Manual — remember the bonus fires only when (Floor Goal − ACoS) ≥ Bonus Gap.'}</div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;" title="Fills in the two thresholds below from the ACoS goal above instead of typing them in by hand. They work together — the bonus only kicks in when (Protect ACoS under % − ACoS) is at least the Bonus points value — so changing the protect % by hand without adjusting the bonus points can silently stop the bonus from ever happening."><input type="checkbox" id="ob-floorauto" ${pst.floorAuto?'checked':''}> Auto from goal</label>
+        <div class="field"><label>Protect ACoS under %</label><input type="number" id="ob-floorgoal" value="${pst.floorGoal}" style="width:90px;" ${pst.floorAuto?'disabled':''} title="A placement with ACoS at or under this is left alone — never cut."></div>
+        <div class="field"><label>Extra reward if beating by ≥pts</label><input type="number" id="ob-floorbonusgap" value="${pst.floorBonusGap}" style="width:90px;" ${pst.floorAuto?'disabled':''} title="If a placement's ACoS beats the goal by at least this many points, it gets an extra bid boost on top."></div>
+        <div class="field"><label>Bid boost when stuck %</label><input type="number" step="0.5" id="ob-stuckbumppct" value="${pst.stuckBumpPct}" style="width:80px;" title="When a placement is maxed out and still isn't getting clicks, the campaign's highest-bid keyword gets a bid boost of this % of its OWN bid — sized to that keyword's own bid, not the account average, so a cheap keyword doesn't get a boost sized for an expensive one."></div>
+        <div class="field"><label>...or minimum $</label><input type="number" step="0.01" id="ob-stuckbumpdollar" value="${pst.stuckBumpMinDollar}" style="width:80px;" title="Uses whichever is BIGGER, the % above or this dollar amount — the % alone would round to almost nothing on a very cheap bid."></div>
+        <div class="hint" style="align-self:center;">${pst.floorAuto?`Protects placements at or under <b>${pst.floorGoal}%</b> (tier 1), rewards those at or under <b>${pst.acosGoal}%</b> (the goal).`:'Manual — remember the bonus only fires once (Protect % − ACoS) reaches the Bonus points value.'}</div>
       </div>
       <div class="ctrls" style="margin-top:8px;">
         <div class="field"><label>Buffer % under CPC</label><input type="number" id="ob-floorbuffer" value="${pst.floorBuffer}" style="width:90px;"></div>
@@ -2742,19 +2691,13 @@ function renderOptBids(){
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
-        <div class="hint" style="align-self:center;" title="0 clicks means the bid is losing every auction it enters (or never getting shown at all) — there's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid. No longer requires a minimum impression count: this now catches every 0-click keyword that isn't already caught by the more targeted 'priced out of the auction' rule below.">Bumps bid for any keyword with 0 clicks, impressions or not.</div>
+        <div class="field"><label>Skip campaigns named</label><input type="text" id="ob-wakeskip" value="${esc(st.wakeSkip)}" style="width:130px;" title="Campaigns whose name contains this are left alone — a bid parked under the market there is a strategy, not an oversight."></div>
+        <div class="hint" style="align-self:center;" title="0 clicks means the bid isn't winning any traffic (or never getting shown at all) — there's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for any keyword with 0 clicks, impressions or not — except campaigns named "${esc(st.wakeSkip)}", where a low bid reads as intentional.</div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-underbiden" ${st.underbidEnabled?'checked':''}> Raise keywords priced out of the auction</label>
-        <div class="field"><label>Raise by %</label><input type="number" id="ob-underbidpct" value="${st.underbidPct}" style="width:80px;"></div>
-        <div class="field"><label>...up to %</label><input type="number" id="ob-underbidmax" value="${st.underbidMaxPct}" style="width:80px;" title="The step grows with the size of the gap — a keyword at a quarter of the going rate gets the full amount, one just under the line gets the base — but never exceeds this."></div>
-        <div class="field"><label>Skip campaigns named</label><input type="text" id="ob-underbidskip" value="${esc(st.underbidSkip)}" style="width:130px;" title="Campaigns whose name contains this are left alone — a bid parked under the market there is a strategy, not an oversight."></div>
-        <div class="hint" style="align-self:center;">Bid under 70% of the going rate — checked before Wake above, so a genuinely underpriced keyword gets this bigger, graduated bump instead of Wake's flat one, regardless of impressions. Going rate is taken from the same keyword elsewhere in the account, else the campaign, portfolio or account CPC.</div>
-      </div>
-      <div class="ctrls" style="margin-top:12px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;" title="A 100+ keyword catchall/mixed-ASIN campaign is often kept deliberately cheap — waking or raising every sleeping keyword in it would drift bids up nobody wanted. A small campaign (single keyword, or a handful of top keywords) is usually the opposite: you want it to gain traction. Not a strict rule, so it's a toggle, not a hard exclusion."><input type="checkbox" id="ob-maxkwgate" ${st.maxKwGateEnabled?'checked':''}> Skip Wake/Underbid on campaigns over</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;" title="A 100+ keyword catchall/mixed-ASIN campaign is often kept deliberately cheap — waking every sleeping keyword in it would drift bids up nobody wanted. A small campaign (single keyword, or a handful of top keywords) is usually the opposite: you want it to gain traction. Not a strict rule, so it's a toggle, not a hard exclusion."><input type="checkbox" id="ob-maxkwgate" ${st.maxKwGateEnabled?'checked':''}> Skip Wake on campaigns over</label>
         <div class="field"><input type="number" id="ob-maxkw" value="${st.maxKwForRaise}" style="width:70px;" ${st.maxKwGateEnabled?'':'disabled'}></div>
-        <div class="hint" style="align-self:center;">keywords (listed below for manual review instead of auto-raised). Untick to raise large campaigns too.</div>
+        <div class="hint" style="align-self:center;">keywords (listed below for manual review instead of auto-raised). Uncheck to raise large campaigns too.</div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-hidestale" ${st.hideStale?'checked':''}> Hide campaigns edited mid-window</label>
@@ -2772,19 +2715,18 @@ function renderOptBids(){
           <option value="increase" ${st.actionFilter==='increase'?'selected':''}>Increases only (${allRows.filter(r=>r.action==='increase').length})</option>
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
           <option value="stuck-bump" ${st.actionFilter==='stuck-bump'?'selected':''}>Stuck placement only (${allRows.filter(r=>r.action==='stuck-bump').length})</option>
-          <option value="underbid" ${st.actionFilter==='underbid'?'selected':''}>Priced out of auction only (${allRows.filter(r=>r.action==='underbid').length})</option>
         </select></div>
         <div class="spacer"></div>
         <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       <div id="ob-table">${tbl.html}</div>
-      ${underbidSkipped.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Left alone — deliberate low bids (${underbidSkipped.length})</summary>
-        <div class="hint" style="margin:8px 0;">Underbid against the going rate and barely served — but sitting in campaigns whose name contains "${esc(st.underbidSkip)}", so the low bid reads as intentional and no raise is proposed. Raising them would put two of your own campaigns into the same auction. Everything else in this situation is raised ${st.underbidPct}% in the table above. Change the name filter in the settings panel if your convention differs.</div>
-        <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Going rate</th><th class="l">Based on</th><th>Bid vs rate</th><th>Impressions</th></tr></thead><tbody>
-        ${underbidSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fMoney(x.campCpc)}</td><td class="l muted">${esc(x.refSrc)}</td><td class="num-red">${x.ratio.toFixed(2)}×</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
-        </tbody></table>${underbidSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${underbidSkipped.length-40} more</div>`:''}</details>`:''}
+      ${wakeSkipped.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Left alone — deliberate low bids (${wakeSkipped.length})</summary>
+        <div class="hint" style="margin:8px 0;">0 clicks, but sitting in campaigns whose name contains "${esc(st.wakeSkip)}", so the low bid reads as intentional and no raise is proposed. Change the name filter in the settings panel above if your convention differs.</div>
+        <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Impressions</th></tr></thead><tbody>
+        ${wakeSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
+        </tbody></table>${wakeSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${wakeSkipped.length-40} more</div>`:''}</details>`:''}
       ${kwGateSkipped.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Left alone — large campaigns, review manually (${kwGateSkipped.length})</summary>
-        <div class="hint" style="margin:8px 0;">Would qualify for Wake or Underbid, but sit in a campaign with more than ${st.maxKwForRaise} keywords — often a catchall or mixed-ASIN campaign kept deliberately cheap, so no raise is auto-proposed. Untick "Skip Wake/Underbid on campaigns over" in the settings panel above to raise these too.</div>
+        <div class="hint" style="margin:8px 0;">Would qualify for Wake or Underbid, but sit in a campaign with more than ${st.maxKwForRaise} keywords — often a catchall or mixed-ASIN campaign kept deliberately cheap, so no raise is auto-proposed. Uncheck "Skip Wake/Underbid on campaigns over" in the settings panel above to raise these too.</div>
         <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Kw in camp</th><th>Would</th><th>Bid</th><th>→ New bid</th><th>Impressions</th></tr></thead><tbody>
         ${kwGateSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fInt(x.kwCount)}</td><td class="l muted">${x.would}</td><td>${fMoney(x.bid)}</td><td>${x.newBid!=null?fMoney(x.newBid):'—'}</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
         </tbody></table>${kwGateSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${kwGateSkipped.length-40} more</div>`:''}</details>`:''}
@@ -2820,10 +2762,7 @@ function renderOptBids(){
   bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
-  $('#ob-underbiden').onchange=e=>{ st.underbidEnabled=e.target.checked; upd(); };
-  bind('ob-underbidpct','underbidPct',v=>+v||0);
-  bind('ob-underbidmax','underbidMaxPct',v=>+v||0);
-  $('#ob-underbidskip').oninput=debounce(()=>{ st.underbidSkip=$('#ob-underbidskip').value; upd(); },350);
+  $('#ob-wakeskip').oninput=debounce(()=>{ st.wakeSkip=$('#ob-wakeskip').value; upd(); },350);
   bind('ob-maxkw','maxKwForRaise',v=>+v||0);
   $('#ob-maxkwgate').onchange=e=>{ st.maxKwGateEnabled=e.target.checked; renderOptBids(); };
   $('#ob-acosgoal').oninput=debounce(()=>{ goalTiers().acosGoal=+$('#ob-acosgoal').value||20; renderOptBids(); },350);
