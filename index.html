@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-09 17:29</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-09 17:36</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2427,7 +2427,7 @@ function renderPortfolioGoalPanel(product){
   const pst=stFor('optplace'); if(pst.portfolioGoals===undefined) pst.portfolioGoals={};
   const rows=classifyPortfolios(product);
   const overrideCount=Object.keys(pst.portfolioGoals).filter(k=>pst.portfolioGoals[k]>0).length;
-  return `<details style="margin-top:12px;">
+  return `<details style="margin-top:12px;" id="pg-panel" ${pst.portfolioGoalPanelOpen?'open':''}>
     <summary class="sectitle" style="cursor:pointer;">ACoS goal by portfolio${overrideCount?` (${overrideCount} overridden)`:''} — click to edit</summary>
     <div class="hint" style="margin:8px 0;">Shared with Placement Optimizer. No real launch date in this file, so click volume stands in for "new or tiny". Auto-classify sets a goal per portfolio; edit any number below to override it by hand afterward.</div>
     <div class="ctrls" style="margin-bottom:8px;">
@@ -2452,6 +2452,9 @@ function renderPortfolioGoalPanel(product){
 }
 function wirePortfolioGoalPanel(product, onChange){
   const pst=stFor('optplace');
+  // Same reasoning as the outer "Bid rules" settings panel: every edit here re-renders the whole tab from
+  // scratch, which would otherwise snap this <details> shut again right after opening it.
+  const panelEl=$('#pg-panel'); if(panelEl) panelEl.ontoggle=()=>{ pst.portfolioGoalPanelOpen=panelEl.open; };
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ pst[key]=parse(el.value); onChange(); },300); };
   bind('pg-newspend','newLaunchSpend',v=>+v||0);
   bind('pg-newmult','newLaunchGoalMult',v=>+v||1);
