@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-10 11:45</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-10 13:30</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1543,6 +1543,7 @@ function renderHarvesting(){
       <style>#hv-table th:nth-child(2),#hv-table td:nth-child(2){position:sticky;left:0;background:#fff;z-index:1;box-shadow:2px 0 4px rgba(0,0,0,.05);}#hv-table tr.totals td:nth-child(2){background:#fbfbfc;}</style>
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Harvesting Opportunities (${opps.length})</h3><div class="spacer"></div>
         <button class="btn ghost" id="hv-selall">${opps.length && opps.every(r=>sel.has(r._uid))?'Deselect all':'Select all'}</button>
+        <button class="btn ghost" id="hv-copy" ${selOpps.length?'':'disabled'} title="Copies the selected search term(s), one per line — paste into Campaign Builder (or Amazon's own 'Add keywords' box) to launch them as single-keyword campaigns yourself instead of the automatic export below.">Copy selected</button>
         <button class="btn ghost" id="hv-dl">Download</button>
       </div>
       <div id="hv-table">${tbl.html}</div>
@@ -1605,6 +1606,12 @@ function renderHarvesting(){
     const allSel = opps.length && opps.every(r=>sel.has(r._uid));
     if(allSel) opps.forEach(r=>sel.delete(r._uid)); else opps.forEach(r=>sel.add(r._uid));
     const y=window.scrollY; renderHarvesting(); window.scrollTo(0,y);
+  };
+  const hvCopyBtn=$('#hv-copy'); if(hvCopyBtn) hvCopyBtn.onclick=()=>{
+    const text=[...new Set(selOpps.map(o=>o.searchTerm))].sort().join('\n');
+    const done=()=>{ const old=hvCopyBtn.textContent; hvCopyBtn.textContent='Copied'; setTimeout(()=>{hvCopyBtn.textContent=old;},1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
+    else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
   };
   wireLaunchPanel(st, selOpps, renderHarvesting);
 }
