@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-09 17:36</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-10 11:45</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1785,6 +1785,44 @@ function renderKwCheck(){
       return Object.assign({keyword:kw, found:matches.length>0, count:matches.length, inExact:scopedExact.has(low), inPhrase:scopedPhrase.has(low), inBroad:scopedBroad.has(low)}, d); });
   }
   results.forEach((r,i)=>r._uid='kw'+i);
+  // ---- ASIN check (Product Targeting) — same idea as the keyword check above, but there's only one match
+  // type (a PT row either targets this ASIN in this portfolio or it doesn't), so no Exact/Phrase/Broad split.
+  if(st.asinText===undefined) st.asinText='';
+  const asins=(st.asinText||'').split('\n').map(x=>x.trim().toUpperCase()).filter(Boolean);
+  const asinTargets={};
+  DATA.targets.forEach(t=>{
+    if(t.kind!=='target' || t.product!==S.product || t.state!=='enabled' || !enabledCampsForCheck.has(t.campaignId)) return;
+    if(st.port && (DATA.campById[t.campaignId]?.portfolio||'(No Portfolio)')!==st.port) return;
+    const m=String(t.text||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i); if(!m) return;
+    (asinTargets[m[1].toUpperCase()]=asinTargets[m[1].toUpperCase()]||[]).push(t);
+  });
+  let asinResults=asins.map(asin=>{
+    const list=asinTargets[asin]||[]; const d=derive(agg(list));
+    return Object.assign({asin, targeted:list.length>0}, d);
+  });
+  asinResults.forEach((r,i)=>r._uid='asin'+i);
+  const asinSel=selFor('kwcheck_asin'); // keys are the bare ASIN — only one match type, so no "|TYPE" suffix needed
+  const asinAllMissingSelected=()=>{
+    const missing=asinResults.filter(r=>!r.targeted);
+    return missing.length>0 && missing.every(r=>asinSel.has(r.asin));
+  };
+  const asinBadge=r=>{
+    if(r.targeted) return '<span class="badge tg">YES</span>';
+    const isSel=asinSel.has(r.asin);
+    return `<span class="badge nt clickable ${isSel?'sel':''}" data-atog="${esc(r.asin)}">${isSel?'SELECTED':'NO'}</span>`;
+  };
+  const asinCols=[
+    {key:'asin',label:'ASIN',l:true,type:'text'},
+    {key:'targeted',label:'Targeted',l:true,noSort:true,cell:asinBadge},
+    {key:'impressions',label:'Impr.',type:'int'},
+    {key:'clicks',label:'Clicks',type:'int'},
+    {key:'spend',label:'Spend',type:'money'},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
+    {key:'orders',label:'Orders',type:'int'},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
+  ];
+  const asinTbl=asinResults.length?buildTable({columns:asinCols,rows:asinResults,tab:'kwcheck_asin',sortDef:{key:'asin',dir:1},onChange:renderKwCheck}):null;
+  const asinByMatch=[...asinSel];
   const sel=selFor('kwcheck'); // keys are "keyword|MATCHTYPE" — only missing (NO) combos are selectable
   // Missing-only, and only among what's currently on screen — with an empty results list every match type
   // trivially has "all" (zero) missing rows selected, which would show a pointless "Deselect all" on a blank
@@ -1822,6 +1860,11 @@ function renderKwCheck(){
       <textarea class="kwbox" id="kw-text" placeholder="Enter keywords to check (one per line)&#10;&#10;Example:&#10;wireless headphones&#10;bluetooth speaker&#10;phone charger">${esc(st.text||'')}</textarea></div>
       <div class="countnote" style="margin-top:6px;">${kws.length} keyword(s) entered · Searching across ${fInt(src.length)} ${S.product} search term records</div>
     </div>
+    <div class="card pad">
+      <div class="field"><label>Enter ASINs to check (one per line)</label>
+      <textarea class="kwbox" id="asin-text" placeholder="Enter competitor/product ASINs to check (one per line)&#10;&#10;Example:&#10;B0C8ZB6LPB&#10;B0BVC2V22H" style="min-height:80px;">${esc(st.asinText||'')}</textarea></div>
+      <div class="countnote" style="margin-top:6px;">${asins.length} ASIN(s) entered — checked against Product Targeting${st.port?` in "${esc(st.port)}"`:' account-wide'}</div>
+    </div>
     ${results.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">Results (${results.length})</h3><div class="spacer"></div>
       <button class="btn ghost" id="kw-selall-exact">${allMissingSelected('inExact','EXACT')?'Deselect all Exact':'Select all missing Exact'}</button>
       <button class="btn ghost" id="kw-selall-phrase">${allMissingSelected('inPhrase','PHRASE')?'Deselect all Phrase':'Select all missing Phrase'}</button>
@@ -1851,6 +1894,34 @@ function renderKwCheck(){
       <div class="rowbar"><div class="spacer"></div>
         <button class="btn ghost" id="kw-copy" title="Copies the selected keyword(s) grouped by match type, one per line — paste into Campaign Builder or Amazon's own 'Add keywords' box to launch them yourself instead of the automatic bulk export.">Copy selected</button>
         <button class="btn grad" id="kw-launch" ${skuPreview.length?'':'disabled'}>Create campaigns</button>
+      </div>`}
+    </div>`:''}
+    ${asinResults.length?`<div class="card pad"><div class="rowbar"><h3 class="sectitle" style="margin:0;">ASIN Results (${asinResults.length})</h3><div class="spacer"></div>
+      <button class="btn ghost" id="asin-selall">${asinAllMissingSelected()?'Deselect all':'Select all missing'}</button>
+      <button class="btn ghost" id="asin-dl">Download</button></div>
+      <div class="hint" style="margin:0 0 8px;">Click a red "NO" badge to select that ASIN for launch as Product Targeting — click again to deselect.</div>
+      <div id="asin-table">${asinTbl.html}</div></div>`:''}
+    ${asinSel.size?`<div class="card pad">
+      <h3 class="sectitle">Launch ${asinSel.size} selected ASIN(s) as Product Targeting</h3>
+      ${!st.port? `<div class="banner">Pick a specific Portfolio above first — new campaigns need to know which SKUs to advertise, and that's read from the other campaigns already in that portfolio.</div>` : `
+      <div class="ctrls">
+        <div class="field"><label>Prefix (used only if no existing campaign found)</label><input type="text" id="asin-lprefix" value="${esc(st.aPrefix===undefined?'BSQ':st.aPrefix)}" style="width:110px;" ${st.aIgnoreNaming?'disabled':''}></div>
+        <div class="field"><label>ASINs / campaign</label><input type="number" id="asin-lcount" min="1" value="${st.aCount===undefined?1:st.aCount}" style="width:110px;"></div>
+        <div class="field"><label>Bid override ($, optional)</label><input type="number" id="asin-lbid" step="0.01" placeholder="auto" value="${esc(st.aBid||'')}" style="width:120px;"></div>
+        <div class="field"><label>Top SKUs by sales (0 = all)</label><input type="number" id="asin-ltopskus" min="0" value="${st.aTopSkus===undefined?2:st.aTopSkus}" style="width:110px;"></div>
+      </div>
+      <div class="ctrls" style="margin-top:8px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="asin-lignore" ${st.aIgnoreNaming?'checked':''}> Ignore existing naming — type my own</label>
+        ${st.aIgnoreNaming? `<div class="field grow"><label>Custom campaign name</label><input type="text" id="asin-lname" value="${esc(st.aManualName||'')}" placeholder="e.g. PAT_MyBrand_B0XXXXXXX_20_JUL26_Insiders"></div>` : ''}
+      </div>
+      <div class="hint" style="margin-top:8px;">${st.aIgnoreNaming
+        ? `Using your custom name as the base — no auto-detected naming applied.`
+        : (()=>{ const t=detectPTNamingTemplate(st.port, 'SP', st.aPrefix===undefined?'BSQ':st.aPrefix); return t? `Found existing naming in this portfolio: <b>${esc(t.fullName)}</b> → next will be <b>${esc(t.prefix)} ${t.num+1}_${esc(refreshDateToken(t.suffix))}</b>.` : `No existing Product Targeting campaign found in "${esc(st.port)}" to copy naming from — will fall back to <b>ASINCHK_PT 1, 2, …</b>.`; })()}</div>
+      <div class="field grow" style="margin-top:8px;"><label>SKUs to advertise (override — one per line, leave blank to auto-detect)</label><textarea class="kwbox" id="asin-lskus" style="min-height:60px;" placeholder="SKU-001&#10;SKU-002">${esc(st.aSkuOverride||'')}</textarea></div>
+      <div class="hint" style="margin-top:4px;">${(()=>{ const aSkuOv=(st.aSkuOverride||'').split('\n').map(x=>x.trim()).filter(Boolean); const aSkuPrev=aSkuOv.length?aSkuOv:(st.port?skusForPortfolio(st.port,+(st.aTopSkus===undefined?2:st.aTopSkus)||0):[]); return aSkuOv.length? `Using your ${aSkuOv.length} manually entered SKU(s), not auto-detection.` : `SKUs auto-detected from campaigns already in "${esc(st.port)}": ${aSkuPrev.length? esc(aSkuPrev.join(', ')) : '<span style="color:#dc2626;">none found — add products to this portfolio first, or type SKUs manually above.</span>'}`; })()}</div>
+      <div class="rowbar"><div class="spacer"></div>
+        <button class="btn ghost" id="asin-copy" title="Copies the selected ASIN(s), one per line — paste into Campaign Builder or Amazon's own 'Add products' box to launch them yourself instead of the automatic bulk export.">Copy selected</button>
+        <button class="btn grad" id="asin-launch">Create campaigns</button>
       </div>`}
     </div>`:''}`;
   $('#kw-text').oninput=debounce(()=>{st.text=$('#kw-text').value; renderKwCheck();},350);
@@ -1893,6 +1964,78 @@ function renderKwCheck(){
     if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
     else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
   };
+  // ---- ASIN check wiring ----
+  $('#asin-text').oninput=debounce(()=>{st.asinText=$('#asin-text').value; renderKwCheck();},350);
+  if(asinTbl){ asinTbl.wire($('#asin-table')); $('#asin-dl').onclick=()=>exportCSV(asinCols,asinResults,'asin_check'); }
+  const asinSelAllBtn=$('#asin-selall'); if(asinSelAllBtn) asinSelAllBtn.onclick=()=>{
+    const turnOff=asinAllMissingSelected();
+    asinResults.forEach(r=>{ if(r.targeted) return; if(turnOff) asinSel.delete(r.asin); else asinSel.add(r.asin); });
+    renderKwCheck();
+  };
+  document.querySelectorAll('[data-atog]').forEach(t=>t.onclick=()=>{
+    const k=t.dataset.atog; asinSel.has(k)?asinSel.delete(k):asinSel.add(k);
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    const keep=w?{top:w.scrollTop,left:w.scrollLeft}:null;
+    renderKwCheck();
+    window.scrollTo(0,y);
+    const w2=document.querySelector('.tablewrap');
+    if(w2 && keep){ w2.scrollTop=keep.top; w2.scrollLeft=keep.left; }
+  });
+  const alp=$('#asin-lprefix'); if(alp) alp.oninput=debounce(()=>{ st.aPrefix=alp.value; renderKwCheck(); },300);
+  const alc=$('#asin-lcount'); if(alc) alc.oninput=debounce(()=>{ st.aCount=+alc.value||1; renderKwCheck(); },250);
+  const alb=$('#asin-lbid'); if(alb) alb.oninput=debounce(()=>{ st.aBid=alb.value; },300);
+  const ali=$('#asin-lignore'); if(ali) ali.onchange=e=>{ st.aIgnoreNaming=e.target.checked; renderKwCheck(); };
+  const aln=$('#asin-lname'); if(aln) aln.oninput=debounce(()=>{ st.aManualName=aln.value; renderKwCheck(); },300);
+  const alt=$('#asin-ltopskus'); if(alt) alt.oninput=debounce(()=>{ st.aTopSkus=+alt.value||0; renderKwCheck(); },250);
+  const alsk=$('#asin-lskus'); if(alsk) alsk.oninput=debounce(()=>{ st.aSkuOverride=alsk.value; renderKwCheck(); },300);
+  const asinLaunchBtn=$('#asin-launch'); if(asinLaunchBtn) asinLaunchBtn.onclick=()=>exportAsinCheckCampaigns(asinByMatch, st.port, {prefix:st.aPrefix===undefined?'BSQ':st.aPrefix, numPerGroup:st.aCount===undefined?1:st.aCount, bidOverride: st.aBid?+st.aBid:null, ignoreNaming:st.aIgnoreNaming, manualName:st.aManualName, topSkus:+(st.aTopSkus===undefined?2:st.aTopSkus)||0, skuOverride:(st.aSkuOverride||'').split('\n').map(x=>x.trim()).filter(Boolean)});
+  const asinCopyBtn=$('#asin-copy'); if(asinCopyBtn) asinCopyBtn.onclick=()=>{
+    const text=asinByMatch.slice().sort().join('\n');
+    const done=()=>{ const old=asinCopyBtn.textContent; asinCopyBtn.textContent='Copied'; setTimeout(()=>{asinCopyBtn.textContent=old;},1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
+    else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
+  };
+}
+function exportAsinCheckCampaigns(asins, portfolioName, settings){
+  const skus=(settings.skuOverride&&settings.skuOverride.length)? settings.skuOverride : skusForPortfolio(portfolioName, settings.topSkus||0);
+  if(!skus.length){ alert('No SKUs found for this portfolio — add products to it first, or type SKUs manually.'); return; }
+  const existingNames=new Set(DATA.campaigns.map(c=>c.campaignName));
+  const portfolioId=(()=>{
+    if(!portfolioName || portfolioName==='(No Portfolio)') return '';
+    const c=DATA.campaigns.find(c=>(c.portfolioName||'(No Portfolio)')===portfolioName && c.portfolioId);
+    return c? c.portfolioId : '';
+  })();
+  const out=[]; let totalCamps=0;
+  const perBid = ()=> settings.bidOverride || 0.75;
+  const template=settings.ignoreNaming? null : detectPTNamingTemplate(portfolioName, 'SP', settings.prefix);
+  const suffix=template? refreshDateToken(template.suffix) : '';
+  let nextNum=template?template.num+1:1;
+  const manualBase=(settings.manualName||'').trim();
+  function candidateName(n){
+    return settings.ignoreNaming ? `${manualBase} ${n}` : template? `${template.prefix} ${n}_${suffix}` : `ASINCHK_PT ${n}`;
+  }
+  function nextFreeName(){
+    let name=candidateName(nextNum);
+    while(existingNames.has(name)){ nextNum++; name=candidateName(nextNum); }
+    existingNames.add(name); nextNum++;
+    return name;
+  }
+  const perCampaign=Math.max(1,settings.numPerGroup||1);
+  const groups=[]; for(let i=0;i<asins.length;i+=perCampaign) groups.push(asins.slice(i,i+perCampaign));
+  groups.forEach(g=>{
+    const cname=nextFreeName(); const agname=cname;
+    const campRow={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'};
+    if(portfolioId) campRow['Portfolio ID']=portfolioId;
+    out.push(bulkRow(campRow));
+    out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':perBid()}));
+    skus.forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
+    g.forEach(asin=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':perBid(),'Product Targeting Expression':`asin="${asin}"`})));
+    totalCamps++;
+  });
+  if(!out.length){ alert('Nothing to export.'); return; }
+  writeBulk(out,'asin_check_new_campaigns_bulk.xlsx');
+  alert(`Created ${totalCamps} campaign(s). SKUs pulled from existing campaigns in "${portfolioName}".`);
 }
 function exportKwCheckCampaigns(byMatch, portfolioName, settings){
   // Auto-detection reads SKUs off whatever campaign already exists in this portfolio — wrong or missing
