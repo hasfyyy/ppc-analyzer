@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-10 13:30</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-11 16:30</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2170,6 +2170,33 @@ function renderProducts(){
       <td class="l">${esc(c.reason)}</td>
     </tr>`).join('');
 
+  // ---- paused product ads, offered for re-enabling ----
+  // Only within a campaign that's itself enabled/optimizable — an ad paused inside a paused campaign won't
+  // start serving again just from flipping its own State back on, so surfacing it here would be a dead end.
+  const pausedAds=ads.filter(p=>p.state==='paused' && enabledCamps.has(p.campaignId)).map(p=>{
+    const d=derive(agg([p]));
+    return Object.assign({_euid:p.campaignId+'|'+p.adGroupId+'|'+(p.adId||p.sku||p.asin||'')},p,d);
+  });
+  const enableKnown=st.enableKnown=st.enableKnown||{};
+  pausedAds.forEach(p=>{ if(enableKnown[p._euid]===undefined) enableKnown[p._euid]=false; });
+  if(st.eSortKey===undefined) st.eSortKey='spend'; if(st.eSortDir===undefined) st.eSortDir=-1;
+  pausedAds.sort((a,b)=>{
+    let va=a[st.eSortKey], vb=b[st.eSortKey];
+    va = va===Infinity?1e18:(va||0); vb = vb===Infinity?1e18:(vb||0);
+    return st.eSortDir*(va-vb);
+  });
+  const enableRows=pausedAds.filter(p=>enableKnown[p._euid]);
+  const enableCampCount=new Set(enableRows.map(r=>r.campaignId)).size;
+  const enableAllChecked=pausedAds.length && pausedAds.every(p=>enableKnown[p._euid]);
+  const enableRowsHtml=pausedAds.map(p=>`<tr>
+      <td class="cellchk"><input type="checkbox" data-etog="${esc(p._euid)}" ${enableKnown[p._euid]?'checked':''}></td>
+      <td class="l"><span class="link">${esc(p.asin||p.sku||'—')}</span></td>
+      <td class="l">${esc(p.campaignName||p.campaignId)}</td>
+      <td>${fInt(p.clicks)}</td><td>${fMoney(p.spend)}</td><td class="num-green">${fMoney(p.sales)}</td><td>${fInt(p.orders)}</td>
+      <td>${fMoney(p.cpc)}</td>
+      <td class="${acosClass(p.acos)}">${fAcos(p.acos)}</td>
+    </tr>`).join('');
+
   $('#app').innerHTML=`
     <div class="kpis">
       ${kpi('Total Products',fInt(totalProducts),'pink')}${kpi('Total Spend',fMoney(tot.spend))}${kpi('Total Sales',fMoney(tot.sales),'green')}
@@ -2200,6 +2227,21 @@ function renderProducts(){
       <div class="rowbar" style="margin-top:10px;"><span class="countnote">Will pause <b>${pauseRows.length}</b> product ad placement(s) across <b>${pauseCampCount}</b> campaign(s).</span><div class="spacer"></div>
         <button class="btn grad" id="pr-pause" ${pauseRows.length?'':'disabled'}>Export Pause (${pauseRows.length})</button>
       </div>
+    </div>
+    <div class="card pad">
+      <h3 class="sectitle" style="margin:0;">Paused Product Ads (${pausedAds.length})</h3>
+      <div class="hint" style="margin-top:6px;">Every currently paused product ad in an otherwise-enabled campaign — the opposite of the section above. Performance shown is from before it was paused (or during any window it was briefly live), for context on whether re-enabling is worth it. Check any you want to turn back on.</div>
+      <div class="tablewrap" style="margin-top:10px;"><table><thead><tr>
+        <th class="cellchk"><input type="checkbox" id="pr-enselall" ${enableAllChecked?'checked':''}></th>
+        <th class="l">Product</th><th class="l">Campaign</th>
+        ${PR_SORT_COLS.map(c=>{
+          const active=st.eSortKey===c.key;
+          return `<th class="sortable ${active?'th-active':''}" data-ensort="${c.key}">${esc(c.label)} <span class="sort-ind">${active?(st.eSortDir<0?'↓':'↑'):'↕'}</span></th>`;
+        }).join('')}
+      </tr></thead><tbody>${enableRowsHtml || `<tr><td colspan="9" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No paused product ads found in an enabled campaign.</td></tr>`}</tbody></table></div>
+      <div class="rowbar" style="margin-top:10px;"><span class="countnote">Will enable <b>${enableRows.length}</b> product ad(s) across <b>${enableCampCount}</b> campaign(s).</span><div class="spacer"></div>
+        <button class="btn grad" id="pr-enable" ${enableRows.length?'':'disabled'}>Export Enable (${enableRows.length})</button>
+      </div>
     </div>`;
   $('#pr-port').onchange=e=>{st.port=e.target.value; renderProducts();};
   $('#pr-camp').onchange=e=>{st.camp=e.target.value; renderProducts();};
@@ -2213,6 +2255,14 @@ function renderProducts(){
   });
   const selAll=$('#pr-selall'); if(selAll) selAll.onchange=()=>{ candidates.forEach(c=>known[c._puid]=selAll.checked); renderProducts(); };
   const pauseBtn=$('#pr-pause'); if(pauseBtn) pauseBtn.onclick=()=>exportProductsPause(pauseRows, S.product);
+  document.querySelectorAll('[data-etog]').forEach(cb=>cb.onchange=()=>{ enableKnown[cb.dataset.etog]=cb.checked; renderProducts(); });
+  document.querySelectorAll('[data-ensort]').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.ensort;
+    if(st.eSortKey===k) st.eSortDir*=-1; else { st.eSortKey=k; st.eSortDir=-1; }
+    renderProducts();
+  });
+  const enSelAll=$('#pr-enselall'); if(enSelAll) enSelAll.onchange=()=>{ pausedAds.forEach(p=>enableKnown[p._euid]=enSelAll.checked); renderProducts(); };
+  const enableBtn=$('#pr-enable'); if(enableBtn) enableBtn.onclick=()=>exportProductsEnable(enableRows, S.product);
 }
 function exportProductsPause(pauseRows, product){
   if(!pauseRows.length){ alert('Nothing to pause with the current selection/thresholds.'); return; }
@@ -2222,6 +2272,13 @@ function exportProductsPause(pauseRows, product){
   const out=pauseRows.map(r=>bulkRow({'Product':prod,'Entity':'Product ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Ad ID':r.adId,'SKU':r.sku,'State':'paused'}));
   writeBulk(out, (product==='SB'?'sb_':'')+'products_pause_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} product ad pause row(s) across ${new Set(pauseRows.map(r=>r.campaignId)).size} campaign(s).`);
+}
+function exportProductsEnable(enableRows, product){
+  if(!enableRows.length){ alert('Nothing to enable with the current selection.'); return; }
+  const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const out=enableRows.map(r=>bulkRow({'Product':prod,'Entity':'Product ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Ad ID':r.adId,'SKU':r.sku,'State':'enabled'}));
+  writeBulk(out, (product==='SB'?'sb_':'')+'products_enable_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} product ad enable row(s) across ${new Set(enableRows.map(r=>r.campaignId)).size} campaign(s).`);
 }
 
 /* ============================ exports ============================ */
