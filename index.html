@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-11 16:30</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-11 18:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -276,7 +276,7 @@ function wakeCtrFor(campaignId, campCtr, acctCtr){
 /* ============================ parsing ============================ */
 const DATA = {
   campaigns:[], adGroups:[], productAds:[], targets:[], searchTerms:[],
-  negatives:[], placements:[],
+  negatives:[], placements:[], audienceAdjustments:[],
   campById:{},           // campaignId -> {name, portfolio, product, targetingType, budget}
   skuByCampaign:{},       // campaignId -> [{sku,asin}]
   loaded:false, fileName:''
@@ -310,6 +310,12 @@ const MATCH = {
   targetingExpr: t=>t.join(' ')==='targeting expression'&&!t.includes('resolved'),
   placement: t=>t.join(' ')==='placement',
   percentage: t=>t.join(' ')==='percentage',
+  // "Bidding Adjustment" rows come in two unrelated flavors that share the same Entity: a real PLACEMENT %
+  // (Placement column filled) and an AUDIENCE SEGMENT % for Auto campaigns (Placement blank, these filled
+  // instead). Mixing the two into Placement Summary as a mystery "—" row double-counts spend under a made-up
+  // bucket and skews every placement total — audienceId is how the two are told apart.
+  audienceId: t=>t.join(' ')==='audience id',
+  segmentName: t=>t.slice(0,2).join(' ')==='segment name',
   searchTerm: t=>t.includes('search')&&t.includes('term'),
   impressions: t=>t.includes('impressions')||t.includes('impression'),
   clicks: t=>t.includes('clicks')&&!t.includes('through')&&!t.includes('cost')&&!t.includes('per'),
@@ -413,7 +419,14 @@ function ingestDataRow(row, c, sheetProduct, campState){
     const m=String(g('ptExpr')||'').match(/asin\s*=?\s*"?(b0[a-z0-9]{8})"?/i);
     if(m) DATA.negatives.push({product,campaignId,adGroupId,text:m[1].toLowerCase(),matchType:'asin',scope: ent.indexOf('campaign')!==-1?'campaign':'adgroup'});
   } else if(ent==='bidding adjustment'){
-    DATA.placements.push(Object.assign({product,campaignId,placement:String(g('placement')||''),percentage:toNum(g('percentage'))},met));
+    const placementVal=String(g('placement')||'');
+    // No Placement value but an Audience ID means this is an audience-segment bid %, not a placement one —
+    // route it to its own bucket instead of letting it show up as an unlabeled "—" placement row.
+    if(!placementVal && g('audienceId')){
+      DATA.audienceAdjustments.push(Object.assign({product,campaignId,segmentName:String(g('segmentName')||''),percentage:toNum(g('percentage'))},met));
+    } else {
+      DATA.placements.push(Object.assign({product,campaignId,placement:placementVal,percentage:toNum(g('percentage'))},met));
+    }
   }
 }
 function ingestSheetJson(json, name){
@@ -430,7 +443,7 @@ function ingestSheetJson(json, name){
   json.forEach(row=>ingestDataRow(row,c,sheetProduct,campState));
 }
 function parseWorkbook(wb){
-  Object.assign(DATA,{campaigns:[],adGroups:[],productAds:[],targets:[],searchTerms:[],negatives:[],placements:[],campById:{},skuByCampaign:{}});
+  Object.assign(DATA,{campaigns:[],adGroups:[],productAds:[],targets:[],searchTerms:[],negatives:[],placements:[],audienceAdjustments:[],campById:{},skuByCampaign:{}});
   wb.SheetNames.forEach(name=>{
     const ws=wb.Sheets[name]; if(!ws) return;
     fixSheetRange(ws);
@@ -457,6 +470,7 @@ function parseWorkbook(wb){
   DATA.targets.forEach(t=>{ const cm=DATA.campById[t.campaignId]; if(cm){ t.campaignName=cm.name; t.portfolioName=cm.portfolio; } });
   DATA.productAds.forEach(p=>{ const cm=DATA.campById[p.campaignId]; if(cm){ p.campaignName=cm.name; p.portfolioName=cm.portfolio; } });
   DATA.placements.forEach(p=>{ const cm=DATA.campById[p.campaignId]; if(cm){ p.campaignName=cm.name; p.portfolioName=cm.portfolio; } });
+  DATA.audienceAdjustments.forEach(a=>{ const cm=DATA.campById[a.campaignId]; if(cm){ a.campaignName=cm.name; a.portfolioName=cm.portfolio; } });
   DATA.negatives.forEach(n=>{ const cm=DATA.campById[n.campaignId]; if(cm){ n.campaignName=cm.name; n.portfolioName=cm.portfolio; } });
   DATA.loaded=true;
   buildTargetSets();
@@ -934,6 +948,18 @@ function renderPlacement(){
     {key:'business',label:'Amazon Business',type:'num',sortVal:r=>r.business==='—'?-1:r.business,cell:r=>fpct(r.business)},
   ];
   const camptbl=buildTable({columns:campCols,rows:campRows,tab:'placement-camp',sortDef:{key:'campaignName',dir:1},onChange:renderPlacement});
+  // Audience-segment bid %s (Auto campaigns) share the same "Bidding Adjustment" entity as real placement %s
+  // in the bulk, but they're a different targeting axis entirely — shown here on their own, NOT folded into
+  // the Placement Totals above, so that total still means "spend attributable to a placement" and nothing else.
+  let audRows=DATA.audienceAdjustments.filter(a=>a.product===S.product);
+  if(st.port) audRows=audRows.filter(a=>(a.portfolioName||'(No Portfolio)')===st.port);
+  if(st.excludePorts.length) audRows=audRows.filter(a=>!st.excludePorts.includes(a.portfolioName||'(No Portfolio)'));
+  const byAud={}; audRows.forEach(a=>{ const k=a.segmentName||'(unnamed segment)'; (byAud[k]=byAud[k]||[]).push(a); });
+  const audTotals=agg(audRows);
+  const audSummary=Object.keys(byAud).map(k=>{ const list=byAud[k]; const d=derive(agg(list)); const avgAdj=list.reduce((s,x)=>s+x.percentage,0)/list.length; return Object.assign({name:k, campaigns:list.length, adj:avgAdj}, d); });
+  const audCols=[{key:'name',label:'Audience Segment',l:true,type:'text'},{key:'campaigns',label:'Rows',type:'int',fmtTotal:t=>fInt(audRows.length)},{key:'adj',label:'Avg Bid Adj %',type:'pct',fmtTotal:()=>''}]
+    .concat(audRows.length?metricCols():[]);
+  const audTbl=audRows.length?buildTable({columns:audCols,rows:audSummary,tab:'placement-audience',totals:audTotals,sortDef:{key:'spend',dir:-1},onChange:renderPlacement}):null;
   $('#app').innerHTML=`
     ${hasMetrics?`<div class="kpis">${kpiRowFromAgg(totals)}</div>`:''}
     <div class="card pad">
@@ -948,11 +974,17 @@ function renderPlacement(){
     ${rowsRaw.length?`<div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bid Adjustments by Campaign (${campRows.length})</h3><div class="spacer"></div><button class="btn ghost" id="pl-dl2">Download</button></div>
       <div id="pl-camp">${camptbl.html}</div>
+    </div>`:''}
+    ${audRows.length?`<div class="card pad">
+      <h3 class="sectitle" style="margin:0;">Audience Segment Adjustments (${audRows.length})</h3>
+      <div class="hint" style="margin:6px 0 10px;">Auto campaigns' audience-segment bid %s (e.g. "high interest" shoppers) — a different targeting axis from placement, reported under the same bulk entity but NOT included in the Placement Totals above.</div>
+      <div id="pl-audience">${audTbl.html}</div>
     </div>`:''}`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacement();};
   const plExcl=$('#pl-portexclude'); if(plExcl) plExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); renderPlacement(); };
   const plExclClear=$('#pl-portexclude-clear'); if(plExclClear) plExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; renderPlacement(); };
   if(rowsRaw.length){ tbl.wire($('#pl-table')); camptbl.wire($('#pl-camp')); $('#pl-dl').onclick=()=>exportCSV(cols,rows,'placement_summary'); $('#pl-dl2').onclick=()=>exportCSV(campCols,campRows,'placement_by_campaign'); }
+  if(audTbl) audTbl.wire($('#pl-audience'));
 }
 
 /* ============================ NEGATIVES (SP + SB) ============================ */
