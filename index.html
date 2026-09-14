@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-11 18:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-14 14:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2203,14 +2203,20 @@ function renderProducts(){
     </tr>`).join('');
 
   // ---- paused product ads, offered for re-enabling ----
+  // Mirrors the pause section above but inverted: only surface a paused ad as a re-enable CANDIDATE if its
+  // last-known performance was actually good (real orders at a sane ACoS) — a paused ad that was paused for
+  // good reason (like the 70.4%-ACoS one that used to show here unconditionally, pre-checked) has no business
+  // being suggested, let alone pre-selected. Anything not meeting the bar just doesn't appear; still fully
+  // paused, still reviewable manually in Amazon, just not proposed here.
+  if(st.eAcos===undefined) st.eAcos=st.pAcos; if(st.eMinOrders===undefined) st.eMinOrders=1;
   // Only within a campaign that's itself enabled/optimizable — an ad paused inside a paused campaign won't
   // start serving again just from flipping its own State back on, so surfacing it here would be a dead end.
   const pausedAds=ads.filter(p=>p.state==='paused' && enabledCamps.has(p.campaignId)).map(p=>{
     const d=derive(agg([p]));
     return Object.assign({_euid:p.campaignId+'|'+p.adGroupId+'|'+(p.adId||p.sku||p.asin||'')},p,d);
-  });
+  }).filter(p=>p.orders>=st.eMinOrders && p.acos<=st.eAcos);
   const enableKnown=st.enableKnown=st.enableKnown||{};
-  pausedAds.forEach(p=>{ if(enableKnown[p._euid]===undefined) enableKnown[p._euid]=false; });
+  pausedAds.forEach(p=>{ if(enableKnown[p._euid]===undefined) enableKnown[p._euid]=true; });
   if(st.eSortKey===undefined) st.eSortKey='spend'; if(st.eSortDir===undefined) st.eSortDir=-1;
   pausedAds.sort((a,b)=>{
     let va=a[st.eSortKey], vb=b[st.eSortKey];
@@ -2261,8 +2267,12 @@ function renderProducts(){
       </div>
     </div>
     <div class="card pad">
-      <h3 class="sectitle" style="margin:0;">Paused Product Ads (${pausedAds.length})</h3>
-      <div class="hint" style="margin-top:6px;">Every currently paused product ad in an otherwise-enabled campaign — the opposite of the section above. Performance shown is from before it was paused (or during any window it was briefly live), for context on whether re-enabling is worth it. Check any you want to turn back on.</div>
+      <h3 class="sectitle" style="margin:0;">Paused Product Ads worth re-enabling (${pausedAds.length})</h3>
+      <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Min Orders ≥</label><input type="number" id="pr-eminord" min="0" value="${st.eMinOrders}" style="width:90px;"></div>
+        <div class="field"><label>ACoS Threshold &lt;%</label><input type="number" id="pr-eacos" min="0" value="${st.eAcos}" style="width:90px;"></div>
+      </div>
+      <div class="hint" style="margin-top:6px;">Only paused product ads whose OWN last-known performance clears this bar — real orders at a sane ACoS — not every paused ad in the account. A paused ad that never met this bar (including one paused because it was genuinely bad) simply won't appear here to be accidentally re-enabled. Check any you want to turn back on.</div>
       <div class="tablewrap" style="margin-top:10px;"><table><thead><tr>
         <th class="cellchk"><input type="checkbox" id="pr-enselall" ${enableAllChecked?'checked':''}></th>
         <th class="l">Product</th><th class="l">Campaign</th>
@@ -2287,6 +2297,7 @@ function renderProducts(){
   });
   const selAll=$('#pr-selall'); if(selAll) selAll.onchange=()=>{ candidates.forEach(c=>known[c._puid]=selAll.checked); renderProducts(); };
   const pauseBtn=$('#pr-pause'); if(pauseBtn) pauseBtn.onclick=()=>exportProductsPause(pauseRows, S.product);
+  bind('pr-eminord','eMinOrders',v=>+v||0); bind('pr-eacos','eAcos',v=>+v||0);
   document.querySelectorAll('[data-etog]').forEach(cb=>cb.onchange=()=>{ enableKnown[cb.dataset.etog]=cb.checked; renderProducts(); });
   document.querySelectorAll('[data-ensort]').forEach(th=>th.onclick=()=>{
     const k=th.dataset.ensort;
