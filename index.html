@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-14 14:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-15 17:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -786,6 +786,7 @@ const TABS=[
   {id:'ngroots',label:'Low ACOS Roots',ic:''},
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
+  {id:'singlekw',label:'Single-KW',ic:''},
   {id:'optbids',label:'Bid Optimizer',ic:''},
   {id:'optplacements',label:'Placement Optimizer',ic:''},
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
@@ -795,7 +796,7 @@ const TABS=[
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
 // Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
 // correctly. Every other tab depends on a search-term report SD doesn't have.
-const OPT_TABS=new Set(['optbids','optplacements','optbudget','pausecamp']);
+const OPT_TABS=new Set(['singlekw','optbids','optplacements','optbudget','pausecamp']);
 // Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
 // SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
 // only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
@@ -836,7 +837,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, singlekw:renderSingleKw, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -2824,7 +2825,10 @@ function renderOptBids(){
   // single lucky order.
   const staleCache={};
   const isStale=cid=>{ if(staleCache[cid]===undefined) staleCache[cid]=campaignRecentlyChanged(cid, S.product); return staleCache[cid]; };
-  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
+  // Single-keyword campaigns have their own dedicated tab (Single-KW) with Butler-style bid+placement rules —
+  // excluded here so the same campaign isn't shown / exported from two places at once. Multi-keyword campaigns
+  // stay 100% as before (the whole existing tier/floor/compensation ladder still applies to them).
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId) && !singleKw.has(t.campaignId));
   // A bid deliberately parked under the market is a strategy, not a mistake — these accounts run campaigns
   // named "low bids" for exactly that. Waking those would put two of your own campaigns into the same
   // race against each other, so they are skipped by name and only listed further down.
@@ -3692,6 +3696,232 @@ function exportPlacementOptimization(product, rows){
   const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':r.rawPlacement,'Percentage':r.newPct}));
   writeBulk(out, productFilePrefix(product)+'placement_optimization_bulk.xlsx', productSheetName(product));
   alert(`Exported ${out.length} placement bid adjustment update(s).`);
+}
+
+/* ============================ SINGLE-KW OPTIMIZER (Butler-style) ============================ */
+// Independent from Bid Optimizer / Placement Optimizer, which handle multi-keyword campaigns with the
+// existing tier/floor logic. Single-keyword campaigns have a 1:1 relationship between bid and placement,
+// so both moves are decided together here on the same Butler-style rules the user runs in PPC Butler for
+// SUP campaigns:
+//   1) BID: if ANY placement is bad (0 orders + clicks > threshold, OR acos > goal + clicks > threshold/2),
+//      new bid = max(0.20, min(cpcTos, cpcRos, cpcPdp) * (1 - safety%))
+//   2) PLACEMENT % per placement (using the NEW bid above as the baseline):
+//      - acos < goal AND acos > 0 (rentabil)      → target = cpc * boost
+//      - acos == 0 AND clicks ≤ threshold (test)  → target = cpc * boost
+//      - acos > goal                              → target = cpc * (1 - min(30%, 2*(acos - goal*1.1))) * 1.1
+//      - new% = round((target / baseline_bid − 1) * 100), clamped 0..900
+//   3) ZERO-OUT: if the whole campaign has 0 orders AND total clicks > threshold, set every placement to 0%.
+function computeSingleKwRows(product){
+  const st=stFor('singlekw');
+  if(st.threshold===undefined) st.threshold=10;
+  if(st.safety===undefined) st.safety=10;   // % cushion under min CPC → bid = min(cpc)*0.9
+  if(st.boost===undefined) st.boost=20;     // % above CPC on good placements → target = cpc*1.2
+  const enabledCamps=optimizableCampaignIds(product);
+  const singleKw=singleKwCampaigns(product);
+  // One row per single-kw campaign; each row also carries the per-placement moves for export/rendering.
+  const targetsByCamp=new Map();
+  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && singleKw.has(t.campaignId)) targetsByCamp.set(t.campaignId, t); });
+  const placementsByCamp={};
+  DATA.placements.forEach(p=>{
+    if(p.product!==product || !enabledCamps.has(p.campaignId) || !singleKw.has(p.campaignId)) return;
+    const type=placeType(p.placement); if(!type || type==='business') return;
+    const k=p.campaignId+'|'+type;
+    if(!placementsByCamp[p.campaignId]) placementsByCamp[p.campaignId]={};
+    if(!placementsByCamp[p.campaignId][type]){
+      placementsByCamp[p.campaignId][type]={placeType:type, placementName:placeName(p.placement), rawPlacement:p.placement, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
+    }
+    const e=placementsByCamp[p.campaignId][type];
+    e.impressions+=p.impressions; e.clicks+=p.clicks; e.spend+=p.spend; e.sales+=p.sales; e.orders+=p.orders;
+  });
+  const rows=[];
+  targetsByCamp.forEach((t, cid)=>{
+    const plMap=placementsByCamp[cid]||{};
+    const placements=Object.values(plMap).map(p=>Object.assign({}, p, derive(p)));
+    const goal=acosGoalFor(t.portfolioName)>0? acosGoalFor(t.portfolioName) : 20;
+    const thr=st.threshold;
+    const boostM=1+st.boost/100;
+    const safetyM=1-st.safety/100;
+    // Baseline bid = safety cushion under the cheapest observed CPC. Skip placements with no clicks (no CPC).
+    const cpcsWithData=placements.filter(p=>p.cpc>0).map(p=>p.cpc);
+    const minCpc=cpcsWithData.length? Math.min(...cpcsWithData) : 0;
+    const baselineBid=minCpc>0? Math.max(0.20, +(minCpc*safetyM).toFixed(2)) : t.bid;
+    // Campaign-total totals for zero-out
+    const totClicks=placements.reduce((s,p)=>s+p.clicks,0);
+    const totOrders=placements.reduce((s,p)=>s+p.orders,0);
+    const zeroOutAll=totOrders===0 && totClicks>thr;
+    // Any placement bad → bid gets cut to baseline
+    let anyBad=false;
+    placements.forEach(p=>{
+      if(p.orders===0 && p.clicks>thr) anyBad=true;
+      else if(p.orders>0 && p.acos>goal && p.clicks>thr/2) anyBad=true;
+    });
+    // BID decision
+    let newBid=t.bid, bidAction='none', bidReason='';
+    if(anyBad && baselineBid>0 && baselineBid<t.bid){
+      newBid=baselineBid;
+      bidAction='decrease';
+      bidReason=`Placement problematic → bid coborât la ${st.safety}% sub CPC-ul cel mai mic (€${baselineBid.toFixed(2)})`;
+    }
+    // PLACEMENT % per placement
+    const perPlace={};
+    ['top','rest','pp'].forEach(type=>{
+      const p=plMap[type]; if(!p) return;
+      const d=derive(p);
+      let newPct=p.percentage, why='fără modificare', act='none';
+      if(zeroOutAll){
+        if(p.percentage>0){ newPct=0; act='decrease'; why=`campanie ${totClicks} clicks, 0 orders → 0%`; }
+        else { why='deja la 0%'; }
+      } else if(p.cpc<=0){
+        why='fără traffic aici';
+      } else {
+        let targetCpc=null;
+        if(d.acos>0 && d.acos<goal){
+          targetCpc=d.cpc*boostM;
+          why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${st.boost}%`;
+        } else if(d.acos===0 && p.orders===0 && p.clicks<=thr){
+          targetCpc=d.cpc*boostM;
+          why=`test (${p.clicks} clicks, 0 orders) → boost +${st.boost}%`;
+        } else if(d.acos===0 && p.orders===0 && p.clicks>thr){
+          newPct=0; act='decrease'; why=`${p.clicks} clicks, 0 orders → 0%`;
+        } else if(d.acos>goal){
+          const cutPct=Math.min(0.30, Math.max(0, 2*(d.acos-goal*1.1)/100));
+          targetCpc=d.cpc*(1-cutPct)*1.1;
+          why=`ACoS ${fAcos(d.acos)} peste goal → target ${(cutPct*100).toFixed(0)}% sub CPC`;
+        } else {
+          why=`ACoS ${fAcos(d.acos)} la target`;
+        }
+        if(targetCpc!=null){
+          const baseline=newBid>0? newBid : baselineBid;
+          if(baseline>0){
+            const raw=Math.round((targetCpc/baseline-1)*100);
+            newPct=Math.max(0, Math.min(900, raw));
+            act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+          }
+        }
+      }
+      perPlace[type]=Object.assign({}, p, d, {newPct, why, action:act});
+    });
+    // Effective row totals (from campaign totals)
+    const rowTotals=derive({impressions:placements.reduce((s,p)=>s+p.impressions,0),clicks:totClicks,spend:placements.reduce((s,p)=>s+p.spend,0),sales:placements.reduce((s,p)=>s+p.sales,0),orders:totOrders});
+    const hasChange = bidAction!=='none' || Object.values(perPlace).some(p=>p.action!=='none');
+    rows.push({
+      _uid: cid,
+      campaignId: cid,
+      campaignName: t.campaignName||DATA.campById[cid]?.name||cid,
+      portfolioName: t.portfolioName||'(No Portfolio)',
+      target: t,
+      goal,
+      currentBid: t.bid,
+      newBid,
+      bidAction,
+      bidReason,
+      baselineBid,
+      perPlace,
+      totClicks, totOrders,
+      spend: rowTotals.spend, sales: rowTotals.sales, orders: rowTotals.orders, clicks: rowTotals.clicks, acos: rowTotals.acos, cpc: rowTotals.cpc,
+      hasChange,
+    });
+  });
+  return {rows, st};
+}
+function renderSingleKw(){
+  const {rows: allRows, st}=computeSingleKwRows(S.product);
+  if(st.hideNoChange===undefined) st.hideNoChange=true;
+  let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
+  if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  const sel=selFor('singlekw');
+  // Auto-select every changed row on first render so nothing has to be ticked before export.
+  rows.forEach(r=>{ if(r.hasChange && !sel.has(r._uid)) sel.add(r._uid); });
+  const bidCell=r=>{
+    if(r.bidAction==='decrease') return `<span class="num-red">€${r.currentBid.toFixed(2)} → €${r.newBid.toFixed(2)}</span> <span class="muted">(-${(((r.currentBid-r.newBid)/r.currentBid)*100).toFixed(0)}%)</span>`;
+    return `<span class="muted">€${r.currentBid.toFixed(2)}</span>`;
+  };
+  const placeCell=(r,type)=>{
+    const p=r.perPlace[type]; if(!p) return '<span class="muted">—</span>';
+    const cur=(p.percentage>0?'+':'')+p.percentage+'%';
+    if(p.action==='none') return `<span class="muted" title="${esc(p.why||'')}">${cur}</span>`;
+    const nw=(p.newPct>0?'+':'')+p.newPct+'%';
+    const cls=p.action==='decrease'?'num-red':'num-green';
+    const arrow=p.action==='decrease'?'↓':'↑';
+    return `<span class="${cls}" title="${esc(p.why||'')}">${cur} → ${nw} ${arrow}</span>`;
+  };
+  const cols=[
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
+    {key:'goal',label:'Goal',type:'num',cell:r=>r.goal+'%'},
+    {key:'clicks',label:'Clicks',type:'int'},
+    {key:'orders',label:'Orders',type:'int'},
+    {key:'spend',label:'Spend',type:'money'},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
+    {key:'bid',label:'Bid',type:'money',sortVal:r=>r.currentBid,cell:bidCell},
+    {key:'tos',label:'Top of Search',type:'num',sortVal:r=>r.perPlace.top?r.perPlace.top.percentage:-1,cell:r=>placeCell(r,'top')},
+    {key:'ros',label:'Rest of Search',type:'num',sortVal:r=>r.perPlace.rest?r.perPlace.rest.percentage:-1,cell:r=>placeCell(r,'rest')},
+    {key:'pdp',label:'Product Pages',type:'num',sortVal:r=>r.perPlace.pp?r.perPlace.pp.percentage:-1,cell:r=>placeCell(r,'pp')},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'singlekw',selectable:true,idKey:'_uid',sortDef:{key:'spend',dir:-1},onChange:renderSingleKw});
+  const totalCamps=allRows.length;
+  const withChange=allRows.filter(r=>r.hasChange).length;
+  const selCount=rows.filter(r=>sel.has(r._uid)).length;
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Single-KW Optimizer</h3>
+      <div class="hint" style="margin-bottom:10px;">Reguli PPC Butler pentru campanii cu <b>o singură keyword/target</b>. Bidul și placement-urile se decid împreună (au aceeași keyword în spate). Campaniile multi-keyword sunt în tabul Bid Optimizer / Placement Optimizer.</div>
+      <div class="ctrls">
+        <div class="field"><label>Clicks threshold</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:100px;" title="Peste câte clicks pe un placement fără vânzare se declanșează cutul. La ACoS peste goal, pragul e jumătate (threshold/2)."></div>
+        <div class="field"><label>Bid safety %</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:100px;" title="Bidul nou = cel mai mic CPC observat pe cele 3 placements MINUS acest procent. Default 10% = bid la 90% din cel mai mic CPC."></div>
+        <div class="field"><label>Boost placement bun %</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:100px;" title="Placement-urile rentabile (ACoS sub goal) primesc un target CPC = CPC observat × (1+acest procent). Default 20%."></div>
+      </div>
+      ${renderPortfolioGoalPanel(S.product)}
+      <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Campanie</label><input type="text" id="sk-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="sk-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('Campanii single-kw',fInt(totalCamps))}${kpi('Cu modificări sugerate',fInt(withChange))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Single-KW Changes (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn grad" id="sk-export" ${selCount?'':'disabled'}>Export Single-KW Update (${selCount})</button>
+      </div>
+      <div id="sk-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#sk-table'));
+  const upd=()=>renderSingleKw();
+  wirePortfolioGoalPanel(S.product, upd);
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('sk-thr','threshold',v=>+v||1);
+  bind('sk-safety','safety',v=>+v||0);
+  bind('sk-boost','boost',v=>+v||0);
+  $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
+  $('#sk-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
+  $('#sk-export').onclick=()=>exportSingleKwOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
+}
+function exportSingleKwOptimization(product, rows){
+  if(!rows.length){ alert('Nicio campanie selectată.'); return; }
+  const prod=productLabel(product);
+  const out=[];
+  rows.forEach(r=>{
+    // Bid update (if changed)
+    if(r.bidAction!=='none' && r.newBid!==r.currentBid){
+      const t=r.target;
+      const bidRow=Object.assign({'Product':prod,'Entity':t.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':t.campaignId,'Ad Group ID':t.adGroupId,'Bid':r.newBid}, t.kind==='keyword'?{'Keyword ID':t.id}:{'Product Targeting ID':t.id});
+      out.push(bulkRow(bidRow));
+    }
+    // Placement % updates
+    Object.values(r.perPlace).forEach(p=>{
+      if(p.action==='none') return;
+      if(p.newPct===p.percentage) return;
+      out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
+    });
+  });
+  if(!out.length){ alert('Nimic de exportat (nicio modificare reală în selecție).'); return; }
+  writeBulk(out, productFilePrefix(product)+'singlekw_optimization_bulk.xlsx', productSheetName(product));
+  alert(`Exportat ${out.length} update-uri (bid + placement) pentru ${rows.length} campanii single-kw.`);
 }
 
 /* ============================ BUDGET REBALANCING ============================ */
