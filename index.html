@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-15 17:26</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-15 20:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -804,16 +804,12 @@ const FIXED_PRODUCT_TABS=new Set(['negatives','negatives-sb','targets','targets-
 function renderNav(){
   const visTabs = S.focusMode ? TABS.filter(t=>FOCUS_TABS.has(t.id)) : TABS;
   if(S.focusMode && !FOCUS_TABS.has(S.tab)) S.tab='optbids';
-  $('#nav').innerHTML = visTabs.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('')
-    +`<button class="navbtn" id="focusToggle" style="margin-left:auto;${S.focusMode?'background:#dbeafe;color:#1d4ed8;':''}" title="Hides every tab except Bid Optimizer and Placement Optimizer — for optimizing bids/placements only, without Negatives/Harvesting/etc cluttering the nav.">${S.focusMode?'✓ Focus: Bids + Placement':'Focus: Bids + Placement only'}</button>`;
+  $('#nav').innerHTML = visTabs.map(t=>`<button class="navbtn ${S.tab===t.id?'active':''}" data-tab="${t.id}"><span>${t.ic}</span>${esc(t.label)}</button>`).join('');
   $('#nav').querySelectorAll('.navbtn[data-tab]').forEach(b=>b.onclick=()=>{
     S.tab=b.dataset.tab;
-    // Leaving the Optimize tabs while SD was selected would otherwise strand S.product on 'SD' with no visible
-    // way to switch back (the toggle button only exists there) — every other tab would just render empty.
     if(!OPT_TABS.has(S.tab) && S.product==='SD') S.product='SP';
     renderNav(); renderToggle(); renderTab();
   });
-  const ft=$('#focusToggle'); if(ft) ft.onclick=()=>{ S.focusMode=!S.focusMode; renderNav(); renderToggle(); renderTab(); };
 }
 function renderToggle(){
   const el=$('#ptToggle'); if(!el) return;
@@ -2843,6 +2839,40 @@ function renderOptBids(){
   const isDeliberateLowBid=cid=>skipNeedle? String(DATA.campById[cid]?.name||'').toLowerCase().includes(skipNeedle) : false;
   const wakeSkipped=[];
   const kwGateSkipped=[];
+  // PANIC BUTTON (multi-kw only): dacă o campanie multi-kw are placement clar catastrofică (0 orders +
+  // multe clicks, sau ACoS mult peste goal), oprește hemoragia setând TOATE keywords din campanie la
+  // min(cpc×) × (1-safety%). E ce face Butler la Pas 1 pe NO SUP. Panic e mai brutal decât tier-urile
+  // normale — de-aceea are praguri mai stricte (clicks și ACoS mai mari) și un factor propriu (0.7 default).
+  if(st.panicEnabled===undefined) st.panicEnabled=true;
+  if(st.panicClicksThr===undefined) st.panicClicksThr=20;
+  if(st.panicAcosMult===undefined) st.panicAcosMult=2;
+  if(st.panicSafetyPct===undefined) st.panicSafetyPct=30;
+  const multiKwPlByCamp={};
+  placementOpt.allRows.forEach(pr=>{
+    if(pr.isSingle || pr.placeType==='business') return;
+    (multiKwPlByCamp[pr.campaignId]=multiKwPlByCamp[pr.campaignId]||[]).push(pr);
+  });
+  const panicByCamp={};
+  if(st.panicEnabled){
+    Object.keys(multiKwPlByCamp).forEach(cid=>{
+      const pls=multiKwPlByCamp[cid];
+      const goal=acosGoalFor(pls[0].portfolioName)>0? acosGoalFor(pls[0].portfolioName) : (pst.acosGoal||20);
+      let panic=false, reason='';
+      pls.forEach(p=>{
+        if(panic) return;
+        if(p.orders===0 && p.clicks>=st.panicClicksThr){ panic=true; reason=`${p.placementName}: ${p.clicks} clicks, 0 orders`; }
+        else if(p.orders>0 && p.acos>goal*st.panicAcosMult && p.clicks>=st.panicClicksThr){ panic=true; reason=`${p.placementName}: ACoS ${fAcos(p.acos)} (>${(goal*st.panicAcosMult).toFixed(0)}%)`; }
+      });
+      if(panic){
+        const cpcs=pls.filter(p=>p.cpc>0).map(p=>p.cpc);
+        const minCpc=cpcs.length? Math.min(...cpcs) : 0;
+        if(minCpc>0){
+          const newBid=Math.max(0.20, +(minCpc*(1-st.panicSafetyPct/100)).toFixed(2));
+          panicByCamp[cid]={newBid, reason, minCpc};
+        }
+      }
+    });
+  }
   let rows=src.map(t=>{
     const d=derive(agg([t]));
     const category=bidCategoryFor(t, brandTermsArr);
@@ -2853,7 +2883,14 @@ function renderOptBids(){
     // (they were never goal-derived to begin with, see increaseTierFor).
     const decTiers = st.deriveTiers ? tiersForGoal(acosGoalFor(t.portfolioName), goalTiers()) : st;
     let action='none', newBid=t.bid, pct=null, reason=null;
+    const panicHit=panicByCamp[t.campaignId];
     const floorOverride=floorBidOverrides[t.campaignId];
+    // Panic wins over everything else — the whole point is to react fast when a placement is bleeding.
+    if(panicHit && panicHit.newBid<t.bid){
+      action='panic'; newBid=panicHit.newBid;
+      pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
+      reason=`PANIC: ${panicHit.reason} → toate kws la min CPC €${panicHit.minCpc.toFixed(2)} × ${(100-st.panicSafetyPct)}%`;
+    } else
     // Computed off the campaign's DOMINANT target's bid (computePlacementOptRows already guards newBid against
     // that one), but an Auto campaign's other targeting buckets (close-match/loose-match/substitutes/
     // complements) each carry their OWN bid — one of those can already sit BELOW this campaign-wide newBid,
@@ -2971,6 +3008,7 @@ function renderOptBids(){
   const sel=selFor('optbids');
   const totals=agg(rows);
   const actionBadge=r=>{
+    if(r.action==='panic') return `<span class="badge" style="background:#7f1d1d;color:#fff;font-weight:600;" title="${esc(r.reason||'')}">🚨 PANIC -${r.pct}%</span>`;
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
     if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
     if(r.action==='stuck-bump') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="${esc(r.reason||'')}">↑ +${fMoney(r.newBid-r.bid)} (stuck placement)</span>`;
@@ -3079,6 +3117,14 @@ function renderOptBids(){
         <div class="field"><input type="number" id="ob-maxkw" value="${st.maxKwForRaise}" style="width:70px;" ${st.maxKwGateEnabled?'':'disabled'}></div>
         <div class="hint" style="align-self:center;">keywords (listed below for manual review instead of auto-raised). Uncheck to raise large campaigns too.</div>
       </div>
+      <div class="hint" style="margin:14px 0 4px;color:#b91c1c;font-weight:600;">🚨 Panic button (multi-kw only)</div>
+      <div class="ctrls">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-panicen" ${st.panicEnabled?'checked':''}> Activează</label>
+        <div class="field"><label>Trigger: clicks ≥</label><input type="number" id="ob-panicclicks" value="${st.panicClicksThr}" style="width:80px;" title="O placement în campania multi-kw cu 0 orders + atâtea clicks (sau ACoS mult peste goal) declanșează panic."></div>
+        <div class="field"><label>...sau ACoS &gt; goal ×</label><input type="number" step="0.5" id="ob-panicacos" value="${st.panicAcosMult}" style="width:80px;" title="Ex: 2 = ACoS peste 2× goal. La goal 30%, se declanșează la ACoS &gt;60% pe placement."></div>
+        <div class="field"><label>Bid nou = min CPC ×</label><input type="number" id="ob-panicsafety" min="0" max="70" value="${st.panicSafetyPct}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">jos (default 30% = bid la 70% din CPC minim)</span></div>
+      </div>
+      <div class="hint" style="margin:6px 0 12px;">Când o campanie multi-kw are placement clar catastrofică (0 orders + multe clicks SAU ACoS ≥ goal×2 + multe clicks), TOATE keywords din campanie primesc bid = <b>min(CPC×) × (1 − safety%)</b>. Opreste hemoragia rapid, ca la Butler NO SUP. Câștigă în fața celorlalte reguli.</div>
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-hidestale" ${st.hideStale?'checked':''}> Hide campaigns edited mid-window</label>
         <div class="hint" style="align-self:center;" title="Detected arithmetically: with 'Dynamic bids - down only' Amazon can never pay more than your effective bid, so a CPC above it proves the bid or placement % changed during the report window (the ceiling is raised for 'up and down' campaigns, which may bid up +100% on Top of Search).">Campaigns whose bid or placement % changed during the report window are marked <span class="badge" style="background:#fef3e2;color:#c2760a;">edited mid-window</span> — their metrics describe the old settings. Suggestions still apply (they converge), tick this to hide them entirely.</div>
@@ -3091,6 +3137,7 @@ function renderOptBids(){
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Changes (${rows.length})</h3>
         <div class="field"><label>Show</label><select id="ob-actionf">
           <option value="all" ${st.actionFilter==='all'?'selected':''}>All (${allRows.length})</option>
+          <option value="panic" ${st.actionFilter==='panic'?'selected':''}>🚨 Panic only (${allRows.filter(r=>r.action==='panic').length})</option>
           <option value="decrease" ${st.actionFilter==='decrease'?'selected':''}>Decreases only (${allRows.filter(r=>r.action==='decrease').length})</option>
           <option value="increase" ${st.actionFilter==='increase'?'selected':''}>Increases only (${allRows.filter(r=>r.action==='increase').length})</option>
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
@@ -3143,6 +3190,10 @@ function renderOptBids(){
   bind('ob-wakepct','wakePct',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
+  $('#ob-panicen').onchange=e=>{ st.panicEnabled=e.target.checked; upd(); };
+  bind('ob-panicclicks','panicClicksThr',v=>+v||1);
+  bind('ob-panicacos','panicAcosMult',v=>+v||1);
+  bind('ob-panicsafety','panicSafetyPct',v=>+v||0);
   $('#ob-wakeskip').oninput=debounce(()=>{ st.wakeSkip=$('#ob-wakeskip').value; upd(); },350);
   bind('ob-maxkw','maxKwForRaise',v=>+v||0);
   $('#ob-maxkwgate').onchange=e=>{ st.maxKwGateEnabled=e.target.checked; renderOptBids(); };
