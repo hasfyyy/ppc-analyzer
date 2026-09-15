@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-15 17:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-15 17:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2678,16 +2678,19 @@ function renderPortfolioGoalPanel(product){
   const pst=stFor('optplace'); if(pst.portfolioGoals===undefined) pst.portfolioGoals={};
   const rows=classifyPortfolios(product);
   const overrideCount=Object.keys(pst.portfolioGoals).filter(k=>pst.portfolioGoals[k]>0).length;
+  const g=pst.acosGoal||20;
+  const newGoal=Math.round(g*(pst.newLaunchGoalMult||1));
+  const badGoal=Math.round(g*(pst.underperformGoalMult||1));
   return `<details style="margin-top:12px;" id="pg-panel" ${pst.portfolioGoalPanelOpen?'open':''}>
-    <summary class="sectitle" style="cursor:pointer;">ACoS goal by portfolio${overrideCount?` (${overrideCount} overridden)`:''} — click to edit</summary>
-    <div class="hint" style="margin:8px 0;">Shared with Placement Optimizer. No real launch date in this file, so click volume stands in for "new or tiny". Auto-classify sets a goal per portfolio; edit any number below to override it by hand afterward.</div>
-    <div class="ctrls" style="margin-bottom:8px;">
-      <div class="field"><label>New / Low Data: under spend $</label><input type="number" id="pg-newspend" min="0" value="${pst.newLaunchSpend}" style="width:90px;"></div>
-      <div class="field"><label>...goal ×</label><input type="number" step="0.1" id="pg-newmult" min="0" value="${pst.newLaunchGoalMult}" style="width:80px;"></div>
-      <div class="field"><label>Underperformer: CVR under % of account avg</label><input type="number" id="pg-badcvr" min="0" value="${pst.underperformCvrPct}" style="width:90px;"></div>
-      <div class="field"><label>...goal ×</label><input type="number" step="0.1" id="pg-badmult" min="0" value="${pst.underperformGoalMult}" style="width:80px;"></div>
-      <button class="btn ghost" id="pg-autoclassify">Auto-classify all portfolios</button>
-      ${overrideCount?`<button class="btn ghost" id="pg-clearall">Clear all overrides</button>`:''}
+    <summary class="sectitle" style="cursor:pointer;">ACoS goal per portfoliu${overrideCount?` (${overrideCount} setate manual)`:''} — click pentru editare</summary>
+    <div class="hint" style="margin:8px 0;">Goalul global (${g}%) se aplică pe portofoliile <b>mature</b>. Pentru <b>campanii noi/mici</b> și <b>portofolii slabe</b>, poți seta un goal diferit — sau lasă tabelul de jos să te ghideze (Auto-classify) și modifici manual după. Setările sunt împărțite cu tab-ul Placement Optimizer.</div>
+    <div class="ctrls" style="margin-bottom:8px;align-items:flex-end;">
+      <div class="field" style="flex:0 0 auto;"><label>Campanii noi/mici — spend sub</label><input type="number" id="pg-newspend" min="0" value="${pst.newLaunchSpend}" style="width:80px;"> $</div>
+      <div class="field" style="flex:0 0 auto;"><label>...primesc ACoS goal</label><input type="number" step="1" id="pg-newgoal" min="0" value="${newGoal}" style="width:80px;"> %</div>
+      <div class="field" style="flex:0 0 auto;"><label>Portofolii slabe — CVR sub</label><input type="number" id="pg-badcvr" min="0" value="${pst.underperformCvrPct}" style="width:80px;"> % din media contului</div>
+      <div class="field" style="flex:0 0 auto;"><label>...primesc ACoS goal</label><input type="number" step="1" id="pg-badgoal" min="0" value="${badGoal}" style="width:80px;"> %</div>
+      <button class="btn ghost" id="pg-autoclassify" style="margin-bottom:2px;">Auto-classify all portfolios</button>
+      ${overrideCount?`<button class="btn ghost" id="pg-clearall" style="margin-bottom:2px;">Șterge toate overrides</button>`:''}
     </div>
     <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Spend</th><th>Clicks</th><th>CVR</th><th class="l">Tier</th><th>ACoS Goal</th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td class="l">${esc(r.portfolioName)}</td><td>${fMoney(r.spend)}</td><td>${fInt(r.clicks)}</td><td>${fPct(r.cvr)}</td><td class="l">
@@ -2708,9 +2711,12 @@ function wirePortfolioGoalPanel(product, onChange){
   const panelEl=$('#pg-panel'); if(panelEl) panelEl.ontoggle=()=>{ pst.portfolioGoalPanelOpen=panelEl.open; };
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ pst[key]=parse(el.value); onChange(); },300); };
   bind('pg-newspend','newLaunchSpend',v=>+v||0);
-  bind('pg-newmult','newLaunchGoalMult',v=>+v||1);
   bind('pg-badcvr','underperformCvrPct',v=>+v||0);
-  bind('pg-badmult','underperformGoalMult',v=>+v||1);
+  // Multipliers are stored, but the UI now shows the ABSOLUTE goal %; convert back on input.
+  const g=()=>pst.acosGoal||20;
+  const bindGoal=(id,mkey)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ const gv=+el.value||g(); pst[mkey]=+(gv/g()).toFixed(3); onChange(); },300); };
+  bindGoal('pg-newgoal','newLaunchGoalMult');
+  bindGoal('pg-badgoal','underperformGoalMult');
   const autoBtn=$('#pg-autoclassify'); if(autoBtn) autoBtn.onclick=()=>{
     // Only fills in portfolios still left on "Auto" — a manual tier pick is never overwritten by this button.
     classifyPortfolios(product).forEach(r=>{ if(!r.manualTier && r.tier!=='mature') pst.portfolioGoals[r.portfolioName]=r.suggestedGoal; });
@@ -3737,7 +3743,9 @@ function computeSingleKwRows(product){
   targetsByCamp.forEach((t, cid)=>{
     const plMap=placementsByCamp[cid]||{};
     const placements=Object.values(plMap).map(p=>Object.assign({}, p, derive(p)));
-    const goal=acosGoalFor(t.portfolioName)>0? acosGoalFor(t.portfolioName) : 20;
+    // Global ACoS goal only — same as Butler's SUP rules, no per-portfolio overrides.
+    const pst=stFor('optplace'); if(pst.acosGoal===undefined) pst.acosGoal=20;
+    const goal=pst.acosGoal;
     const thr=st.threshold;
     const boostM=1+st.boost/100;
     const safetyM=1-st.safety/100;
@@ -3869,11 +3877,11 @@ function renderSingleKw(){
       <h3 class="sectitle">Single-KW Optimizer</h3>
       <div class="hint" style="margin-bottom:10px;">Reguli PPC Butler pentru campanii cu <b>o singură keyword/target</b>. Bidul și placement-urile se decid împreună (au aceeași keyword în spate). Campaniile multi-keyword sunt în tabul Bid Optimizer / Placement Optimizer.</div>
       <div class="ctrls">
-        <div class="field"><label>Clicks threshold</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:100px;" title="Peste câte clicks pe un placement fără vânzare se declanșează cutul. La ACoS peste goal, pragul e jumătate (threshold/2)."></div>
-        <div class="field"><label>Bid safety %</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:100px;" title="Bidul nou = cel mai mic CPC observat pe cele 3 placements MINUS acest procent. Default 10% = bid la 90% din cel mai mic CPC."></div>
-        <div class="field"><label>Boost placement bun %</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:100px;" title="Placement-urile rentabile (ACoS sub goal) primesc un target CPC = CPC observat × (1+acest procent). Default 20%."></div>
+        <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
+        <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
+        <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
+        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 20% — target CPC = CPC × 1.20)</span></div>
       </div>
-      ${renderPortfolioGoalPanel(S.product)}
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campanie</label><input type="text" id="sk-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
@@ -3891,11 +3899,11 @@ function renderSingleKw(){
     </div>`;
   tbl.wire($('#sk-table'));
   const upd=()=>renderSingleKw();
-  wirePortfolioGoalPanel(S.product, upd);
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('sk-thr','threshold',v=>+v||1);
   bind('sk-safety','safety',v=>+v||0);
   bind('sk-boost','boost',v=>+v||0);
+  const goalEl=$('#sk-goal'); if(goalEl) goalEl.oninput=debounce(()=>{ stFor('optplace').acosGoal=+goalEl.value||20; upd(); },300);
   $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
   $('#sk-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
