@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 10:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 10:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3936,8 +3936,12 @@ function renderSingleKw(){
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const sel=selFor('singlekw');
-  // Auto-select every changed row on first render so nothing has to be ticked before export.
-  rows.forEach(r=>{ if(r.hasChange && !sel.has(r._uid)) sel.add(r._uid); });
+  // Auto-select o SINGURĂ dată (la primul render), altfel deselectarea nu funcționează —
+  // re-selecția automată ar readăuga imediat rândul pe care tocmai l-ai deselectat.
+  if(!st.initialSelected){
+    rows.forEach(r=>{ if(r.hasChange) sel.add(r._uid); });
+    st.initialSelected=true;
+  }
   const bidCell=r=>{
     if(r.bidAction==='decrease') return `<span class="num-red">€${r.currentBid.toFixed(2)} → €${r.newBid.toFixed(2)}</span> <span class="muted">(-${(((r.currentBid-r.newBid)/r.currentBid)*100).toFixed(0)}%)</span>`;
     return `<span class="muted">€${r.currentBid.toFixed(2)}</span>`;
