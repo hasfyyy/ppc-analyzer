@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 10:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 11:43</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -4056,26 +4056,29 @@ function renderOptBudget(){
   if(st.incHi3===undefined) st.incHi3=8; if(st.incPct3===undefined) st.incPct3=20;
   if(st.minSpend===undefined) st.minSpend=20; if(st.periodDays===undefined) st.periodDays=7;
   if(st.manualBudget===undefined) st.manualBudget={};
+  if(st.showAll===undefined) st.showAll=false;
   const days=Math.max(1, st.periodDays);
   // Same dayparting reasoning as the rest of Optimize — State alone isn't reliable, budget is.
   const camps=DATA.campaigns.filter(c=>c.product===S.product && c.dailyBudget>1 && c.spend>=st.minSpend);
-  // Every eligible campaign shows up here now, not just the ones that cross a threshold — the point is to
-  // let you SEE the underlying spend/sales/ACoS for every campaign and type in your own budget if you want,
-  // not just approve or reject an auto-suggestion.
+  // Budget changes only fire on CAPPED campaigns (util >= capUtil). If a campaign isn't hitting its budget,
+  // the budget isn't the constraint — bid is — so nothing to do here. Reflects the manual workflow: filter
+  // capped → good perf gets increase, bad perf gets decrease.
   let rows=camps.map(c=>{
     const d=derive(c);
     const util=campaignBudgetUtil(c,days)*100;
+    const isCapped=util>=st.capUtil;
     let action='none', newBudget=c.dailyBudget, reason=null, delta=0;
-    if(util>=st.capUtil){
+    if(isCapped){
       const incAmt=increaseTierFor(d.acos, st);
       if(incAmt!=null){ action='increase'; delta=incAmt; newBudget=+(c.dailyBudget+incAmt).toFixed(2); reason=`${fInt(util)}% utilizat, ACoS ${fAcos(d.acos)}`; }
+      else {
+        const decAmt=decreaseTierFor(d.acos, st);
+        if(decAmt!=null){ action='decrease'; delta=decAmt; newBudget=Math.max(1, +(c.dailyBudget-decAmt).toFixed(2)); reason=`${fInt(util)}% utilizat, ACoS ${fAcos(d.acos)}`; }
+      }
     }
-    if(action==='none'){
-      const decAmt=decreaseTierFor(d.acos, st);
-      if(decAmt!=null){ action='decrease'; delta=decAmt; newBudget=Math.max(1, +(c.dailyBudget-decAmt).toFixed(2)); reason=`ACoS ${fAcos(d.acos)}`; }
-    }
-    return Object.assign({action,newBudget,delta,util,reason},c,d);
+    return Object.assign({action,newBudget,delta,util,reason,isCapped},c,d);
   });
+  if(!st.showAll) rows=rows.filter(r=>r.isCapped);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   rows.forEach(r=>{ r._uid=r.campaignId; if(st.manualBudget[r._uid]!==undefined) r.newBudget=st.manualBudget[r._uid]; }); // stable identity — same reasoning as Bid/Placement Optimizer above
   const sel=selFor('optbudget');
@@ -4120,13 +4123,15 @@ function renderOptBudget(){
         <div class="field"><label>Increase by $</label><input type="number" id="obg-inc3" value="${st.incPct3}" style="width:80px;"></div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
-        <div class="field"><label>Increase if Budget Used &gt;</label><input type="number" id="obg-cap" value="${st.capUtil}" style="width:90px;">%</div>
+        <div class="field"><label>Consider capped if Budget Used ≥</label><input type="number" id="obg-cap" value="${st.capUtil}" style="width:90px;">%</div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="obg-showall" ${st.showAll?'checked':''}> Arată și campaniile care NU sunt capped</label>
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Reporting period (days)</label><input type="number" id="obg-days" value="${st.periodDays}" style="width:90px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="obg-ms" value="${st.minSpend}" style="width:90px;"></div>
         <div class="field"><label>Portfolio</label><select id="obg-port">${portOptions(st.port)}</select></div>
       </div>
+      <div class="hint" style="margin-top:6px;">Doar campaniile capped (buget atins ≥ pragul de mai sus) primesc sugestii — dacă nu ating bugetul, bugetul nu e constrangerea (bidul e). ACoS bun capped → increase; ACoS prost capped → decrease.</div>
       <div class="hint" style="margin-top:8px;">"Budget Used" = spend ÷ (daily budget × zile din perioadă) — Amazon nu spune direct câte zile cuprinde bulk-ul, așa că pune aici exact ce interval ai ales la export (ex. 7, 30). Greșit aici = "Budget Used" fals.</div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
@@ -4150,6 +4155,7 @@ function renderOptBudget(){
   bind('obg-inchi3','incHi3',v=>+v||0); bind('obg-inc3','incPct3',v=>+v||0);
   bind('obg-ms','minSpend',v=>+v||0); bind('obg-days','periodDays',v=>+v||1);
   $('#obg-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#obg-showall').onchange=e=>{ st.showAll=e.target.checked; upd(); };
   // Typing a manual budget updates the row in place (and the persisted override), WITHOUT a full re-render —
   // re-rendering on every keystroke would rebuild the input and steal focus mid-type, same issue fixed
   // earlier for the plain filter fields.
