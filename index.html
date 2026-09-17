@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 12:59</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 14:16</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2898,7 +2898,7 @@ function renderOptBids(){
   if(st.incHi1===undefined) st.incHi1=20; if(st.incPct1===undefined) st.incPct1=10;
   if(st.incHi2===undefined) st.incHi2=10; if(st.incPct2===undefined) st.incPct2=20;
   if(st.incHi3===undefined) st.incHi3=5; if(st.incPct3===undefined) st.incPct3=35;
-  if(st.minOrdersInc===undefined) st.minOrdersInc=2; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
+  if(st.minOrdersInc===undefined) st.minOrdersInc=1; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
   // needs the opposite: catching it early, before it burns through 10 clicks, is the whole point).
@@ -2936,6 +2936,11 @@ function renderOptBids(){
     st.hi1=+(gt.acosGoal*gt.t1Mult).toFixed(0); st.dec1=gt.t1Cut;
     st.hi2=+(gt.acosGoal*gt.t2Mult).toFixed(0); st.dec2=gt.t2Cut;
     st.hi3=+(gt.acosGoal*gt.t3Mult).toFixed(0); st.dec3=gt.t3Cut;
+    // Increase tiers scale with goal too — hardcoded 20/10/5 didn't make sense for accounts with goal >20%.
+    // Tier 1 (sub goal) = mild bump; Tier 2 (2/3 din goal) = mid bump; Tier 3 (1/3 din goal) = big bump.
+    st.incHi1=+(gt.acosGoal).toFixed(0);
+    st.incHi2=+(gt.acosGoal*0.66).toFixed(0);
+    st.incHi3=+(gt.acosGoal*0.33).toFixed(0);
   }
   const singleKw=singleKwCampaigns(S.product);
   const enabledCamps=optimizableCampaignIds(S.product);
@@ -3173,11 +3178,11 @@ function renderOptBids(){
       </div>
       <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
-        <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="ob-inchi1" value="${st.incHi1}" style="width:80px;"></div>
+        <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="ob-inchi1" value="${st.incHi1}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
         <div class="field"><label>+%</label><input type="number" id="ob-inc1" value="${st.incPct1}" style="width:70px;"></div>
-        <div class="field"><label>Tier 2: ACoS &lt;</label><input type="number" id="ob-inchi2" value="${st.incHi2}" style="width:80px;"></div>
+        <div class="field"><label>Tier 2: ACoS &lt;</label><input type="number" id="ob-inchi2" value="${st.incHi2}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
         <div class="field"><label>+%</label><input type="number" id="ob-inc2" value="${st.incPct2}" style="width:70px;"></div>
-        <div class="field"><label>Tier 3: ACoS &lt;</label><input type="number" id="ob-inchi3" value="${st.incHi3}" style="width:80px;"></div>
+        <div class="field"><label>Tier 3: ACoS &lt;</label><input type="number" id="ob-inchi3" value="${st.incHi3}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
         <div class="field"><label>+%</label><input type="number" id="ob-inc3" value="${st.incPct3}" style="width:70px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
