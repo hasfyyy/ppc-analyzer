@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-17 10:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-17 10:50</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -930,6 +930,7 @@ function detectSkwSuffix(portfolioName, matchType, product, prefix){
   return found;
 }
 function skwTemplate(cfg){
+  if(cfg.ignoreNaming) return null;
   const pfName=getPortfolioNameById(cfg.btAccount, cfg.portfolioId);
   if(!pfName) return null;
   return detectSkwSuffix(pfName, cfg.matchType, 'SP', cfg.prefix);
@@ -973,6 +974,7 @@ function buildSkwRows(cfg){
   return out;
 }
 function skwNamingBannerHtml(cfg){
+  if(cfg.ignoreNaming) return `Ignoring existing naming (checkbox below) — campaigns will use the manual fields below, regardless of what's already in this portfolio.`;
   const tmpl=skwTemplate(cfg);
   if(tmpl){ const suffix=refreshAgentToken(refreshDateToken(tmpl.suffix), cfg.agent); return `Found existing naming in this portfolio: <b>${esc(tmpl.fullName)}</b> → campaigns will be <b>${esc(cfg.prefix)}_${esc(cfg.matchType)}_{keyword}_${esc(suffix)}</b> (month/year and your agent number refreshed, no duplicates).`; }
   return REF.campaigns.length? `No existing numbered ${esc(cfg.prefix)}_${esc(cfg.matchType)}_&lt;N&gt;_… campaign found in this portfolio to copy naming from — using the manual fields below (the keyword is always included regardless).` : `No Reference Bulk loaded — using the manual fields below (the keyword is always included regardless). Upload one (top of page) to copy naming from an existing campaign.`;
@@ -1002,6 +1004,9 @@ function renderSingleKw(){
         </div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
       <div class="banner" id="skw-naming-banner" style="margin:4px 0 12px;">${skwNamingBannerHtml(cfg)}</div>
+      <div class="ctrls" style="margin-bottom:6px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="skw-ignore-naming" ${cfg.ignoreNaming?'checked':''}> Ignoră naming-ul existent din portfoliu — folosește fix ce pui în câmpurile de mai jos</label>
+      </div>
       <div class="ctrls">
         <div class="field"><label>Prefix</label><input type="text" id="skw-prefix" value="${esc(cfg.prefix)}" style="width:80px;"></div>
         <div class="field"><label>Match Type</label><select id="skw-match">${['EXACT','PHRASE','BROAD'].map(x=>`<option ${cfg.matchType===x?'selected':''}>${x}</option>`).join('')}</select></div>
@@ -1046,6 +1051,7 @@ function renderSingleKw(){
   bindText('skw-budget','budget'); bindText('skw-bid','bid'); bindText('skw-tos','tos'); bindText('skw-pp','pp'); bindText('skw-ros','ros');
   bindText('skw-port','portfolioId'); bindText('skw-skus','skus'); bindText('skw-kw','keywords');
   $('#skw-match').onchange=e=>{ cfg.matchType=e.target.value; upd(); };
+  const skwIgnoreEl=$('#skw-ignore-naming'); if(skwIgnoreEl) skwIgnoreEl.onchange=()=>{ cfg.ignoreNaming=skwIgnoreEl.checked; renderSingleKw(); };
   $('#skw-strat').onchange=e=>{ cfg.strategy=e.target.value; };
   $('#skw-acc').onchange=e=>{ cfg.btAccount=e.target.value; cfg.portfolioId=''; cfg.childSel={}; cfg.skus=''; renderSingleKw(); };
   $('#skw-pf').onchange=e=>{
