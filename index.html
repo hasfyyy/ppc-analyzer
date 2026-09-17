@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 09:36</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 09:43</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -783,6 +783,7 @@ const TABS=[
   {id:'targets-sb',label:'Targets SB',ic:''},
   {id:'targets-sd',label:'Targets SD',ic:''},
   {id:'harvesting',label:'Harvesting',ic:''},
+  {id:'topst',label:'Top ST Detector',ic:''},
   {id:'ngroots',label:'Low ACOS Roots',ic:''},
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
@@ -833,7 +834,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, singlekw:renderSingleKw, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, singlekw:renderSingleKw, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1645,6 +1646,129 @@ function renderHarvesting(){
   wireLaunchPanel(st, selOpps, renderHarvesting);
 }
 function statOpts(v){ return ['all','not','targeted'].map(x=>`<option value="${x}" ${v===x||(!v&&x==='all')?'selected':''}>${x==='all'?'Show All':x==='not'?'Not Targeted':'Targeted'}</option>`).join(''); }
+
+/* ============================ TOP ST DETECTOR ============================ */
+// Scop: găsește search terms care performează bine în multi-kw și NU sunt încă în EXACT — candidate
+// clare pentru promovare la campanii SUP_EXACT (single-kw). Recomandat cu bulk 30-60 zile pentru date
+// stabile. Complement la Harvesting, nu înlocuitor — Harvesting arată TOATE oportunitățile; Top ST
+// Detector arată doar top performers, gata de promovat imediat.
+function renderTopStDetector(){
+  const st=stFor('topst');
+  if(st.minOrders===undefined) st.minOrders=2;
+  if(st.maxAcosMult===undefined) st.maxAcosMult=1.5; // acos <= goal × this
+  if(st.hideAsins===undefined) st.hideAsins=true;
+  const pst=stFor('optplace'); if(pst.acosGoal===undefined) pst.acosGoal=20;
+  const goal=pst.acosGoal;
+  const maxAcos=goal*st.maxAcosMult;
+  const src=stByToggle();
+  // Aggregate by search term (case-insensitive)
+  const byTerm=new Map();
+  src.forEach(s=>{
+    const key=(s.searchTerm||'').toLowerCase().trim(); if(!key) return;
+    if(!byTerm.has(key)) byTerm.set(key,{searchTerm:s.searchTerm,portfolioName:s.portfolioName,campaignId:s.campaignId,campaignName:s.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
+    const e=byTerm.get(key);
+    e.impressions+=s.impressions;e.clicks+=s.clicks;e.spend+=s.spend;e.sales+=s.sales;e.orders+=s.orders;
+  });
+  let rows=[...byTerm.values()].map(e=>{
+    const d=derive(e);
+    const term=e.searchTerm.toLowerCase().trim();
+    return Object.assign(e,d,{
+      inExact: SETS.exact.has(term),
+      inPhrase: SETS.phrase.has(term),
+      inBroad: SETS.broad.has(term),
+      isAsin: ASIN_RE.test(term),
+    });
+  });
+  // STRICT: doar NOT-in-exact + orders >= threshold + acos <= max
+  rows=rows.filter(r=>!r.inExact && r.orders>=st.minOrders && r.acos!==Infinity && r.acos<=maxAcos);
+  if(st.hideAsins) rows=rows.filter(r=>!r.isAsin);
+  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.term) rows=rows.filter(r=>r.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
+  // Tier badges — vizual clar cine e HOT vs OK
+  rows.forEach(r=>{
+    r._uid=r.searchTerm.toLowerCase().trim();
+    if(r.orders>=5 && r.acos<=goal) r.tier='hot';
+    else if(r.orders>=3 && r.acos<=goal) r.tier='solid';
+    else if(r.orders>=st.minOrders && r.acos<=maxAcos) r.tier='candidate';
+    else r.tier='watch';
+  });
+  const sel=selFor('topst');
+  const selRows=rows.filter(r=>sel.has(r._uid));
+  const tierBadge=r=>{
+    if(r.tier==='hot') return `<span class="badge" style="background:#dc2626;color:#fff;font-weight:600;" title="≥5 orders, ACoS sub goal — clar de promovat">🔥 HOT</span>`;
+    if(r.tier==='solid') return `<span class="badge" style="background:#16a34a;color:#fff;">✓ SOLID</span>`;
+    if(r.tier==='candidate') return `<span class="badge" style="background:#eab308;color:#000;">CANDIDATE</span>`;
+    return `<span class="badge" style="background:#94a3b8;color:#fff;">watch</span>`;
+  };
+  const phraseBadge=r=>r.inPhrase?'<span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:10.5px;">P</span>':'';
+  const broadBadge=r=>r.inBroad?'<span class="badge" style="background:#fef3c7;color:#92400e;font-size:10.5px;">B</span>':'';
+  const cols=[
+    {key:'sel',label:'',l:true,noSort:true,cell:r=>`<span class="toggle-sw ${sel.has(r._uid)?'on':''}" data-tstog="${esc(r._uid)}"></span>`},
+    {key:'tier',label:'Tier',l:true,noSort:true,cell:tierBadge,sortVal:r=>({hot:4,solid:3,candidate:2,watch:1})[r.tier]},
+    {key:'searchTerm',label:'Search Term',l:true,type:'text'},
+    {key:'coverage',label:'Deja în',l:true,noSort:true,cell:r=>[phraseBadge(r),broadBadge(r)].filter(Boolean).join(' ')||'<span class="muted">nicăieri</span>'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
+    {key:'campaignName',label:'Discovered în',l:true,type:'text'},
+    {key:'clicks',label:'Clicks',type:'int'},
+    {key:'orders',label:'Orders',type:'int'},
+    {key:'spend',label:'Spend',type:'money'},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
+    {key:'cvr',label:'CVR',type:'pct'},
+    {key:'cpc',label:'Avg CPC',type:'money'},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'topst',sortDef:{key:'orders',dir:-1},onChange:renderTopStDetector});
+  const hotCount=rows.filter(r=>r.tier==='hot').length;
+  const solidCount=rows.filter(r=>r.tier==='solid').length;
+  $('#app').innerHTML=`
+    <div class="card pad" style="border-left:4px solid #2563eb;">
+      <h3 class="sectitle" style="margin-top:0;">Top ST Detector — search terms gata de promovat la Single-KW Exact</h3>
+      <div class="hint" style="margin-bottom:10px;"><b>Recomandat: bulk 30-60 zile</b> pentru date stabile. Cu 7 zile un search term "bun" poate fi doar noroc. Arată doar search terms care <b>NU sunt în Exact</b>, au orders solide și ACoS ≤ goal × threshold.</div>
+      <div class="ctrls">
+        <div class="field"><label>ACoS goal (referință)</label><input type="number" id="ts-goal" min="1" value="${goal}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">shared cu Single-KW Optimization</span></div>
+        <div class="field"><label>Min orders ≥</label><input type="number" id="ts-minord" min="1" value="${st.minOrders}" style="width:80px;" title="Câte orders trebuie să aibă un search term ca să apară aici. Cu bulk 60 zile, 2 e minimum decent; pentru rigor mai mare pune 3-5."></div>
+        <div class="field"><label>Max ACoS = goal ×</label><input type="number" step="0.1" id="ts-acosmult" min="0.5" value="${st.maxAcosMult}" style="width:80px;" title="Ex: 1.5 = ACoS ≤ goal × 1.5. La goal 20%, threshold = 30%."></div>
+        <div class="field"><label>Portfolio</label><select id="ts-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Filter search term</label><input type="text" id="ts-term" placeholder="Filtrează după cuvânt…" value="${esc(st.term||'')}"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="ts-hideasin" ${st.hideAsins?'checked':''}> Ascunde ASINs</label>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('🔥 HOT (≥5 orders + ACoS ≤ goal)',fInt(hotCount),'red')}${kpi('✓ SOLID (≥3 orders)',fInt(solidCount),'green')}${kpi('Total candidați',fInt(rows.length))}${kpi('Selectate',fInt(selRows.length),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Ready to promote (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn ghost" id="ts-selall">${rows.length && rows.every(r=>sel.has(r._uid))?'Deselect all':'Select all'}</button>
+        <button class="btn ghost" id="ts-selhot" title="Selectează doar cele marcate HOT + SOLID">Select HOT + SOLID</button>
+        <button class="btn grad" id="ts-copy" ${selRows.length?'':'disabled'} title="Copiază search terms selectate, una per linie — paste în Campaign Builder pentru launch imediat ca SUP_EXACT campanii.">Copy selected (${selRows.length})</button>
+      </div>
+      <div id="ts-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#ts-table'));
+  document.querySelectorAll('[data-tstog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tstog; sel.has(id)?sel.delete(id):sel.add(id); const y=window.scrollY; const w=document.querySelector('#ts-table .tablewrap'); const wt=w?w.scrollTop:0; renderTopStDetector(); window.scrollTo(0,y); const w2=document.querySelector('#ts-table .tablewrap'); if(w2) w2.scrollTop=wt; });
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); renderTopStDetector(); },300); };
+  $('#ts-goal').oninput=debounce(()=>{ pst.acosGoal=+$('#ts-goal').value||20; renderTopStDetector(); },300);
+  bind('ts-minord','minOrders',v=>+v||1);
+  bind('ts-acosmult','maxAcosMult',v=>+v||1);
+  $('#ts-port').onchange=e=>{st.port=e.target.value; renderTopStDetector();};
+  bind('ts-term','term',v=>v);
+  $('#ts-hideasin').onchange=e=>{st.hideAsins=e.target.checked; renderTopStDetector();};
+  $('#ts-selall').onclick=()=>{
+    const allSel=rows.length && rows.every(r=>sel.has(r._uid));
+    if(allSel) rows.forEach(r=>sel.delete(r._uid)); else rows.forEach(r=>sel.add(r._uid));
+    renderTopStDetector();
+  };
+  $('#ts-selhot').onclick=()=>{
+    rows.forEach(r=>{ if(r.tier==='hot'||r.tier==='solid') sel.add(r._uid); });
+    renderTopStDetector();
+  };
+  const copyBtn=$('#ts-copy'); if(copyBtn) copyBtn.onclick=()=>{
+    const text=[...new Set(selRows.map(r=>r.searchTerm))].sort().join('\n');
+    const done=()=>{ const old=copyBtn.textContent; copyBtn.textContent='✓ Copiat!'; setTimeout(()=>{copyBtn.textContent=old;},1500); };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
+    else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done(); }
+  };
+}
 // N-gram roots (Low ACOS) — same word-aggregation logic as Negative Phrase, but the opposite purpose: not
 // negating, but finding a root that's ALREADY converting well and deserves its own dedicated campaign
 // instead of staying buried inside whatever broad/auto campaign happened to surface it. Own tab (not a
