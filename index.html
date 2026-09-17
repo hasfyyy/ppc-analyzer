@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 09:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 10:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1657,6 +1657,7 @@ function renderTopStDetector(){
   if(st.minOrders===undefined) st.minOrders=2;
   if(st.maxAcosMult===undefined) st.maxAcosMult=1.5; // acos <= goal × this
   if(st.hideAsins===undefined) st.hideAsins=true;
+  if(st.excludeWords===undefined) st.excludeWords='';
   const pst=stFor('optplace'); if(pst.acosGoal===undefined) pst.acosGoal=20;
   const goal=pst.acosGoal;
   const maxAcos=goal*st.maxAcosMult;
@@ -1684,6 +1685,8 @@ function renderTopStDetector(){
   if(st.hideAsins) rows=rows.filter(r=>!r.isAsin);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.term) rows=rows.filter(r=>r.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
+  const exclArr=(st.excludeWords||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+  if(exclArr.length) rows=rows.filter(r=>!exclArr.some(x=>r.searchTerm.toLowerCase().includes(x)));
   // Tier badges — vizual clar cine e HOT vs OK
   rows.forEach(r=>{
     r._uid=r.searchTerm.toLowerCase().trim();
@@ -1732,6 +1735,9 @@ function renderTopStDetector(){
         <div class="field grow"><label>Filter search term</label><input type="text" id="ts-term" placeholder="Filtrează după cuvânt…" value="${esc(st.term||'')}"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="ts-hideasin" ${st.hideAsins?'checked':''}> Ascunde ASINs</label>
       </div>
+      <div class="ctrls" style="margin-top:8px;">
+        <div class="field grow"><label>Exclude cuvinte (comma-separated, ex: brand name)</label><input type="text" id="ts-exclude" placeholder="ex: lunakai, insiders" value="${esc(st.excludeWords||'')}" title="Exclude search terms care conțin oricare din aceste cuvinte. Util pentru brand terms (nu vrei să promovezi la Exact brandul tău — deja convertește prin auto)."></div>
+      </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('🔥 HOT (≥5 orders + ACoS ≤ goal)',fInt(hotCount),'red')}${kpi('✓ SOLID (≥3 orders)',fInt(solidCount),'green')}${kpi('Total candidați',fInt(rows.length))}${kpi('Selectate',fInt(selRows.length),'pink')}
@@ -1752,6 +1758,7 @@ function renderTopStDetector(){
   bind('ts-acosmult','maxAcosMult',v=>+v||1);
   $('#ts-port').onchange=e=>{st.port=e.target.value; renderTopStDetector();};
   bind('ts-term','term',v=>v);
+  bind('ts-exclude','excludeWords',v=>v);
   $('#ts-hideasin').onchange=e=>{st.hideAsins=e.target.checked; renderTopStDetector();};
   $('#ts-selall').onclick=()=>{
     const allSel=rows.length && rows.every(r=>sel.has(r._uid));
