@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 10:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 10:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3110,6 +3110,7 @@ function renderOptBids(){
     {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(targetDetailLabel(r))},
     {key:'category',label:'Category',l:true,type:'text',cell:r=>({exact:'Exact',discovery:'Discovery',branded:'Branded'})[r.category]||r.category},
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
     {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
