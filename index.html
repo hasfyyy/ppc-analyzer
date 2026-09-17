@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 11:47</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 12:59</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3746,14 +3746,7 @@ function renderOptPlacements(){
         <div class="field"><label>Portfolio</label><select id="op-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="op-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
-      <div class="ctrls" style="margin-top:12px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="op-pushen" ${st.pushEnabled?'checked':''}> Push Top of Search / Rest of Search under</label>
-        <div class="field"><input type="number" id="op-pushclicks" value="${st.pushClicks}" style="width:80px;">clicks</div>
-        <div class="field"><label>Push by (points)</label><input type="number" id="op-pushstep" value="${st.pushStep}" style="width:90px;"></div>
-        <div class="field"><label>...unless already above</label><input type="number" id="op-pushceiling" value="${st.pushCeiling}" style="width:80px;">%</div>
-        <div class="hint" style="align-self:center;">Every campaign, not just single-keyword — a placement stuck under this many clicks hasn't had a real shot yet, regardless of what its % already is (a campaign's budget often gets eaten by one easy-to-win placement — usually Product Pages, deliberately excluded here — before TOS/ROS get a chance). Doesn't touch the shared bid, so it's safe even when several keywords share this campaign's placement %. Past the ceiling above, more % clearly isn't working — those get flagged separately below instead of an endless push.</div>
-      </div>
-      <div class="hint" style="margin:12px 0 4px;">0 orders — ACoS is undefined with no sales, so this runs on clicks instead, same graduated shape as above. Below the first threshold a zero-order placement still gets the benefit of the doubt (push/increase can still apply).</div>
+      <div class="hint" style="margin:12px 0 4px;">0 orders — ACoS is undefined with no sales, so this runs on clicks instead, same graduated shape as above.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="op-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
         <div class="field"><label>Decrease by (points)</label><input type="number" id="op-zerodec1" value="${st.zeroDec1}" style="width:90px;"></div>
@@ -3788,12 +3781,9 @@ function renderOptPlacements(){
   const raiseMinOrdEl=$('#op-raiseminord'); if(raiseMinOrdEl) raiseMinOrdEl.oninput=debounce(()=>{st.raiseMinOrders=+raiseMinOrdEl.value||1; renderOptPlacements();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-raisestep','raiseStep',v=>+v||1);
-  bind('op-pushclicks','pushClicks',v=>+v||0); bind('op-pushstep','pushStep',v=>+v||0);
-  bind('op-pushceiling','pushCeiling',v=>+v||0);
   bind('op-zerohi1','zeroHi1',v=>+v||0); bind('op-zerodec1','zeroDec1',v=>+v||0);
   bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
   bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
-  $('#op-pushen').onchange=e=>{st.pushEnabled=e.target.checked; upd();};
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-singleonly').onchange=e=>{st.singleOnly=e.target.checked; upd();};
   $('#op-port').onchange=e=>{st.port=e.target.value; upd();};
