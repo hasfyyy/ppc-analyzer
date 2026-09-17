@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 11:43</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-17 11:47</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2182,14 +2182,27 @@ function exportAsinCheckCampaigns(asins, portfolioName, settings){
   function candidateName(n){
     return settings.ignoreNaming ? `${manualBase} ${n}` : template? `${template.prefix} ${n}_${suffix}` : `ASINCHK_PT ${n}`;
   }
+  const generatedNames=[]; // Preview list for confirmation
   function nextFreeName(){
     let name=candidateName(nextNum);
     while(existingNames.has(name)){ nextNum++; name=candidateName(nextNum); }
-    existingNames.add(name); nextNum++;
+    existingNames.add(name); generatedNames.push(name); nextNum++;
     return name;
   }
   const perCampaign=Math.max(1,settings.numPerGroup||1);
   const groups=[]; for(let i=0;i<asins.length;i+=perCampaign) groups.push(asins.slice(i,i+perCampaign));
+  // Preview generated names to user BEFORE writing — catches "bulk didn't have existing PAT campaigns → duplicates"
+  const previewNames=[]; let previewNext=nextNum;
+  const previewExisting=new Set(existingNames);
+  for(let i=0;i<groups.length;i++){
+    let n=candidateName(previewNext);
+    while(previewExisting.has(n)){ previewNext++; n=candidateName(previewNext); }
+    previewExisting.add(n); previewNames.push(n); previewNext++;
+  }
+  const portfolioCampCount=DATA.campaigns.filter(c=>c.product==='SP' && (c.portfolioName||'(No Portfolio)')===portfolioName).length;
+  const firstName=previewNames[0], lastName=previewNames[previewNames.length-1];
+  const warnMsg=`Vor fi create ${previewNames.length} campanii, de la:\n  ${firstName}\npână la:\n  ${lastName}\n\nATENȚIE: Amazon va respinge cu eroare "already exists" dacă vreunul din aceste nume există deja în cont. Tool-ul verifică doar campaniile din bulk-ul încărcat (${portfolioCampCount} campanii SP găsite în portfoliul "${portfolioName}").\n\nDacă bulk-ul tău e parțial sau nu conține campanii mai vechi cu același prefix, MODIFICĂ manual numerele în Excel după export, sau reîncarcă un bulk complet.\n\nContinuă cu exportul?`;
+  if(!confirm(warnMsg)) return;
   groups.forEach(g=>{
     const cname=nextFreeName(); const agname=cname;
     const campRow={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Targeting Type':'Manual','State':'enabled','Daily Budget':10,'Bidding Strategy':'Dynamic bids - down only'};
@@ -2261,6 +2274,10 @@ function exportKwCheckCampaigns(byMatch, portfolioName, settings){
     });
   });
   if(!out.length){ alert('Nothing to export.'); return; }
+  const campNames=out.filter(r=>r[1]==='Campaign' && r[2]==='Create').map(r=>r[3]);
+  const portfolioCampCount=DATA.campaigns.filter(c=>c.product==='SP' && (c.portfolioName||'(No Portfolio)')===portfolioName).length;
+  const warnMsg=`Vor fi create ${campNames.length} campanii:\n  ${campNames.slice(0,3).join('\n  ')}${campNames.length>3?`\n  ... până la\n  ${campNames[campNames.length-1]}`:''}\n\nATENȚIE: Amazon respinge cu eroare "already exists" dacă vreunul din aceste nume există deja în cont. Tool-ul verifică doar campaniile din bulk-ul încărcat (${portfolioCampCount} în "${portfolioName}").\n\nContinuă cu exportul?`;
+  if(!confirm(warnMsg)) return;
   writeBulk(out,'kwcheck_new_campaigns_bulk.xlsx');
   alert(`Created ${totalCamps} campaign(s) across ${Object.keys(byMatch).length} match type(s). SKUs pulled from existing campaigns in "${portfolioName}".`);
 }
