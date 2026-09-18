@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:21</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -4361,8 +4361,14 @@ function exportNewCampaigns(opps, settings){
     out.push(bulkRow(campRow));
     out.push(bulkRow({'Product':'Sponsored Products','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':agDefaultBid}));
     const skuSet=new Set(); kwList.forEach(o=>{ (DATA.skuByCampaign[o.campaignId]||[]).forEach(s=>{ if(s.sku) skuSet.add(s.sku); }); });
-    const skus=[...skuSet]; if(!skus.length) missingSku++;
-    (skus.length?skus:['']).forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
+    const skus=[...skuSet];
+    if(!skus.length){
+      // Fără SKU → Amazon respinge cu "merchantSku is empty". Nu pushăm Product ad row deloc — marchăm campania
+      // ca lipsind SKU (user vede în alertă câte campanii nu au SKU și poate să le fixeze manual).
+      missingSku++;
+    } else {
+      skus.forEach(sku=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','SKU':sku})));
+    }
     // A converting ASIN isn't a keyword — it's a Product Targeting opportunity (Auto/PT matched that exact
     // product well), so it gets its own targeting expression instead of a Keyword row, and match-type
     // concepts (Phrase/Broad, negation) don't apply to it at all.
