@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 13:34</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:21</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -4366,7 +4366,16 @@ function exportNewCampaigns(opps, settings){
     // A converting ASIN isn't a keyword — it's a Product Targeting opportunity (Auto/PT matched that exact
     // product well), so it gets its own targeting expression instead of a Keyword row, and match-type
     // concepts (Phrase/Broad, negation) don't apply to it at all.
-    kwList.forEach(o=>{
+    // DEDUP: Low ACOS Roots poate produce același root din portofolii diferite (separate rows) — dacă user-ul
+    // le selectează pe amândouă, ar rezulta 2 keyword rows identice în același ad group și Amazon respinge cu
+    // "Duplicate Keyword Text". Deduplicăm după (searchTerm lowercased + matchType) înainte de scriere.
+    const seen=new Set();
+    const uniqueKws=kwList.filter(o=>{
+      const k=(o.searchTerm||'').toLowerCase().trim()+'|'+(o.isAsin?'ASIN':matchType);
+      if(seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    uniqueKws.forEach(o=>{
       if(o.isAsin) out.push(bulkRow({'Product':'Sponsored Products','Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':perKwBid(o),'Product Targeting Expression':`asin="${o.searchTerm.trim().toUpperCase()}"`}));
       else out.push(bulkRow({'Product':'Sponsored Products','Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':o.searchTerm,'Match Type':matchTypeCap,'Bid':perKwBid(o)}));
     });
@@ -4375,7 +4384,7 @@ function exportNewCampaigns(opps, settings){
     // ones you're launching it around (those stay covered wherever they're already targeted). Never applies
     // to ASIN opportunities — there's no match type to negate.
     if(settings.negateOwn && matchType!=='EXACT'){
-      kwList.filter(o=>!o.isAsin).forEach(o=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Negative keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':o.searchTerm,'Match Type':'Negative Exact'})));
+      uniqueKws.filter(o=>!o.isAsin).forEach(o=>out.push(bulkRow({'Product':'Sponsored Products','Entity':'Negative keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':o.searchTerm,'Match Type':'Negative Exact'})));
     }
   }
   const groups=splitIntoGroups(opps, settings.numCampaigns||opps.length);
