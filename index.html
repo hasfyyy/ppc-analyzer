@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:39</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:44</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3925,19 +3925,17 @@ function computeSingleKwRows(product){
       }
       perPlace[type]=Object.assign({}, p, d, {newPct, why, action:act});
     });
-    // PUSH pentru campanii noi: sub pragul de clicks + 0 orders → adaugă puncte procentuale pe TOS/ROS.
-    // Nu se aplică dacă altă regulă a decis deja o modificare pe placement-ul respectiv (nu se calcă în picioare).
-    if(st.pushEnabled && totOrders===0 && totClicks<st.pushMaxClicks){
+    // INCREASE PLACEMENTS: pentru campanii cu SUB pragul de clicks (indiferent de orders sau alt tier),
+    // suprascrie orice altă decizie și adaugă exact procentele setate pe TOS și ROS. Nimic mai mult, nimic mai puțin.
+    if(st.pushEnabled && totClicks<st.pushMaxClicks){
       ['top','rest'].forEach(type=>{
         const p=perPlace[type]; if(!p) return;
-        if(p.action!=='none') return; // rezervat pentru rândurile fără altă acțiune
         const boostAmount = type==='top'? st.pushTosBoost : st.pushRosBoost;
         if(boostAmount<=0) return;
         const newPct = Math.min(900, p.percentage + boostAmount);
-        if(newPct===p.percentage) return;
         p.newPct = newPct;
-        p.action = 'increase';
-        p.why = `campanie cu ${totClicks} clicks, 0 orders → +${boostAmount}pp pe ${type==='top'?'TOS':'ROS'}`;
+        p.action = newPct===p.percentage ? 'none' : 'increase';
+        p.why = `campanie cu ${totClicks} clicks → +${boostAmount}pp pe ${type==='top'?'TOS':'ROS'}`;
       });
     }
     // Effective row totals (from campaign totals)
@@ -4016,13 +4014,13 @@ function renderSingleKw(){
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
         <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — target CPC = CPC × 1.10)</span></div>
       </div>
-      <div class="hint" style="margin:14px 0 6px;color:#1d4ed8;font-weight:600;">Increase placements (campanii cu 0 orders + puține clicks)</div>
+      <div class="hint" style="margin:14px 0 6px;color:#1d4ed8;font-weight:600;">Increase placements (campanii cu puține clicks)</div>
       <div class="ctrls">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-pushen" ${st.pushEnabled?'checked':''}> Activează push</label>
-        <div class="field"><label>Sub câte clicks</label><input type="number" id="sk-pushclicks" min="1" value="${st.pushMaxClicks}" style="width:80px;" title="Campania trebuie să aibă STRICT sub atâtea clicks (și 0 orders) pentru a fi considerată nouă."></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-pushen" ${st.pushEnabled?'checked':''}> Activează</label>
+        <div class="field"><label>Sub câte clicks</label><input type="number" id="sk-pushclicks" min="1" value="${st.pushMaxClicks}" style="width:80px;"></div>
         <div class="field"><label>TOS +pp</label><input type="number" id="sk-pushtos" min="0" value="${st.pushTosBoost}" style="width:80px;"></div>
         <div class="field"><label>ROS +pp</label><input type="number" id="sk-pushros" min="0" value="${st.pushRosBoost}" style="width:80px;"></div>
-        <div class="hint" style="align-self:center;">Adaugă puncte procentuale peste TOS/ROS curent (PDP nu se atinge, bidul nu se atinge). Se aplică doar când nu există altă acțiune pe placement-ul respectiv.</div>
+        <div class="hint" style="align-self:center;">Adaugă exact atâtea puncte procentuale peste TOS și ROS. Nimic altceva (PDP nu se atinge, bidul nu se atinge). Suprascrie orice altă regulă.</div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
