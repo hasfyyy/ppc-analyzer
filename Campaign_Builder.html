@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-17 14:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-18 13:34</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -633,7 +633,9 @@ function buildCampaignRows(cfg){
         // Sponsored Display has no keyword-style targeting, no Bidding Strategy/Top-of-Search boost column,
         // and uses Budget (not Daily Budget) + a Tactic code. T00020 = contextual targeting tactic, which is
         // what ASIN/category "Contextual Targeting" rows (incl. competitor-ASIN conquesting) belong to.
-        const c={'Product':'Sponsored Display','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'State':'enabled','Budget Type':'Daily','Budget':cfg.budget,'Tactic':'T00020','Cost Type':'cpc'};
+        // Amazon requires Start Date on SD Campaign Create (unlike SP). Format YYYYMMDD, today's date.
+        const today=new Date(); const startDate=`${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+        const c={'Product':'Sponsored Display','Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'State':'enabled','Start Date':startDate,'Budget Type':'Daily','Budget':cfg.budget,'Tactic':'T00020','Cost Type':'cpc'};
         if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
         out.push(bulkRow(c));
         out.push(bulkRow({'Product':'Sponsored Display','Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled','Ad Group Default Bid':cfg.bid}));
