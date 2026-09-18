@@ -4011,7 +4011,7 @@ function renderSingleKw(){
     <div class="card pad">
       <h3 class="sectitle">Single-KW Optimizer</h3>
       <div class="ctrls">
-        <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
+        <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %</div>
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
         <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — target CPC = CPC × 1.10)</span></div>
