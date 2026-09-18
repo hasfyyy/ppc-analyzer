@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:44</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:49</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3927,7 +3927,9 @@ function computeSingleKwRows(product){
     });
     // INCREASE PLACEMENTS: pentru campanii cu SUB pragul de clicks (indiferent de orders sau alt tier),
     // suprascrie orice altă decizie și adaugă exact procentele setate pe TOS și ROS. Nimic mai mult, nimic mai puțin.
+    let isPush=false;
     if(st.pushEnabled && totClicks<st.pushMaxClicks){
+      isPush=true;
       ['top','rest'].forEach(type=>{
         const p=perPlace[type]; if(!p) return;
         const boostAmount = type==='top'? st.pushTosBoost : st.pushRosBoost;
@@ -3935,12 +3937,25 @@ function computeSingleKwRows(product){
         const newPct = Math.min(900, p.percentage + boostAmount);
         p.newPct = newPct;
         p.action = newPct===p.percentage ? 'none' : 'increase';
+        p.actionType='push';
         p.why = `campanie cu ${totClicks} clicks → +${boostAmount}pp pe ${type==='top'?'TOS':'ROS'}`;
       });
+      // Butler-computed changes pe această campanie sunt override — le resetăm ca să nu se vadă în export.
+      ['pp'].forEach(type=>{ const p=perPlace[type]; if(p && p.actionType!=='push'){ p.action='none'; p.newPct=p.percentage; p.why='ignorat (push override activ)'; } });
+      // Bidul rămâne neschimbat când push e activ.
+      if(bidAction!=='none'){ bidAction='none'; newBid=t.bid; bidReason=''; }
     }
     // Effective row totals (from campaign totals)
     const rowTotals=derive({impressions:placements.reduce((s,p)=>s+p.impressions,0),clicks:totClicks,spend:placements.reduce((s,p)=>s+p.spend,0),sales:placements.reduce((s,p)=>s+p.sales,0),orders:totOrders});
     const hasChange = bidAction!=='none' || Object.values(perPlace).some(p=>p.action!=='none');
+    // changeType: 'push' dacă toate acțiunile vin din Increase Placements (push feature),
+    // 'butler' dacă e optimizare pe bază de ACoS/CPC, sau 'mixed' dacă ambele coexistă (nu ar trebui — push override).
+    let changeType='none';
+    if(hasChange){
+      const anyPush = Object.values(perPlace).some(p=>p.action!=='none' && p.actionType==='push');
+      const anyButler = bidAction!=='none' || Object.values(perPlace).some(p=>p.action!=='none' && p.actionType!=='push');
+      changeType = anyPush && anyButler ? 'mixed' : (anyPush ? 'push' : 'butler');
+    }
     rows.push({
       _uid: cid,
       campaignId: cid,
@@ -3957,6 +3972,7 @@ function computeSingleKwRows(product){
       totClicks, totOrders,
       spend: rowTotals.spend, sales: rowTotals.sales, orders: rowTotals.orders, clicks: rowTotals.clicks, acos: rowTotals.acos, cpc: rowTotals.cpc,
       hasChange,
+      changeType,
     });
   });
   return {rows, st};
@@ -3964,7 +3980,10 @@ function computeSingleKwRows(product){
 function renderSingleKw(){
   const {rows: allRows, st}=computeSingleKwRows(S.product);
   if(st.hideNoChange===undefined) st.hideNoChange=true;
+  if(st.changeFilter===undefined) st.changeFilter='all';
   let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
+  if(st.changeFilter==='butler') rows=rows.filter(r=>r.changeType==='butler' || r.changeType==='mixed');
+  else if(st.changeFilter==='push') rows=rows.filter(r=>r.changeType==='push' || r.changeType==='mixed');
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const sel=selFor('singlekw');
@@ -4023,6 +4042,11 @@ function renderSingleKw(){
         <div class="hint" style="align-self:center;">Adaugă exact atâtea puncte procentuale peste TOS și ROS. Nimic altceva (PDP nu se atinge, bidul nu se atinge). Suprascrie orice altă regulă.</div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Tip modificare</label><select id="sk-changef">
+          <option value="all" ${st.changeFilter==='all'?'selected':''}>Toate (${allRows.filter(r=>r.hasChange).length})</option>
+          <option value="butler" ${st.changeFilter==='butler'?'selected':''}>Doar optimizare Butler (${allRows.filter(r=>r.changeType==='butler').length})</option>
+          <option value="push" ${st.changeFilter==='push'?'selected':''}>Doar Increase Placements (${allRows.filter(r=>r.changeType==='push').length})</option>
+        </select></div>
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campanie</label><input type="text" id="sk-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="sk-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
@@ -4051,6 +4075,7 @@ function renderSingleKw(){
   $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
   $('#sk-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
+  $('#sk-changef').onchange=e=>{ st.changeFilter=e.target.value; upd(); };
   $('#sk-export').onclick=()=>exportSingleKwOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
 }
 function exportSingleKwOptimization(product, rows){
