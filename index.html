@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-18 17:49</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-19 10:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -788,6 +788,7 @@ const TABS=[
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
   {id:'singlekw',label:'Single-KW Optimization',ic:''},
+  {id:'cpcflag',label:'CPC Flag',ic:''},
   {id:'optbids',label:'Bid Optimizer Multi-KW',ic:''},
   {id:'optplacements',label:'Placement Optimizer Multi-KW',ic:''},
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
@@ -797,7 +798,7 @@ const TABS=[
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
 // Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
 // correctly. Every other tab depends on a search-term report SD doesn't have.
-const OPT_TABS=new Set(['singlekw','optbids','optplacements','optbudget','pausecamp']);
+const OPT_TABS=new Set(['singlekw','cpcflag','optbids','optplacements','optbudget','pausecamp']);
 // Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
 // SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
 // only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
@@ -834,7 +835,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, singlekw:renderSingleKw, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, singlekw:renderSingleKw, cpcflag:renderCpcFlag, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -4099,6 +4100,87 @@ function exportSingleKwOptimization(product, rows){
   if(!out.length){ alert('Nimic de exportat (nicio modificare reală în selecție).'); return; }
   writeBulk(out, productFilePrefix(product)+'singlekw_optimization_bulk.xlsx', productSheetName(product));
   alert(`Exportat ${out.length} update-uri (bid + placement) pentru ${rows.length} campanii single-kw.`);
+}
+
+/* ============================ CPC FLAG ============================ */
+// Analiza manuală: găsește targets/keywords enabled cu CPC peste pragul setat.
+// Vezi bid + performanță, poți selecta și aplica reducere procentuală în bulk.
+function renderCpcFlag(){
+  const st=stFor('cpcflag');
+  if(st.maxCpc===undefined) st.maxCpc=1.00;
+  if(st.minClicks===undefined) st.minClicks=3;
+  if(st.reducePct===undefined) st.reducePct=15;
+  const enabledCamps=optimizableCampaignIds(S.product);
+  let rows=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId)).map(t=>{
+    const d=derive(agg([t]));
+    const newBid=Math.max(0.02, +(t.bid*(1-st.reducePct/100)).toFixed(2));
+    return Object.assign({_uid:t.campaignId+'|'+t.adGroupId+'|'+t.id, newBid}, t, d);
+  });
+  rows=rows.filter(r=>r.clicks>=st.minClicks && r.cpc>st.maxCpc);
+  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  if(st.term) rows=rows.filter(r=>(r.text||'').toLowerCase().includes(st.term.toLowerCase()));
+  const sel=selFor('cpcflag');
+  const cols=[
+    {key:'text',label:'Target',l:true,type:'text'},
+    {key:'matchType',label:'Match',l:true,type:'text',cell:r=>esc(r.matchType||(r.kind==='target'?'PT':''))},
+    {key:'campaignName',label:'Campanie',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfoliu',l:true,type:'text'},
+    {key:'bid',label:'Bid curent',type:'money'},
+    {key:'cpc',label:'CPC actual',type:'money',cls:r=>r.cpc>st.maxCpc?'num-red':''},
+    {key:'clicks',label:'Clicks',type:'int'},
+    {key:'orders',label:'Orders',type:'int'},
+    {key:'spend',label:'Spend',type:'money'},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
+    {key:'cvr',label:'CVR',type:'pct'},
+    {key:'newBid',label:`Bid -${st.reducePct}%`,type:'money',cls:()=>'num-green'},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'cpcflag',selectable:true,idKey:'_uid',sortDef:{key:'cpc',dir:-1},onChange:renderCpcFlag});
+  const selRows=rows.filter(r=>sel.has(r._uid));
+  const selTot=derive(agg(selRows));
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">CPC Flag — targets cu CPC peste pragul setat</h3>
+      <div class="ctrls">
+        <div class="field"><label>CPC prag ($)</label><input type="number" step="0.01" id="cf-maxcpc" min="0" value="${st.maxCpc}" style="width:100px;" title="Targets cu CPC actual peste această valoare intră în listă."></div>
+        <div class="field"><label>Min clicks</label><input type="number" id="cf-mc" min="1" value="${st.minClicks}" style="width:80px;" title="Cere măcar atâtea clicks ca CPC-ul să fie relevant (spend/clicks poate fi înșelător cu 1-2 clicks)."></div>
+        <div class="field"><label>Reduce bid cu (%)</label><input type="number" id="cf-red" min="0" max="90" value="${st.reducePct}" style="width:100px;"> %<span class="hint" style="margin-left:6px;">se aplică bulk pe cele selectate</span></div>
+        <div class="field"><label>Portfoliu</label><select id="cf-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Campanie</label><input type="text" id="cf-camp" placeholder="Filtru..." value="${esc(st.camp||'')}"></div>
+        <div class="field grow"><label>Target</label><input type="text" id="cf-term" placeholder="Filtru keyword/ASIN..." value="${esc(st.term||'')}"></div>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
+      ${kpi('Targets flagged',fInt(rows.length))}${kpi('Total spend',fMoney(agg(rows).spend))}${kpi('Total orders',fInt(agg(rows).orders))}${kpi('Selectate',fInt(selRows.length),'pink')}${kpi('Spend selectat',fMoney(selTot.spend),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} High-CPC Targets (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn ghost" id="cf-selall">${rows.length && rows.every(r=>sel.has(r._uid))?'Deselect all':'Select all'}</button>
+        <button class="btn grad" id="cf-export" ${selRows.length?'':'disabled'}>Export Bid Reduction -${st.reducePct}% (${selRows.length})</button>
+      </div>
+      <div id="cf-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#cf-table'));
+  const upd=()=>renderCpcFlag();
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('cf-maxcpc','maxCpc',v=>+v||0);
+  bind('cf-mc','minClicks',v=>+v||1);
+  bind('cf-red','reducePct',v=>+v||0);
+  bind('cf-camp','camp',v=>v);
+  bind('cf-term','term',v=>v);
+  $('#cf-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#cf-selall').onclick=()=>{
+    const allSel=rows.length && rows.every(r=>sel.has(r._uid));
+    if(allSel) rows.forEach(r=>sel.delete(r._uid)); else rows.forEach(r=>sel.add(r._uid));
+    upd();
+  };
+  $('#cf-export').onclick=()=>{
+    const prod=productLabel(S.product);
+    const out=selRows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
+    writeBulk(out, productFilePrefix(S.product)+'cpc_flag_reduction_bulk.xlsx', productSheetName(S.product));
+    alert(`Exportat ${out.length} bid update-uri (reducere ${st.reducePct}%).`);
+  };
 }
 
 /* ============================ BUDGET REBALANCING ============================ */
