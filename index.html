@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-19 10:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-19 10:45</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -4111,10 +4111,13 @@ function renderCpcFlag(){
   if(st.minClicks===undefined) st.minClicks=3;
   if(st.reducePct===undefined) st.reducePct=15;
   const enabledCamps=optimizableCampaignIds(S.product);
+  if(!st.manualBid) st.manualBid={};
   let rows=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId)).map(t=>{
     const d=derive(agg([t]));
-    const newBid=Math.max(0.02, +(t.bid*(1-st.reducePct/100)).toFixed(2));
-    return Object.assign({_uid:t.campaignId+'|'+t.adGroupId+'|'+t.id, newBid}, t, d);
+    const uid=t.campaignId+'|'+t.adGroupId+'|'+t.id;
+    const autoBid=Math.max(0.02, +(t.bid*(1-st.reducePct/100)).toFixed(2));
+    const newBid = st.manualBid[uid]!==undefined ? st.manualBid[uid] : autoBid;
+    return Object.assign({_uid:uid, newBid, autoBid}, t, d);
   });
   rows=rows.filter(r=>r.clicks>=st.minClicks && r.cpc>st.maxCpc);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
@@ -4134,7 +4137,7 @@ function renderCpcFlag(){
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
     {key:'cvr',label:'CVR',type:'pct'},
-    {key:'newBid',label:`Bid -${st.reducePct}%`,type:'money',cls:()=>'num-green'},
+    {key:'newBid',label:`Bid nou (default -${st.reducePct}%)`,l:true,noSort:true,cell:r=>`<input type="number" step="0.01" min="0.02" value="${r.newBid}" data-cf-bid="${esc(r._uid)}" style="width:80px;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;${r.newBid!==r.autoBid?'background:#fef3e2;':''}">`},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'cpcflag',selectable:true,idKey:'_uid',sortDef:{key:'cpc',dir:-1},onChange:renderCpcFlag});
   const selRows=rows.filter(r=>sel.has(r._uid));
@@ -4175,6 +4178,14 @@ function renderCpcFlag(){
     if(allSel) rows.forEach(r=>sel.delete(r._uid)); else rows.forEach(r=>sel.add(r._uid));
     upd();
   };
+  // Per-row manual bid override — nu re-render pe fiecare tastă (ar fura focus-ul).
+  document.querySelectorAll('[data-cf-bid]').forEach(inp=>{
+    inp.oninput=debounce(()=>{
+      const uid=inp.dataset.cfBid; const v=+inp.value;
+      if(v>0) st.manualBid[uid]=v;
+      const row=rows.find(r=>r._uid===uid); if(row) row.newBid=v>0? v : row.autoBid;
+    },300);
+  });
   $('#cf-export').onclick=()=>{
     const prod=productLabel(S.product);
     const out=selRows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id})));
