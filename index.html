@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-19 10:45</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-19 10:46</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -4112,12 +4112,21 @@ function renderCpcFlag(){
   if(st.reducePct===undefined) st.reducePct=15;
   const enabledCamps=optimizableCampaignIds(S.product);
   if(!st.manualBid) st.manualBid={};
+  // Placement % per campanie (TOS/ROS/PDP) — să vezi de ce e CPC-ul mare (bid × (1+placement%)).
+  const plByCamp={};
+  DATA.placements.forEach(p=>{
+    if(p.product!==S.product) return;
+    const type=placeType(p.placement); if(!type || type==='business') return;
+    if(!plByCamp[p.campaignId]) plByCamp[p.campaignId]={};
+    plByCamp[p.campaignId][type]=p.percentage;
+  });
   let rows=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId)).map(t=>{
     const d=derive(agg([t]));
     const uid=t.campaignId+'|'+t.adGroupId+'|'+t.id;
     const autoBid=Math.max(0.02, +(t.bid*(1-st.reducePct/100)).toFixed(2));
     const newBid = st.manualBid[uid]!==undefined ? st.manualBid[uid] : autoBid;
-    return Object.assign({_uid:uid, newBid, autoBid}, t, d);
+    const pl=plByCamp[t.campaignId]||{};
+    return Object.assign({_uid:uid, newBid, autoBid, plTos:pl.top||0, plRos:pl.rest||0, plPdp:pl.pp||0}, t, d);
   });
   rows=rows.filter(r=>r.clicks>=st.minClicks && r.cpc>st.maxCpc);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
@@ -4130,6 +4139,9 @@ function renderCpcFlag(){
     {key:'campaignName',label:'Campanie',l:true,type:'text'},
     {key:'portfolioName',label:'Portfoliu',l:true,type:'text'},
     {key:'bid',label:'Bid curent',type:'money'},
+    {key:'plTos',label:'TOS %',type:'num',cell:r=>r.plTos?(r.plTos>0?'+':'')+r.plTos+'%':'0%'},
+    {key:'plRos',label:'ROS %',type:'num',cell:r=>r.plRos?(r.plRos>0?'+':'')+r.plRos+'%':'0%'},
+    {key:'plPdp',label:'PDP %',type:'num',cell:r=>r.plPdp?(r.plPdp>0?'+':'')+r.plPdp+'%':'0%'},
     {key:'cpc',label:'CPC actual',type:'money',cls:r=>r.cpc>st.maxCpc?'num-red':''},
     {key:'clicks',label:'Clicks',type:'int'},
     {key:'orders',label:'Orders',type:'int'},
