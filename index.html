@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-19 10:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3869,6 +3869,9 @@ function computeSingleKwRows(product){
       if(p.orders===0 && p.clicks>thr) anyBad=true;
       else if(p.orders>0 && p.acos>goal && p.clicks>thr/2) anyBad=true;
     });
+    // Campaign-level 0-order guard: dacă total campania are ≥ threshold/2 clicks și 0 orders, nu boost-uim
+    // niciun placement individual — indiferent că per placement e sub prag. Total ai demonstrat că nu convertește.
+    const campBadNoOrders = totOrders===0 && totClicks>=thr/2;
     // BID decision
     let newBid=t.bid, bidAction='none', bidReason='';
     if(anyBad && baselineBid>0 && baselineBid<t.bid){
@@ -3895,6 +3898,9 @@ function computeSingleKwRows(product){
         if(p.orders===0){
           if(p.clicks>thr){
             newPct=0; act='decrease'; why=`${p.clicks} clicks, 0 orders → 0%`;
+          } else if(campBadNoOrders){
+            // Total campanie a burnut destul fără orders — nu boostăm nici acest placement, chiar dacă individual are puține clicks.
+            why=`campanie ${totClicks} clicks, 0 orders total → nu boostăm placement`;
           } else if(p.clicks>0){
             targetCpc=d.cpc*boostM;
             why=`în test (${p.clicks} clicks, 0 orders) → boost +${st.boost}%`;
