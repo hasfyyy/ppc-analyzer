@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:33</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:34</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3894,11 +3894,8 @@ function computeSingleKwRows(product){
           const cutPp=+st.zeroCutPp || 20;
           newPct=Math.max(0, p.percentage - cutPp); act='decrease';
           why=`${p.clicks} clicks, 0 orders → -${cutPp}pp`;
-        } else if(p.clicks>0){
-          targetCpc=p.cpc*boostM;
-          why=`în test (${p.clicks} clicks, 0 orders) → boost +${st.boost}%`;
         } else {
-          why='0 clicks — fără date';
+          why=`${p.clicks} clicks, 0 orders — sub prag, nu atingem`;
         }
       } else if(d.acos>0 && d.acos<goal){
         targetCpc=p.cpc*boostM;
