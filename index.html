@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3938,6 +3938,12 @@ function computeSingleKwRows(product){
       totClicks, totOrders,
       spend: rowTotals.spend, sales: rowTotals.sales, orders: rowTotals.orders, clicks: rowTotals.clicks, acos: rowTotals.acos, cpc: rowTotals.cpc,
       hasChange,
+      // Dacă bidul/placement-ul a fost schimbat DEJA în timpul ferestrei bulk-ului (ex: ai optimizat manual
+      // acum 3 zile dintr-un bulk de 7 zile), spend/clicks/CPC din bulk sunt un amestec de sub setările vechi
+      // ȘI cele noi — sugestiile calculate pe acel CPC "mixt" pot fi greșite. Detectat arimetic: cu "Dynamic
+      // bids - down only" Amazon nu poate plăti niciodată peste bidul efectiv curent, deci un CPC mai mare
+      // dovedește că bidul/placement-ul a fost altul în timpul ferestrei.
+      stale: campaignRecentlyChanged(cid, product),
     });
   });
   return {rows, st};
@@ -3945,7 +3951,9 @@ function computeSingleKwRows(product){
 function renderSingleKw(){
   const {rows: allRows, st}=computeSingleKwRows(S.product);
   if(st.hideNoChange===undefined) st.hideNoChange=true;
+  if(st.hideStale===undefined) st.hideStale=false;
   let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
+  if(st.hideStale) rows=rows.filter(r=>!r.stale);
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const sel=selFor('singlekw');
@@ -3988,7 +3996,7 @@ function renderSingleKw(){
     return tags.join(' ');
   };
   const cols=[
-    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>r.stale? `${esc(r.campaignName)} <span class="badge" style="background:#fef3e2;color:#c2760a;" title="CPC-ul observat e mai mare decât ce ar putea explica bidul/placement-ul CURENT — dovadă că au fost schimbate în timpul ferestrei bulk-ului. Spend/clicks/CPC din bulk sunt un amestec de setări vechi și noi; sugestia de mai jos poate fi imprecisă.">edited mid-window</span>` : esc(r.campaignName)},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
     {key:'goal',label:'Goal',type:'num',cell:r=>r.goal+'%'},
     {key:'clicks',label:'Clicks',type:'int'},
@@ -4019,7 +4027,9 @@ function renderSingleKw(){
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campanie</label><input type="text" id="sk-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="sk-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="sk-hidestale" ${st.hideStale?'checked':''}> Ascunde campaniile editate mid-window</label>
       </div>
+      <div class="hint" style="margin-top:6px;">Campaniile marcate <span class="badge" style="background:#fef3e2;color:#c2760a;">edited mid-window</span> au bid/placement schimbate DEJA în timpul ferestrei bulk-ului (ex: ai optimizat manual acum câteva zile dintr-un export de 7 zile) — CPC-ul din bulk e un amestec de setări vechi + noi, deci sugestia poate fi imprecisă. Detectat automat: cu "Dynamic bids - down only" Amazon nu poate plăti peste bidul efectiv curent, așa că un CPC mai mare dovedește schimbarea. Sugestiile tot converg corect la rulările următoare — flag-ul e doar avertisment, nu blocaj.</div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('Campanii single-kw',fInt(totalCamps))}${kpi('Cu modificări sugerate',fInt(withChange))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
@@ -4040,6 +4050,7 @@ function renderSingleKw(){
   $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
   $('#sk-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
+  $('#sk-hidestale').onchange=e=>{st.hideStale=e.target.checked; upd();};
   $('#sk-export').onclick=()=>exportSingleKwOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
 }
 function exportSingleKwOptimization(product, rows){
