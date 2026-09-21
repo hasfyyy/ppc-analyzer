@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:38</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:43</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3857,11 +3857,13 @@ function computeSingleKwRows(product){
     const totClicks=placements.reduce((s,p)=>s+p.clicks,0);
     const totOrders=placements.reduce((s,p)=>s+p.orders,0);
     const zeroOutAll=totOrders===0 && totClicks>thr;
-    // Any placement bad → bid gets cut to baseline
+    // Any placement bad → bid gets cut to baseline. Aceeași regulă ca la placement %: threshold contează
+    // DOAR când 0 orders (nu ai nicio dovadă). Cu orders reale, ACoS peste goal e dovadă suficientă,
+    // indiferent de clicks — bidul și placement-ul trebuie să fie consistente pe aceeași logică.
     let anyBad=false;
     placements.forEach(p=>{
       if(p.orders===0 && p.clicks>thr) anyBad=true;
-      else if(p.orders>0 && p.acos>goal && p.clicks>thr/2) anyBad=true;
+      else if(p.orders>0 && p.acos>goal) anyBad=true;
     });
     // BID decision
     let newBid=t.bid, bidAction='none', bidReason='';
