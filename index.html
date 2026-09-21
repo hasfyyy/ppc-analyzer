@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 16:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 16:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3824,7 +3824,7 @@ function computeSingleKwRows(product){
   if(st.boost===undefined) st.boost=10;     // % above CPC on good placements → target = cpc*1.10
   if(st.zeroCutPp===undefined) st.zeroCutPp=20; // pp scăzute pe placement individual cu 0 orders + clicks>threshold
   if(st.cutMult===undefined) st.cutMult=2;      // multiplicator sensibilitate cut (2 = agresiv, 1 = blând)
-  if(st.cutCap===undefined) st.cutCap=30;       // cap absolut pe cut (%)
+  if(st.cutCap===undefined) st.cutCap=50;       // cap absolut pe cut (%) — 50% permite reacție serioasă la ACoS catastrofic
   // Push pentru campanii noi (cu foarte puține clicks și 0 orders) — adaugă puncte procentuale pe TOS/ROS
   // ca să câștige tracțiune. Doar placement, nu se atinge bidul. Doar TOS și ROS, nu PDP.
   if(st.pushEnabled===undefined) st.pushEnabled=true;
@@ -3917,8 +3917,16 @@ function computeSingleKwRows(product){
         const baseline=newBid>0? newBid : baselineBid;
         if(baseline>0){
           const raw=Math.round((targetCpc/baseline-1)*100);
-          newPct=Math.max(0, Math.min(900, raw));
-          act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+          const candidatePct=Math.max(0, Math.min(900, raw));
+          // GUARD: dacă suntem pe branch de CUT (why include "cut" sau "peste goal") și noul % ar CREȘTE
+          // placement-ul, nu aplicăm — placement-ul e deja sub target, cutul via % nu funcționează aici.
+          const isCutBranch=/cut|peste goal/.test(why);
+          if(isCutBranch && candidatePct>=p.percentage){
+            why += ' (placement deja sub target — nu se cutează via %, ar trebui cut pe bid)';
+          } else {
+            newPct=candidatePct;
+            act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+          }
         }
       }
       perPlace[type]=Object.assign({}, p, d, {newPct, why, action:act});
@@ -4032,7 +4040,7 @@ function renderSingleKw(){
         <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — target CPC = CPC × 1.10)</span></div>
         <div class="field"><label>Cât scade placement cu 0 orders + clicks peste prag</label><input type="number" id="sk-zerocut" min="0" max="100" value="${st.zeroCutPp}" style="width:80px;"> pp<span class="hint" style="margin-left:6px;">(default 20pp)</span></div>
         <div class="field"><label>Sensibilitate cut (ACoS peste goal)</label><input type="number" step="0.5" id="sk-cutmult" min="0.5" max="5" value="${st.cutMult}" style="width:80px;">×<span class="hint" style="margin-left:6px;">(2 = agresiv, 1 = blând — multiplicator peste depășire)</span></div>
-        <div class="field"><label>Cap cut maxim</label><input type="number" id="sk-cutcap" min="5" max="50" value="${st.cutCap}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 30% — cut-ul nu depășește)</span></div>
+        <div class="field"><label>Cap cut maxim</label><input type="number" id="sk-cutcap" min="5" max="90" value="${st.cutCap}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 50% — permite reacție serioasă la ACoS extrem)</span></div>
       </div>
       <div class="hint" style="margin:14px 0 6px;color:#1d4ed8;font-weight:600;">Increase placements (campanii cu puține clicks)</div>
       <div class="ctrls">
