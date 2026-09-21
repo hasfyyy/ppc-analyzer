@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 16:58</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 17:36</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3913,19 +3913,20 @@ function computeSingleKwRows(product){
       } else {
         why=`ACoS ${fAcos(d.acos)} la target`;
       }
-      if(targetCpc!=null){
+      if(targetCpc!=null && Number.isFinite(targetCpc)){
         const baseline=newBid>0? newBid : baselineBid;
         if(baseline>0){
           const raw=Math.round((targetCpc/baseline-1)*100);
-          const candidatePct=Math.max(0, Math.min(900, raw));
-          // GUARD: dacă suntem pe branch de CUT (why include "cut" sau "peste goal") și noul % ar CREȘTE
-          // placement-ul, nu aplicăm — placement-ul e deja sub target, cutul via % nu funcționează aici.
-          const isCutBranch=/cut|peste goal/.test(why);
-          if(isCutBranch && candidatePct>=p.percentage){
-            why += ' (placement deja sub target — nu se cutează via %, ar trebui cut pe bid)';
-          } else {
-            newPct=candidatePct;
-            act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+          if(Number.isFinite(raw)){
+            const candidatePct=Math.max(0, Math.min(900, raw));
+            // GUARD: dacă suntem pe branch de CUT și noul % ar CREȘTE placement-ul, nu aplicăm.
+            const isCutBranch=/cut|peste goal/.test(why);
+            if(isCutBranch && candidatePct>=p.percentage){
+              why += ' (placement deja sub target — nu se cutează via %, ar trebui cut pe bid)';
+            } else {
+              newPct=candidatePct;
+              act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+            }
           }
         }
       }
@@ -4005,8 +4006,9 @@ function renderSingleKw(){
   };
   const placeCell=(r,type)=>{
     const p=r.perPlace[type]; if(!p) return '<span class="muted">—</span>';
-    const cur=(p.percentage>0?'+':'')+p.percentage+'%';
-    if(p.action==='none') return `<span class="muted" title="${esc(p.why||'')}">${cur}</span>`;
+    const curVal=Number.isFinite(p.percentage)? p.percentage : 0;
+    const cur=(curVal>0?'+':'')+curVal+'%';
+    if(p.action==='none' || !Number.isFinite(p.newPct)) return `<span class="muted" title="${esc(p.why||'')}">${cur}</span>`;
     const nw=(p.newPct>0?'+':'')+p.newPct+'%';
     const cls=p.action==='decrease'?'num-red':'num-green';
     const arrow=p.action==='decrease'?'↓':'↑';
