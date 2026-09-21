@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3882,7 +3882,7 @@ function computeSingleKwRows(product){
       } else if(p.cpc<=0){
         why='fără traffic aici';
       } else {
-        let targetCpc=null;
+        let targetCpc=null, isCutPath=false;
         if(d.acos>0 && d.acos<goal){
           targetCpc=d.cpc*boostM;
           why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${st.boost}%`;
@@ -3892,6 +3892,7 @@ function computeSingleKwRows(product){
         } else if(d.acos===0 && p.orders===0 && p.clicks>thr){
           newPct=0; act='decrease'; why=`${p.clicks} clicks, 0 orders → 0%`;
         } else if(d.acos>goal){
+          isCutPath=true;
           const cutPct=Math.min(0.30, Math.max(0, 2*(d.acos-goal*1.1)/100));
           targetCpc=d.cpc*(1-cutPct)*1.1;
           why=`ACoS ${fAcos(d.acos)} peste goal → target ${(cutPct*100).toFixed(0)}% sub CPC`;
@@ -3902,8 +3903,17 @@ function computeSingleKwRows(product){
           const baseline=newBid>0? newBid : baselineBid;
           if(baseline>0){
             const raw=Math.round((targetCpc/baseline-1)*100);
-            newPct=Math.max(0, Math.min(900, raw));
-            act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+            const candidate=Math.max(0, Math.min(900, raw));
+            // GUARD: un cut nu are voie NICIODATĂ să crească placement-ul. Se poate întâmpla când bidul
+            // curent e mult sub CPC (bidul nu s-a putut coborî, vezi mai sus) — target-ul "redus" tot iese
+            // mai mare decât modificatorul curent, calculat din bidul mic. În loc să mărim un placement cu
+            // ACoS prost, lăsăm neschimbat și semnalăm că problema reală e bidul, nu placement-ul.
+            if(isCutPath && candidate>=p.percentage){
+              why += ` — bid prea mic (€${baseline.toFixed(2)}) față de CPC (€${d.cpc.toFixed(2)}); placement-ul nu poate fi corectat doar din %, verifică bidul manual`;
+            } else {
+              newPct=candidate;
+              act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
+            }
           }
         }
       }
