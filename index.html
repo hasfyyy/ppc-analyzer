@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3952,13 +3952,19 @@ function renderSingleKw(){
   const {rows: allRows, st}=computeSingleKwRows(S.product);
   if(st.hideNoChange===undefined) st.hideNoChange=true;
   if(st.hideStale===undefined) st.hideStale=false;
+  if(st.excludePorts===undefined) st.excludePorts=[];
   let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
+  if(st.excludePorts.length) rows=rows.filter(r=>!st.excludePorts.includes(r.portfolioName));
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const sel=selFor('singlekw');
-  // Auto-select every changed row on first render so nothing has to be ticked before export.
-  rows.forEach(r=>{ if(r.hasChange && !sel.has(r._uid)) sel.add(r._uid); });
+  // Auto-select o SINGURĂ dată (la primul render) — altfel deselectarea manuală e anulată la fiecare
+  // re-render (checkbox-ul ar reveni bifat imediat ce apeși pe altceva, exact bug-ul raportat).
+  if(!st.initialSelected){
+    allRows.forEach(r=>{ if(r.hasChange) sel.add(r._uid); });
+    st.initialSelected=true;
+  }
   const bidCell=r=>{
     if(r.bidAction==='decrease') return `<span class="num-red">€${r.currentBid.toFixed(2)} → €${r.newBid.toFixed(2)}</span> <span class="muted">(-${(((r.currentBid-r.newBid)/r.currentBid)*100).toFixed(0)}%)</span>`;
     return `<span class="muted">€${r.currentBid.toFixed(2)}</span>`;
@@ -4025,9 +4031,13 @@ function renderSingleKw(){
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
+        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click pentru mai multe)</label><select id="sk-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
         <div class="field grow"><label>Campanie</label><input type="text" id="sk-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="sk-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="sk-hidestale" ${st.hideStale?'checked':''}> Ascunde campaniile editate mid-window</label>
+      </div>
+      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="sk-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+      <div class="ctrls" style="margin-top:10px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-hidestale" ${st.hideStale?'checked':''}> Ascunde campaniile editate mid-window</label>
       </div>
       <div class="hint" style="margin-top:6px;">Campaniile marcate <span class="badge" style="background:#fef3e2;color:#c2760a;">edited mid-window</span> au bid/placement schimbate DEJA în timpul ferestrei bulk-ului (ex: ai optimizat manual acum câteva zile dintr-un export de 7 zile) — CPC-ul din bulk e un amestec de setări vechi + noi, deci sugestia poate fi imprecisă. Detectat automat: cu "Dynamic bids - down only" Amazon nu poate plăti peste bidul efectiv curent, așa că un CPC mai mare dovedește schimbarea. Sugestiile tot converg corect la rulările următoare — flag-ul e doar avertisment, nu blocaj.</div>
     </div>
@@ -4051,6 +4061,8 @@ function renderSingleKw(){
   $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
   $('#sk-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
   $('#sk-hidestale').onchange=e=>{st.hideStale=e.target.checked; upd();};
+  const skPortExcl=$('#sk-portexclude'); if(skPortExcl) skPortExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); upd(); };
+  const skPortExclClear=$('#sk-portexclude-clear'); if(skPortExclClear) skPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
   $('#sk-export').onclick=()=>exportSingleKwOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
 }
 function exportSingleKwOptimization(product, rows){
