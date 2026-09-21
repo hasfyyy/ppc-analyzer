@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3822,7 +3822,7 @@ function computeSingleKwRows(product){
   if(st.threshold===undefined) st.threshold=10;
   if(st.safety===undefined) st.safety=10;   // % cushion under min CPC → bid = min(cpc)*0.9
   if(st.boost===undefined) st.boost=10;     // pp adăugate pe placement bun (step by step)
-  if(st.cutBelow===undefined) st.cutBelow=0.10; // $ sub CPC-ul placement-ului pentru decrease (bid efectiv = cpc - X)
+  if(st.cutBelow===undefined) st.cutBelow=20; // % sub CPC-ul placement-ului pentru decrease (bid efectiv = cpc × (1 - X%))
   // Push pentru campanii noi (cu foarte puține clicks și 0 orders) — adaugă puncte procentuale pe TOS/ROS
   // ca să câștige tracțiune. Doar placement, nu se atinge bidul. Doar TOS și ROS, nu PDP.
   if(st.pushEnabled===undefined) st.pushEnabled=true;
@@ -3886,12 +3886,12 @@ function computeSingleKwRows(product){
       const p=plMap[type]; if(!p) return;
       const d=derive(p);
       let newPct=p.percentage, why='fără modificare', act='none';
-      // Helper: cut targetat = bidul efectiv pe placement scade la (p.cpc - cutBelow $).
+      // Helper: cut targetat = bidul efectiv pe placement scade la cpc × (1 − cutBelow%).
       // Placement % nou se calculează invers: (target/bid − 1) × 100. Clamp min 0, nu sub.
-      const cutBelow=+st.cutBelow || 0.10;
+      const cutBelowPct=+st.cutBelow || 20;
       const applyCutToTarget = ()=>{
         if(p.cpc<=0 || newBid<=0) return null;
-        const targetEff=Math.max(0.02, p.cpc - cutBelow);
+        const targetEff=Math.max(0.02, p.cpc * (1 - cutBelowPct/100));
         const targetPct=Math.round((targetEff/newBid - 1) * 100);
         return Math.max(0, Math.min(900, targetPct));
       };
@@ -3901,7 +3901,7 @@ function computeSingleKwRows(product){
           const npct=applyCutToTarget();
           if(npct!=null && npct<p.percentage){
             newPct=npct; act='decrease';
-            why=`campanie ${totClicks} clicks, 0 orders → efectiv CPC €${p.cpc.toFixed(2)} − €${cutBelow.toFixed(2)}`;
+            why=`campanie ${totClicks} clicks, 0 orders → efectiv CPC €${p.cpc.toFixed(2)} × ${(100-cutBelowPct)}%`;
           } else { why='deja la target sau sub'; }
         } else if(!(p.percentage>0)) { why='deja la 0%'; }
         else { why=`campanie ${totClicks} clicks, 0 orders (fără CPC pe acest placement)`; }
@@ -3917,7 +3917,7 @@ function computeSingleKwRows(product){
         let doBoost=false, cutWhy=null;
         if(p.orders===0){
           if(p.clicks>thr){
-            cutWhy=`${p.clicks} clicks, 0 orders → efectiv CPC €${p.cpc.toFixed(2)} − €${cutBelow.toFixed(2)}`;
+            cutWhy=`${p.clicks} clicks, 0 orders → efectiv CPC €${p.cpc.toFixed(2)} × ${(100-cutBelowPct)}%`;
           } else if(campBadNoOrders){
             why=`campanie ${totClicks} clicks, 0 orders total → nu boostăm placement`;
           } else if(p.clicks>0){
@@ -3933,7 +3933,7 @@ function computeSingleKwRows(product){
           if(p.clicks<=thr/2){
             why=`ACoS ${fAcos(d.acos)} peste goal, dar doar ${p.clicks} clicks — aștept mai multe date`;
           } else {
-            cutWhy=`ACoS ${fAcos(d.acos)} peste goal → efectiv CPC €${p.cpc.toFixed(2)} − €${cutBelow.toFixed(2)}`;
+            cutWhy=`ACoS ${fAcos(d.acos)} peste goal → efectiv CPC €${p.cpc.toFixed(2)} × ${(100-cutBelowPct)}%`;
           }
         } else {
           why=`ACoS ${fAcos(d.acos)} la target`;
@@ -4059,7 +4059,7 @@ function renderSingleKw(){
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
         <div class="field"><label>Câte puncte procentuale adaugă la placement bun</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> pp<span class="hint" style="margin-left:6px;">(default 10pp — step by step)</span></div>
-        <div class="field"><label>Cât cobori bidul efectiv sub CPC (decrease)</label><input type="number" step="0.01" id="sk-cutbelow" min="0" value="${st.cutBelow}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.10 — nu omoram placement, doar sub CPC)</span></div>
+        <div class="field"><label>Cât cobori bidul efectiv sub CPC (decrease)</label><input type="number" id="sk-cutbelow" min="0" max="90" value="${st.cutBelow}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 20% — efectiv = CPC × 0.80)</span></div>
       </div>
       <div class="hint" style="margin:14px 0 6px;color:#1d4ed8;font-weight:600;">Increase placements (campanii cu puține clicks)</div>
       <div class="ctrls">
