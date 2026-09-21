@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:34</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 16:35</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3864,11 +3864,12 @@ function computeSingleKwRows(product){
     const totClicks=placements.reduce((s,p)=>s+p.clicks,0);
     const totOrders=placements.reduce((s,p)=>s+p.orders,0);
     const zeroOutAll=false; // Cut per-placement, nu campanie-wide (vezi logica din forEach mai jos)
-    // Any placement bad → bid gets cut to baseline
+    // Any placement bad → bid gets cut to baseline. Click threshold contează DOAR când 0 orders;
+    // cu orders existente + ACoS peste goal → acționăm oricum.
     let anyBad=false;
     placements.forEach(p=>{
       if(p.orders===0 && p.clicks>thr) anyBad=true;
-      else if(p.orders>0 && p.acos>goal && p.clicks>thr/2) anyBad=true;
+      else if(p.orders>0 && p.acos>goal) anyBad=true;
     });
     // BID decision
     let newBid=t.bid, bidAction='none', bidReason='';
@@ -3901,13 +3902,10 @@ function computeSingleKwRows(product){
         targetCpc=p.cpc*boostM;
         why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${st.boost}%`;
       } else if(d.acos>goal){
-        if(p.clicks<=thr/2){
-          why=`ACoS ${fAcos(d.acos)} peste goal, dar doar ${p.clicks} clicks — aștept mai multe date`;
-        } else {
-          const cutPct=Math.min(0.30, Math.max(0, 2*(d.acos-goal*1.1)/100));
-          targetCpc=p.cpc*(1-cutPct)*1.1;
-          why=`ACoS ${fAcos(d.acos)} peste goal → target ${(cutPct*100).toFixed(0)}% sub CPC`;
-        }
+        // Cu orders existente, click threshold nu contează — acționăm imediat pe baza ACoS.
+        const cutPct=Math.min(0.30, Math.max(0, 2*(d.acos-goal*1.1)/100));
+        targetCpc=p.cpc*(1-cutPct)*1.1;
+        why=`ACoS ${fAcos(d.acos)} peste goal → target ${(cutPct*100).toFixed(0)}% sub CPC`;
       } else {
         why=`ACoS ${fAcos(d.acos)} la target`;
       }
