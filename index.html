@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:25</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3879,7 +3879,11 @@ function computeSingleKwRows(product){
       if(zeroOutAll){
         if(p.percentage>0){ newPct=0; act='decrease'; why=`campanie ${totClicks} clicks, 0 orders → 0%`; }
         else { why='deja la 0%'; }
-      } else if(p.cpc<=0){
+      } else if(d.cpc<=0){
+        // BUG FIX: era `p.cpc` — p e obiectul brut fără câmpul cpc calculat (undefined), iar
+        // `undefined<=0` e FALSE în JS, deci acest gate nu se declanșa NICIODATĂ. Placements cu 0 clicks
+        // treceau mai departe în formula de boost (cpc=0 × 1.2 = 0), producând un cut fals la 0% pe orice
+        // placement fără date care avea deja un modificator pozitiv. `d` (derive(p)) are cpc-ul real.
         why='fără traffic aici';
       } else {
         let targetCpc=null, isCutPath=false;
