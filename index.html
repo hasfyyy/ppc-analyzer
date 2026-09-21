@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 17:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3821,7 +3821,7 @@ function computeSingleKwRows(product){
   const st=stFor('singlekw');
   if(st.threshold===undefined) st.threshold=10;
   if(st.safety===undefined) st.safety=10;   // % cushion under min CPC → bid = min(cpc)*0.9
-  if(st.boost===undefined) st.boost=10;     // % above CPC on good placements → target = cpc*1.10
+  if(st.boost===undefined) st.boost=20;     // % above CPC on good placements → target = cpc*1.20 (matches real Butler ruleset)
   const enabledCamps=optimizableCampaignIds(product);
   const singleKw=singleKwCampaigns(product);
   // One row per single-kw campaign; each row also carries the per-placement moves for export/rendering.
@@ -3954,6 +3954,29 @@ function renderSingleKw(){
     const arrow=p.action==='decrease'?'↓':'↑';
     return `<span class="${cls}" title="${esc(p.why||'')}">${cur} → ${nw} ${arrow}</span>`;
   };
+  // Explicație scurtă pe rând: rezumă motivul principal (bleeder / cut ACoS / boost / bid cut) — un singur
+  // label vizibil per campanie, restul detaliilor rămân pe hover (title) în celulele TOS/ROS/PDP.
+  const PLACE_LABEL={top:'TOS',rest:'ROS',pp:'PDP'};
+  const reasonCell=r=>{
+    const tags=[];
+    if(r.bidAction==='decrease'){
+      const pct=(((r.currentBid-r.newBid)/r.currentBid)*100).toFixed(0);
+      tags.push(`<span class="badge" style="background:#fee2e2;color:#b91c1c;">🔻 Bid -${pct}%</span>`);
+    }
+    ['top','rest','pp'].forEach(type=>{
+      const p=r.perPlace[type]; if(!p || p.action==='none') return;
+      const lbl=PLACE_LABEL[type];
+      if(p.action==='decrease' && p.newPct===0 && p.percentage>0){
+        tags.push(`<span class="badge" style="background:#7f1d1d;color:#fff;" title="${esc(p.why||'')}">🩸 ${lbl} bleeder → 0%</span>`);
+      } else if(p.action==='decrease'){
+        tags.push(`<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(p.why||'')}">↓ ${lbl} cut</span>`);
+      } else if(p.action==='increase'){
+        tags.push(`<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(p.why||'')}">↑ ${lbl} boost</span>`);
+      }
+    });
+    if(!tags.length) return '<span class="muted">—</span>';
+    return tags.join(' ');
+  };
   const cols=[
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
@@ -3967,6 +3990,7 @@ function renderSingleKw(){
     {key:'tos',label:'Top of Search',type:'num',sortVal:r=>r.perPlace.top?r.perPlace.top.percentage:-1,cell:r=>placeCell(r,'top')},
     {key:'ros',label:'Rest of Search',type:'num',sortVal:r=>r.perPlace.rest?r.perPlace.rest.percentage:-1,cell:r=>placeCell(r,'rest')},
     {key:'pdp',label:'Product Pages',type:'num',sortVal:r=>r.perPlace.pp?r.perPlace.pp.percentage:-1,cell:r=>placeCell(r,'pp')},
+    {key:'reason',label:'De ce',l:true,noSort:true,wrap:true,cell:reasonCell},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'singlekw',selectable:true,idKey:'_uid',sortDef:{key:'spend',dir:-1},onChange:renderSingleKw});
   const totalCamps=allRows.length;
@@ -3979,7 +4003,7 @@ function renderSingleKw(){
         <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
-        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — target CPC = CPC × 1.10)</span></div>
+        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 20% — la fel ca PPC Butler — target CPC = CPC × 1.20)</span></div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
