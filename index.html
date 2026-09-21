@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 15:04</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3895,21 +3895,24 @@ function computeSingleKwRows(product){
         // 0 orders: cere clicks > threshold pentru cut la 0%; sub prag = încă în test, boost mic.
         // acos peste goal: cere clicks > threshold/2 pentru cut proporțional; sub prag = nu ai destule date, lasă cum e.
         let targetCpc=null;
+        // Boost step by step: în loc de formulă Butler (care poate exploda la +200%), pur și simplu
+        // adăugăm boostPp puncte procentuale la placement % curent. Simplu, previzibil, mergi din aproape în aproape.
+        const boostPp=st.boost||10;
+        let doBoost=false;
         if(p.orders===0){
           if(p.clicks>thr){
             newPct=0; act='decrease'; why=`${p.clicks} clicks, 0 orders → 0%`;
           } else if(campBadNoOrders){
-            // Total campanie a burnut destul fără orders — nu boostăm nici acest placement, chiar dacă individual are puține clicks.
             why=`campanie ${totClicks} clicks, 0 orders total → nu boostăm placement`;
           } else if(p.clicks>0){
-            targetCpc=d.cpc*boostM;
-            why=`în test (${p.clicks} clicks, 0 orders) → boost +${st.boost}%`;
+            doBoost=true;
+            why=`în test (${p.clicks} clicks, 0 orders) → +${boostPp}pp`;
           } else {
             why='0 clicks — fără date';
           }
         } else if(d.acos>0 && d.acos<goal){
-          targetCpc=d.cpc*boostM;
-          why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${st.boost}%`;
+          doBoost=true;
+          why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → +${boostPp}pp`;
         } else if(d.acos>goal){
           if(p.clicks<=thr/2){
             why=`ACoS ${fAcos(d.acos)} peste goal, dar doar ${p.clicks} clicks — aștept mai multe date`;
@@ -3921,7 +3924,10 @@ function computeSingleKwRows(product){
         } else {
           why=`ACoS ${fAcos(d.acos)} la target`;
         }
-        if(targetCpc!=null){
+        if(doBoost){
+          newPct=Math.min(900, p.percentage+boostPp);
+          act = newPct===p.percentage? 'none' : 'increase';
+        } else if(targetCpc!=null){
           const baseline=newBid>0? newBid : baselineBid;
           if(baseline>0){
             const raw=Math.round((targetCpc/baseline-1)*100);
@@ -4038,7 +4044,7 @@ function renderSingleKw(){
         <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %</div>
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
-        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — target CPC = CPC × 1.10)</span></div>
+        <div class="field"><label>Câte puncte procentuale adaugă la placement bun</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> pp<span class="hint" style="margin-left:6px;">(default 10pp — step by step, nu explozie)</span></div>
       </div>
       <div class="hint" style="margin:14px 0 6px;color:#1d4ed8;font-weight:600;">Increase placements (campanii cu puține clicks)</div>
       <div class="ctrls">
