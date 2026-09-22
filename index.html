@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 09:45</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3835,7 +3835,9 @@ function exportPlacementOptimization(product, rows){
 function computeSingleKwRows(product){
   const st=stFor('singlekw');
   if(st.threshold===undefined) st.threshold=10;
-  if(st.safety===undefined) st.safety=10;   // % cushion under min CPC → bid = min(cpc)*0.9
+  // Flat $ cushion under the cheapest observed CPC, not % (was min(cpc)*0.9) — same reasoning as boostDollar
+  // below: a % cushion shrinks to nothing on a cheap CPC and overcorrects on an expensive one.
+  if(st.safetyDollar===undefined) st.safetyDollar=0.15;
   // Flat $ above CPC, not % (was cpc*1.20, matching the real Butler ruleset's % — changed to $ so the boost
   // doesn't fluctuate with the placement's own CPC/bid size: a cheap and an expensive placement get the same
   // $ nudge instead of the expensive one getting a much bigger jump for the same "good performance" signal).
@@ -3865,11 +3867,10 @@ function computeSingleKwRows(product){
     const pst=stFor('optplace'); if(pst.acosGoal===undefined) pst.acosGoal=20;
     const goal=pst.acosGoal;
     const thr=st.threshold;
-    const safetyM=1-st.safety/100;
     // Baseline bid = safety cushion under the cheapest observed CPC. Skip placements with no clicks (no CPC).
     const cpcsWithData=placements.filter(p=>p.cpc>0).map(p=>p.cpc);
     const minCpc=cpcsWithData.length? Math.min(...cpcsWithData) : 0;
-    const baselineBid=minCpc>0? Math.max(0.20, +(minCpc*safetyM).toFixed(2)) : t.bid;
+    const baselineBid=minCpc>0? Math.max(0.20, +(minCpc-st.safetyDollar).toFixed(2)) : t.bid;
     // Campaign-total totals for zero-out
     const totClicks=placements.reduce((s,p)=>s+p.clicks,0);
     const totOrders=placements.reduce((s,p)=>s+p.orders,0);
@@ -3887,7 +3888,7 @@ function computeSingleKwRows(product){
     if(anyBad && baselineBid>0 && baselineBid<t.bid){
       newBid=baselineBid;
       bidAction='decrease';
-      bidReason=`Placement problematic → bid coborât la ${st.safety}% sub CPC-ul cel mai mic (€${baselineBid.toFixed(2)})`;
+      bidReason=`Placement problematic → bid coborât cu ${fMoney(st.safetyDollar)} sub CPC-ul cel mai mic (€${baselineBid.toFixed(2)})`;
     }
     // PLACEMENT % per placement
     const perPlace={};
@@ -4055,7 +4056,7 @@ function renderSingleKw(){
       <div class="ctrls">
         <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
-        <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
+        <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" step="0.01" min="0" id="sk-safety" value="${st.safetyDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.15 — fix, nu proporțional cu CPC-ul minim)</span></div>
         <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" step="0.01" min="0" id="sk-boost" value="${st.boostDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.10 — fix, nu proporțional cu CPC-ul, ca să nu sară mai mult pe placement-urile scumpe)</span></div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
@@ -4083,7 +4084,7 @@ function renderSingleKw(){
   const upd=()=>renderSingleKw();
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('sk-thr','threshold',v=>+v||1);
-  bind('sk-safety','safety',v=>+v||0);
+  bind('sk-safety','safetyDollar',v=>+v||0);
   bind('sk-boost','boostDollar',v=>+v||0);
   const goalEl=$('#sk-goal'); if(goalEl) goalEl.oninput=debounce(()=>{ stFor('optplace').acosGoal=+goalEl.value||20; upd(); },300);
   $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
