@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 11:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 15:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1194,6 +1194,11 @@ function renderNgram(){
   if(st.text) rows=rows.filter(e=>e.root.includes(st.text.toLowerCase()));
   rows.forEach(e=>e._uid=e.portfolioName+'|'+e.root); // stable identity — matches the portfolio+root aggregation key above
   const sel=selFor('ngram');
+  // Prune selecția de orice UID care nu mai e vizibil sub filtrul curent — altfel un "select all" făcut cu un
+  // Min Clicks mai mic rămâne "agățat" în sel după ce strângi filtrul, contorul de export arată un număr fals
+  // (rânduri fantomă, invizibile în tabel) iar Export Negatives ar putea exporta ceva ce nu mai vezi pe ecran.
+  const visibleUids=new Set(rows.map(r=>r._uid));
+  [...sel].forEach(uid=>{ if(!visibleUids.has(uid)) sel.delete(uid); });
   const cols=[
     {key:'root',label:'N-gram',l:true,type:'text',sortVal:r=>r.root,cell:r=>`<span class="ng-root link" data-uid="${esc(r._uid)}">▸ ${esc(r.root)}</span>`},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>{const v=r.portfolioName||'(No Portfolio)';return `<span style="display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
