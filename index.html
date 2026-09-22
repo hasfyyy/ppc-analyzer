@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:22</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:41</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -787,10 +787,9 @@ const TABS=[
   {id:'ngroots',label:'Low ACOS Roots',ic:''},
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
-  {id:'singlekw',label:'Single-KW Optimization',ic:''},
   {id:'cpcflag',label:'CPC Flag',ic:''},
-  {id:'optbids',label:'Bid Optimizer Multi-KW',ic:''},
-  {id:'optplacements',label:'Placement Optimizer Multi-KW',ic:''},
+  {id:'optbids',label:'Bid Optimizer',ic:''},
+  {id:'optplacements',label:'Placement Optimizer',ic:''},
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
   {id:'duplicates',label:'Duplicates',ic:''},
   {id:'pausecamp',label:'Pause Campaigns',ic:''},
@@ -798,7 +797,7 @@ const TABS=[
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
 // Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
 // correctly. Every other tab depends on a search-term report SD doesn't have.
-const OPT_TABS=new Set(['singlekw','cpcflag','optbids','optplacements','optbudget','pausecamp']);
+const OPT_TABS=new Set(['cpcflag','optbids','optplacements','optbudget','pausecamp']);
 // Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
 // SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
 // only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
@@ -835,7 +834,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, singlekw:renderSingleKw, cpcflag:renderCpcFlag, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -2996,10 +2995,7 @@ function renderOptBids(){
   // single lucky order.
   const staleCache={};
   const isStale=cid=>{ if(staleCache[cid]===undefined) staleCache[cid]=campaignRecentlyChanged(cid, S.product); return staleCache[cid]; };
-  // Single-keyword campaigns have their own dedicated tab (Single-KW) with Butler-style bid+placement rules —
-  // excluded here so the same campaign isn't shown / exported from two places at once. Multi-keyword campaigns
-  // stay 100% as before (the whole existing tier/floor/compensation ladder still applies to them).
-  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId) && !singleKw.has(t.campaignId));
+  const src=DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.bid>0 && enabledCamps.has(t.campaignId));
   // A bid deliberately parked under the market is a strategy, not a mistake — these accounts run campaigns
   // named "low bids" for exactly that. Waking those would put two of your own campaigns into the same
   // race against each other, so they are skipped by name and only listed further down.
@@ -3817,338 +3813,6 @@ function exportPlacementOptimization(product, rows){
   const out=rows.map(r=>bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':r.rawPlacement,'Percentage':r.newPct}));
   writeBulk(out, productFilePrefix(product)+'placement_optimization_bulk.xlsx', productSheetName(product));
   alert(`Exported ${out.length} placement bid adjustment update(s).`);
-}
-
-/* ============================ SINGLE-KW OPTIMIZER (Butler-style) ============================ */
-// Independent from Bid Optimizer / Placement Optimizer, which handle multi-keyword campaigns with the
-// existing tier/floor logic. Single-keyword campaigns have a 1:1 relationship between bid and placement,
-// so both moves are decided together here on the same Butler-style rules the user runs in PPC Butler for
-// SUP campaigns:
-//   1) BID: if ANY placement is bad (0 orders + clicks > threshold, OR acos > goal + clicks > threshold/2),
-//      new bid = max(0.20, min(cpcTos, cpcRos, cpcPdp) * (1 - safety%))
-//   2) PLACEMENT % per placement (using the NEW bid above as the baseline):
-//      - acos < goal AND acos > 0 (rentabil)      → target = cpc * boost
-//      - acos == 0 AND clicks ≤ threshold (test)  → target = cpc * boost
-//      - acos > goal                              → target = cpc * (1 - min(30%, 2*(acos - goal*1.1))) * 1.1
-//      - new% = round((target / baseline_bid − 1) * 100), clamped 0..900
-//   3) ZERO-OUT: if the whole campaign has 0 orders AND total clicks > threshold, set every placement to 0%.
-function computeSingleKwRows(product){
-  const st=stFor('singlekw');
-  if(st.threshold===undefined) st.threshold=10;
-  if(st.zeroOutCutPct===undefined) st.zeroOutCutPct=20;
-  // Flat $ cushion under the cheapest observed CPC, not % (was min(cpc)*0.9) — same reasoning as boostDollar
-  // below: a % cushion shrinks to nothing on a cheap CPC and overcorrects on an expensive one.
-  if(st.safetyDollar===undefined) st.safetyDollar=0.15;
-  // Flat $ above CPC, not % (was cpc*1.20, matching the real Butler ruleset's % — changed to $ so the boost
-  // doesn't fluctuate with the placement's own CPC/bid size: a cheap and an expensive placement get the same
-  // $ nudge instead of the expensive one getting a much bigger jump for the same "good performance" signal).
-  if(st.boostDollar===undefined) st.boostDollar=0.10;
-  // TOS/ROS push: a placement with 0 clicks has no CPC to judge (the branch below would otherwise just say
-  // "no traffic here" and leave it alone forever) — 0 clicks alone is reason enough to give it a shot, no CTR
-  // math, no impression minimum. Product Pages excluded on purpose — same reasoning as elsewhere in this file,
-  // it's usually the placement doing the crowding-out, not the one needing help.
-  if(st.pushEnabled===undefined) st.pushEnabled=true;
-  if(st.pushStep===undefined) st.pushStep=10;
-  if(st.pushCeiling===undefined) st.pushCeiling=300;
-  const enabledCamps=optimizableCampaignIds(product);
-  const singleKw=singleKwCampaigns(product);
-  // One row per single-kw campaign; each row also carries the per-placement moves for export/rendering.
-  const targetsByCamp=new Map();
-  DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && singleKw.has(t.campaignId)) targetsByCamp.set(t.campaignId, t); });
-  const placementsByCamp={};
-  DATA.placements.forEach(p=>{
-    if(p.product!==product || !enabledCamps.has(p.campaignId) || !singleKw.has(p.campaignId)) return;
-    const type=placeType(p.placement); if(!type || type==='business') return;
-    const k=p.campaignId+'|'+type;
-    if(!placementsByCamp[p.campaignId]) placementsByCamp[p.campaignId]={};
-    if(!placementsByCamp[p.campaignId][type]){
-      placementsByCamp[p.campaignId][type]={placeType:type, placementName:placeName(p.placement), rawPlacement:p.placement, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
-    }
-    const e=placementsByCamp[p.campaignId][type];
-    e.impressions+=p.impressions; e.clicks+=p.clicks; e.spend+=p.spend; e.sales+=p.sales; e.orders+=p.orders;
-  });
-  const rows=[];
-  targetsByCamp.forEach((t, cid)=>{
-    const plMap=placementsByCamp[cid]||{};
-    const placements=Object.values(plMap).map(p=>Object.assign({}, p, derive(p)));
-    // Global ACoS goal only — same as Butler's SUP rules, no per-portfolio overrides.
-    const pst=stFor('optplace'); if(pst.acosGoal===undefined) pst.acosGoal=20;
-    const goal=pst.acosGoal;
-    const thr=st.threshold;
-    // Baseline bid = safety cushion under the cheapest observed CPC. Skip placements with no clicks (no CPC).
-    const cpcsWithData=placements.filter(p=>p.cpc>0).map(p=>p.cpc);
-    const minCpc=cpcsWithData.length? Math.min(...cpcsWithData) : 0;
-    const baselineBid=minCpc>0? Math.max(0.20, +(minCpc-st.safetyDollar).toFixed(2)) : t.bid;
-    // Campaign-total totals for zero-out
-    const totClicks=placements.reduce((s,p)=>s+p.clicks,0);
-    const totOrders=placements.reduce((s,p)=>s+p.orders,0);
-    const zeroOutAll=totOrders===0 && totClicks>thr;
-    // Any placement bad → bid gets cut to baseline. Aceeași regulă ca la placement %: threshold contează
-    // DOAR când 0 orders (nu ai nicio dovadă). Cu orders reale, ACoS peste goal e dovadă suficientă,
-    // indiferent de clicks — bidul și placement-ul trebuie să fie consistente pe aceeași logică.
-    let anyBad=false;
-    placements.forEach(p=>{
-      if(p.orders===0 && p.clicks>thr) anyBad=true;
-      else if(p.orders>0 && p.acos>goal) anyBad=true;
-    });
-    // BID decision
-    let newBid=t.bid, bidAction='none', bidReason='';
-    if(anyBad && baselineBid>0 && baselineBid<t.bid){
-      newBid=baselineBid;
-      bidAction='decrease';
-      bidReason=`Placement problematic → bid coborât cu ${fMoney(st.safetyDollar)} sub CPC-ul cel mai mic (€${baselineBid.toFixed(2)})`;
-    }
-    // PLACEMENT % per placement
-    const perPlace={};
-    ['top','rest','pp'].forEach(type=>{
-      const p=plMap[type]; if(!p) return;
-      const d=derive(p);
-      let newPct=p.percentage, why='fără modificare', act='none';
-      if(zeroOutAll){
-        // Graduated cut on the effective multiplier, not a straight wipe to 0% — a campaign proven to burn
-        // clicks with 0 orders is real evidence, but the SAME evidence keeps re-triggering every week the
-        // problem isn't fixed, so a repeated -20% converges to 0% over a few runs anyway if it's genuinely
-        // dead. Going straight to 0% in one shot was more than Alex wanted for a first pass.
-        if(p.percentage>0){
-          const cutFrac=st.zeroOutCutPct/100;
-          const cand=Math.max(0, Math.round(((1+p.percentage/100)*(1-cutFrac)-1)*100));
-          if(cand<p.percentage){ newPct=cand; act='decrease'; why=`campanie ${totClicks} clicks, 0 orders → -${st.zeroOutCutPct}%`; }
-          else why='deja la target';
-        }
-        else { why='deja la 0%'; }
-      } else if(d.cpc<=0){
-        // BUG FIX: era `p.cpc` — p e obiectul brut fără câmpul cpc calculat (undefined), iar
-        // `undefined<=0` e FALSE în JS, deci acest gate nu se declanșa NICIODATĂ. Placements cu 0 clicks
-        // treceau mai departe în formula de boost (cpc=0 × 1.2 = 0), producând un cut fals la 0% pe orice
-        // placement fără date care avea deja un modificator pozitiv. `d` (derive(p)) are cpc-ul real.
-        if(st.pushEnabled && (type==='top'||type==='rest') && p.percentage<st.pushCeiling){
-          newPct=Math.min(900, p.percentage+st.pushStep); act='increase';
-          why=`0 clicks → push +${st.pushStep}pp`;
-        } else {
-          why='fără traffic aici';
-        }
-      } else {
-        let targetCpc=null, isCutPath=false;
-        // 0 orders → ACoS e nedefinit/infinit (spend cu 0 sales), deci NU se judecă după ACoS — se judecă
-        // strict după clicks (threshold). BUG vechi: verifica `d.acos===0`, dar orice placement cu spend
-        // real și 0 orders are acos=Infinity, nu 0 — condiția nu se declanșa NICIODATĂ, iar 1 click cu $2.59
-        // spend cădea direct pe branch-ul "ACoS peste goal → cut", fără niciun gate pe clicks.
-        if(p.orders===0){
-          if(p.clicks>thr){
-            newPct=0; act='decrease'; why=`${p.clicks} clicks, 0 orders → 0%`;
-          } else {
-            targetCpc=d.cpc+st.boostDollar;
-            why=`test (${p.clicks} clicks, 0 orders) → boost +${fMoney(st.boostDollar)}`;
-          }
-        } else if(d.acos>0 && d.acos<goal){
-          targetCpc=d.cpc+st.boostDollar;
-          why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${fMoney(st.boostDollar)}`;
-        } else if(d.acos>goal){
-          isCutPath=true;
-          const cutPct=Math.min(0.30, Math.max(0, 2*(d.acos-goal*1.1)/100));
-          targetCpc=d.cpc*(1-cutPct)*1.1;
-          why=`ACoS ${fAcos(d.acos)} peste goal → target ${(cutPct*100).toFixed(0)}% sub CPC`;
-        } else {
-          why=`ACoS ${fAcos(d.acos)} la target`;
-        }
-        if(targetCpc!=null){
-          const baseline=newBid>0? newBid : baselineBid;
-          if(baseline>0){
-            const raw=Math.round((targetCpc/baseline-1)*100);
-            const candidate=Math.max(0, Math.min(900, raw));
-            // GUARD: un cut nu are voie NICIODATĂ să crească placement-ul. Se poate întâmpla când bidul
-            // curent e mult sub CPC (bidul nu s-a putut coborî, vezi mai sus) — target-ul "redus" tot iese
-            // mai mare decât modificatorul curent, calculat din bidul mic. În loc să mărim un placement cu
-            // ACoS prost, lăsăm neschimbat și semnalăm că problema reală e bidul, nu placement-ul.
-            if(isCutPath && candidate>=p.percentage){
-              why += ` — bid prea mic (€${baseline.toFixed(2)}) față de CPC (€${d.cpc.toFixed(2)}); placement-ul nu poate fi corectat doar din %, verifică bidul manual`;
-            } else {
-              newPct=candidate;
-              act = newPct===p.percentage? 'none' : (newPct<p.percentage? 'decrease' : 'increase');
-            }
-          }
-        }
-      }
-      perPlace[type]=Object.assign({}, p, d, {newPct, why, action:act});
-    });
-    // Effective row totals (from campaign totals)
-    const rowTotals=derive({impressions:placements.reduce((s,p)=>s+p.impressions,0),clicks:totClicks,spend:placements.reduce((s,p)=>s+p.spend,0),sales:placements.reduce((s,p)=>s+p.sales,0),orders:totOrders});
-    const hasChange = bidAction!=='none' || Object.values(perPlace).some(p=>p.action!=='none');
-    rows.push({
-      _uid: cid,
-      campaignId: cid,
-      campaignName: t.campaignName||DATA.campById[cid]?.name||cid,
-      portfolioName: t.portfolioName||'(No Portfolio)',
-      target: t,
-      goal,
-      currentBid: t.bid,
-      newBid,
-      bidAction,
-      bidReason,
-      baselineBid,
-      perPlace,
-      totClicks, totOrders,
-      spend: rowTotals.spend, sales: rowTotals.sales, orders: rowTotals.orders, clicks: rowTotals.clicks, acos: rowTotals.acos, cpc: rowTotals.cpc,
-      hasChange,
-      // Dacă bidul/placement-ul a fost schimbat DEJA în timpul ferestrei bulk-ului (ex: ai optimizat manual
-      // acum 3 zile dintr-un bulk de 7 zile), spend/clicks/CPC din bulk sunt un amestec de sub setările vechi
-      // ȘI cele noi — sugestiile calculate pe acel CPC "mixt" pot fi greșite. Detectat arimetic: cu "Dynamic
-      // bids - down only" Amazon nu poate plăti niciodată peste bidul efectiv curent, deci un CPC mai mare
-      // dovedește că bidul/placement-ul a fost altul în timpul ferestrei.
-      stale: campaignRecentlyChanged(cid, product),
-    });
-  });
-  return {rows, st};
-}
-function renderSingleKw(){
-  const {rows: allRows, st}=computeSingleKwRows(S.product);
-  if(st.hideNoChange===undefined) st.hideNoChange=true;
-  if(st.hideStale===undefined) st.hideStale=false;
-  if(st.excludePorts===undefined) st.excludePorts=[];
-  let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
-  if(st.hideStale) rows=rows.filter(r=>!r.stale);
-  if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
-  if(st.excludePorts.length) rows=rows.filter(r=>!st.excludePorts.includes(r.portfolioName));
-  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  const sel=selFor('singlekw');
-  // Auto-select o SINGURĂ dată (la primul render) — altfel deselectarea manuală e anulată la fiecare
-  // re-render (checkbox-ul ar reveni bifat imediat ce apeși pe altceva, exact bug-ul raportat).
-  if(!st.initialSelected){
-    allRows.forEach(r=>{ if(r.hasChange) sel.add(r._uid); });
-    st.initialSelected=true;
-  }
-  const bidCell=r=>{
-    if(r.bidAction==='decrease') return `<span class="num-red">€${r.currentBid.toFixed(2)} → €${r.newBid.toFixed(2)}</span> <span class="muted">(-${(((r.currentBid-r.newBid)/r.currentBid)*100).toFixed(0)}%)</span>`;
-    return `<span class="muted">€${r.currentBid.toFixed(2)}</span>`;
-  };
-  const placeCell=(r,type)=>{
-    const p=r.perPlace[type]; if(!p) return '<span class="muted">—</span>';
-    const cur=(p.percentage>0?'+':'')+p.percentage+'%';
-    if(p.action==='none') return `<span class="muted" title="${esc(p.why||'')}">${cur}</span>`;
-    const nw=(p.newPct>0?'+':'')+p.newPct+'%';
-    const cls=p.action==='decrease'?'num-red':'num-green';
-    const arrow=p.action==='decrease'?'↓':'↑';
-    return `<span class="${cls}" title="${esc(p.why||'')}">${cur} → ${nw} ${arrow}</span>`;
-  };
-  // Explicație scurtă pe rând: rezumă motivul principal (bleeder / cut ACoS / boost / bid cut) — un singur
-  // label vizibil per campanie, restul detaliilor rămân pe hover (title) în celulele TOS/ROS/PDP.
-  const PLACE_LABEL={top:'TOS',rest:'ROS',pp:'PDP'};
-  const reasonCell=r=>{
-    const tags=[];
-    if(r.bidAction==='decrease'){
-      const pct=(((r.currentBid-r.newBid)/r.currentBid)*100).toFixed(0);
-      tags.push(`<span class="badge" style="background:#fee2e2;color:#b91c1c;">🔻 Bid -${pct}%</span>`);
-    }
-    ['top','rest','pp'].forEach(type=>{
-      const p=r.perPlace[type]; if(!p || p.action==='none') return;
-      const lbl=PLACE_LABEL[type];
-      if(p.action==='decrease' && p.newPct===0 && p.percentage>0){
-        tags.push(`<span class="badge" style="background:#7f1d1d;color:#fff;" title="${esc(p.why||'')}">🩸 ${lbl} bleeder → 0%</span>`);
-      } else if(p.action==='decrease'){
-        tags.push(`<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(p.why||'')}">↓ ${lbl} cut</span>`);
-      } else if(p.action==='increase'){
-        tags.push(`<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(p.why||'')}">↑ ${lbl} boost</span>`);
-      }
-    });
-    if(!tags.length) return '<span class="muted">—</span>';
-    return tags.join(' ');
-  };
-  const cols=[
-    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>r.stale? `${esc(r.campaignName)} <span class="badge" style="background:#fef3e2;color:#c2760a;" title="CPC-ul observat e mai mare decât ce ar putea explica bidul/placement-ul CURENT — dovadă că au fost schimbate în timpul ferestrei bulk-ului. Spend/clicks/CPC din bulk sunt un amestec de setări vechi și noi; sugestia de mai jos poate fi imprecisă.">edited mid-window</span>` : esc(r.campaignName)},
-    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
-    {key:'goal',label:'Goal',type:'num',cell:r=>r.goal+'%'},
-    {key:'clicks',label:'Clicks',type:'int'},
-    {key:'orders',label:'Orders',type:'int'},
-    {key:'spend',label:'Spend',type:'money'},
-    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
-    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
-    {key:'bid',label:'Bid',type:'money',sortVal:r=>r.currentBid,cell:bidCell},
-    {key:'tos',label:'Top of Search',type:'num',sortVal:r=>r.perPlace.top?r.perPlace.top.percentage:-1,cell:r=>placeCell(r,'top')},
-    {key:'ros',label:'Rest of Search',type:'num',sortVal:r=>r.perPlace.rest?r.perPlace.rest.percentage:-1,cell:r=>placeCell(r,'rest')},
-    {key:'pdp',label:'Product Pages',type:'num',sortVal:r=>r.perPlace.pp?r.perPlace.pp.percentage:-1,cell:r=>placeCell(r,'pp')},
-    {key:'reason',label:'De ce',l:true,noSort:true,wrap:true,cell:reasonCell},
-  ];
-  const tbl=buildTable({columns:cols,rows,tab:'singlekw',selectable:true,idKey:'_uid',sortDef:{key:'spend',dir:-1},onChange:renderSingleKw});
-  const totalCamps=allRows.length;
-  const withChange=allRows.filter(r=>r.hasChange).length;
-  const selCount=rows.filter(r=>sel.has(r._uid)).length;
-  $('#app').innerHTML=`
-    <div class="card pad">
-      <h3 class="sectitle">Single-KW Optimizer</h3>
-      <div class="ctrls">
-        <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
-        <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
-        <div class="field"><label>Cu cât taie când 0 comenzi pe toată campania</label><input type="number" id="sk-zerocut" min="1" max="100" value="${st.zeroOutCutPct}" style="width:70px;"> %<span class="hint" style="margin-left:6px;">(default 20% — gradual pe bid-ul efectiv, nu direct la 0%; se repetă la fiecare rulare dacă tot n-are comenzi)</span></div>
-        <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" step="0.01" min="0" id="sk-safety" value="${st.safetyDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.15 — fix, nu proporțional cu CPC-ul minim)</span></div>
-        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" step="0.01" min="0" id="sk-boost" value="${st.boostDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.10 — fix, nu proporțional cu CPC-ul, ca să nu sară mai mult pe placement-urile scumpe)</span></div>
-      </div>
-      <div class="ctrls" style="margin-top:10px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-pushen" ${st.pushEnabled?'checked':''}> Push TOS/ROS fără clicks</label>
-        <div class="field"><label>Push cu +pp</label><input type="number" id="sk-pushstep" min="1" value="${st.pushStep}" style="width:70px;"></div>
-        <div class="field"><label>Nu mai push peste %</label><input type="number" id="sk-pushceil" min="0" value="${st.pushCeiling}" style="width:80px;"></div>
-        <div class="hint" style="align-self:center;">TOS/ROS cu 0 clicks primesc automat un boost de % ca să prindă și ele clicks — fără prag pe impresii sau CTR, simplu 0 clicks = push. Product Pages exclus (de obicei el fură tot bugetul, nu are nevoie de ajutor).</div>
-      </div>
-      <div class="ctrls" style="margin-top:10px;">
-        <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
-        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click pentru mai multe)</label><select id="sk-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
-        <div class="field grow"><label>Campanie</label><input type="text" id="sk-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
-      </div>
-      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="sk-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
-      <div class="ctrls" style="margin-top:10px;">
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-hidestale" ${st.hideStale?'checked':''}> Ascunde campaniile editate mid-window</label>
-      </div>
-      <div class="hint" style="margin-top:6px;">Campaniile marcate <span class="badge" style="background:#fef3e2;color:#c2760a;">edited mid-window</span> au bid/placement schimbate DEJA în timpul ferestrei bulk-ului (ex: ai optimizat manual acum câteva zile dintr-un export de 7 zile) — CPC-ul din bulk e un amestec de setări vechi + noi, deci sugestia poate fi imprecisă. Detectat automat: cu "Dynamic bids - down only" Amazon nu poate plăti peste bidul efectiv curent, așa că un CPC mai mare dovedește schimbarea. Sugestiile tot converg corect la rulările următoare — flag-ul e doar avertisment, nu blocaj.</div>
-    </div>
-    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('Campanii single-kw',fInt(totalCamps))}${kpi('Cu modificări sugerate',fInt(withChange))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
-    </div>
-    <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Single-KW Changes (${rows.length})</h3><div class="spacer"></div>
-        <button class="btn grad" id="sk-export" ${selCount?'':'disabled'}>Export Single-KW Update (${selCount})</button>
-      </div>
-      <div id="sk-table">${tbl.html}</div>
-    </div>`;
-  tbl.wire($('#sk-table'));
-  const upd=()=>renderSingleKw();
-  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
-  bind('sk-thr','threshold',v=>+v||1);
-  bind('sk-zerocut','zeroOutCutPct',v=>+v||1);
-  bind('sk-safety','safetyDollar',v=>+v||0);
-  bind('sk-boost','boostDollar',v=>+v||0);
-  bind('sk-pushstep','pushStep',v=>+v||0);
-  bind('sk-pushceil','pushCeiling',v=>+v||0);
-  const pushEnEl=$('#sk-pushen'); if(pushEnEl) pushEnEl.onchange=e=>{ st.pushEnabled=e.target.checked; upd(); };
-  const goalEl=$('#sk-goal'); if(goalEl) goalEl.oninput=debounce(()=>{ stFor('optplace').acosGoal=+goalEl.value||20; upd(); },300);
-  $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
-  $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
-  $('#sk-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
-  $('#sk-hidestale').onchange=e=>{st.hideStale=e.target.checked; upd();};
-  const skPortExcl=$('#sk-portexclude'); if(skPortExcl) skPortExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); upd(); };
-  const skPortExclClear=$('#sk-portexclude-clear'); if(skPortExclClear) skPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
-  $('#sk-export').onclick=()=>exportSingleKwOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
-}
-function exportSingleKwOptimization(product, rows){
-  if(!rows.length){ alert('Nicio campanie selectată.'); return; }
-  const prod=productLabel(product);
-  const out=[];
-  rows.forEach(r=>{
-    // Bid update (if changed)
-    if(r.bidAction!=='none' && r.newBid!==r.currentBid){
-      const t=r.target;
-      const bidRow=Object.assign({'Product':prod,'Entity':t.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':t.campaignId,'Ad Group ID':t.adGroupId,'Bid':r.newBid}, t.kind==='keyword'?{'Keyword ID':t.id}:{'Product Targeting ID':t.id});
-      out.push(bulkRow(bidRow));
-    }
-    // Placement % updates
-    Object.values(r.perPlace).forEach(p=>{
-      if(p.action==='none') return;
-      if(p.newPct===p.percentage) return;
-      out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
-    });
-  });
-  if(!out.length){ alert('Nimic de exportat (nicio modificare reală în selecție).'); return; }
-  writeBulk(out, productFilePrefix(product)+'singlekw_optimization_bulk.xlsx', productSheetName(product));
-  alert(`Exportat ${out.length} update-uri (bid + placement) pentru ${rows.length} campanii single-kw.`);
 }
 
 /* ============================ CPC FLAG ============================ */
