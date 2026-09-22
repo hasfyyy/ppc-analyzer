@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:06</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3842,22 +3842,13 @@ function computeSingleKwRows(product){
   // doesn't fluctuate with the placement's own CPC/bid size: a cheap and an expensive placement get the same
   // $ nudge instead of the expensive one getting a much bigger jump for the same "good performance" signal).
   if(st.boostDollar===undefined) st.boostDollar=0.10;
-  // TOS/ROS wake: a placement with real impressions but 0 clicks has no CPC to judge (the branch below would
-  // otherwise just say "no traffic here" and leave it alone forever) — showing plenty and buying nothing is
-  // itself a signal, same as the keyword-level wake rule and the Placement Optimizer's own push (see
-  // computePlacementOptRows). Product Pages excluded on purpose — same reasoning as there, it's usually the
-  // placement doing the crowding-out, not the one needing help. CTR-derived threshold instead of a fixed
-  // impression count, so a low-CTR niche doesn't get pushed on noise.
+  // TOS/ROS push: a placement with 0 clicks has no CPC to judge (the branch below would otherwise just say
+  // "no traffic here" and leave it alone forever) — 0 clicks alone is reason enough to give it a shot, no CTR
+  // math, no impression minimum. Product Pages excluded on purpose — same reasoning as elsewhere in this file,
+  // it's usually the placement doing the crowding-out, not the one needing help.
   if(st.pushEnabled===undefined) st.pushEnabled=true;
   if(st.pushStep===undefined) st.pushStep=10;
   if(st.pushCeiling===undefined) st.pushCeiling=300;
-  if(st.wakeExpectedClicks===undefined) st.wakeExpectedClicks=3;
-  const acctCtrSk=derive(agg(DATA.campaigns.filter(c=>c.product===product))).ctr;
-  const campCtrSk=campCtrTable(product);
-  function wakeImprForSk(campaignId){
-    const ctr=wakeCtrFor(campaignId, campCtrSk, acctCtrSk);
-    return ctr>0 ? Math.ceil(st.wakeExpectedClicks/(ctr/100)) : 400;
-  }
   const enabledCamps=optimizableCampaignIds(product);
   const singleKw=singleKwCampaigns(product);
   // One row per single-kw campaign; each row also carries the per-placement moves for export/rendering.
@@ -3920,9 +3911,9 @@ function computeSingleKwRows(product){
         // `undefined<=0` e FALSE în JS, deci acest gate nu se declanșa NICIODATĂ. Placements cu 0 clicks
         // treceau mai departe în formula de boost (cpc=0 × 1.2 = 0), producând un cut fals la 0% pe orice
         // placement fără date care avea deja un modificator pozitiv. `d` (derive(p)) are cpc-ul real.
-        if(st.pushEnabled && (type==='top'||type==='rest') && p.impressions>=wakeImprForSk(cid) && p.percentage<st.pushCeiling){
+        if(st.pushEnabled && (type==='top'||type==='rest') && p.percentage<st.pushCeiling){
           newPct=Math.min(900, p.percentage+st.pushStep); act='increase';
-          why=`${fInt(p.impressions)} impresii, 0 clicks → push +${st.pushStep}pp`;
+          why=`0 clicks → push +${st.pushStep}pp`;
         } else {
           why='fără traffic aici';
         }
@@ -4084,7 +4075,7 @@ function renderSingleKw(){
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="sk-pushen" ${st.pushEnabled?'checked':''}> Push TOS/ROS fără clicks</label>
         <div class="field"><label>Push cu +pp</label><input type="number" id="sk-pushstep" min="1" value="${st.pushStep}" style="width:70px;"></div>
         <div class="field"><label>Nu mai push peste %</label><input type="number" id="sk-pushceil" min="0" value="${st.pushCeiling}" style="width:80px;"></div>
-        <div class="hint" style="align-self:center;" title="Cât de multe impresii fără niciun click trebuie să vadă un placement înainte ca 0 clicks să fie un semnal real, nu doar puțin trafic — derivat din CTR-ul campaniei (fallback pe CTR-ul contului sub 300 impresii proprii), nu un număr fix.">TOS/ROS cu 0 clicks dar destule impresii (CTR-derivat) primesc un boost de % ca să prindă și ele clicks — Product Pages exclus (de obicei el fură tot bugetul, nu are nevoie de ajutor).</div>
+        <div class="hint" style="align-self:center;">TOS/ROS cu 0 clicks primesc automat un boost de % ca să prindă și ele clicks — fără prag pe impresii sau CTR, simplu 0 clicks = push. Product Pages exclus (de obicei el fură tot bugetul, nu are nevoie de ajutor).</div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
