@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:15</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:22</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3835,6 +3835,7 @@ function exportPlacementOptimization(product, rows){
 function computeSingleKwRows(product){
   const st=stFor('singlekw');
   if(st.threshold===undefined) st.threshold=10;
+  if(st.zeroOutCutPct===undefined) st.zeroOutCutPct=20;
   // Flat $ cushion under the cheapest observed CPC, not % (was min(cpc)*0.9) — same reasoning as boostDollar
   // below: a % cushion shrinks to nothing on a cheap CPC and overcorrects on an expensive one.
   if(st.safetyDollar===undefined) st.safetyDollar=0.15;
@@ -3904,7 +3905,16 @@ function computeSingleKwRows(product){
       const d=derive(p);
       let newPct=p.percentage, why='fără modificare', act='none';
       if(zeroOutAll){
-        if(p.percentage>0){ newPct=0; act='decrease'; why=`campanie ${totClicks} clicks, 0 orders → 0%`; }
+        // Graduated cut on the effective multiplier, not a straight wipe to 0% — a campaign proven to burn
+        // clicks with 0 orders is real evidence, but the SAME evidence keeps re-triggering every week the
+        // problem isn't fixed, so a repeated -20% converges to 0% over a few runs anyway if it's genuinely
+        // dead. Going straight to 0% in one shot was more than Alex wanted for a first pass.
+        if(p.percentage>0){
+          const cutFrac=st.zeroOutCutPct/100;
+          const cand=Math.max(0, Math.round(((1+p.percentage/100)*(1-cutFrac)-1)*100));
+          if(cand<p.percentage){ newPct=cand; act='decrease'; why=`campanie ${totClicks} clicks, 0 orders → -${st.zeroOutCutPct}%`; }
+          else why='deja la target';
+        }
         else { why='deja la 0%'; }
       } else if(d.cpc<=0){
         // BUG FIX: era `p.cpc` — p e obiectul brut fără câmpul cpc calculat (undefined), iar
@@ -4068,6 +4078,7 @@ function renderSingleKw(){
       <div class="ctrls">
         <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
+        <div class="field"><label>Cu cât taie când 0 comenzi pe toată campania</label><input type="number" id="sk-zerocut" min="1" max="100" value="${st.zeroOutCutPct}" style="width:70px;"> %<span class="hint" style="margin-left:6px;">(default 20% — gradual pe bid-ul efectiv, nu direct la 0%; se repetă la fiecare rulare dacă tot n-are comenzi)</span></div>
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" step="0.01" min="0" id="sk-safety" value="${st.safetyDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.15 — fix, nu proporțional cu CPC-ul minim)</span></div>
         <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" step="0.01" min="0" id="sk-boost" value="${st.boostDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.10 — fix, nu proporțional cu CPC-ul, ca să nu sară mai mult pe placement-urile scumpe)</span></div>
       </div>
@@ -4102,6 +4113,7 @@ function renderSingleKw(){
   const upd=()=>renderSingleKw();
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('sk-thr','threshold',v=>+v||1);
+  bind('sk-zerocut','zeroOutCutPct',v=>+v||1);
   bind('sk-safety','safetyDollar',v=>+v||0);
   bind('sk-boost','boostDollar',v=>+v||0);
   bind('sk-pushstep','pushStep',v=>+v||0);
