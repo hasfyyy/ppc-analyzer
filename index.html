@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 10:48</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 11:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3089,6 +3089,8 @@ function renderOptBids(){
   }).filter(Boolean);
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.excludePorts===undefined) st.excludePorts=[];
+  if(st.excludePorts.length) rows=rows.filter(r=>!st.excludePorts.includes(r.portfolioName||'(No Portfolio)'));
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   // Stable identity (real keyword/PT ID), not a positional index — a positional "ob3" meant a different
   // target every time the threshold/filter changed the row set, so a stale selection either inflated
@@ -3171,8 +3173,10 @@ function renderOptBids(){
         <div class="field"><label>Min Clicks</label><input type="number" id="ob-mc" value="${st.minClicks}" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="ob-ms" value="${st.minSpend}" style="width:80px;"></div>
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
+        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click pentru mai multe)</label><select id="ob-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
+      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="ob-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
       <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake).">0 orders — runs on clicks instead of ACoS (undefined with no sales). A graduated cut for proven wasted spend.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
@@ -3252,6 +3256,8 @@ function renderOptBids(){
   bind('ob-maxkw','maxKwForRaise',v=>+v||0);
   $('#ob-maxkwgate').onchange=e=>{ st.maxKwGateEnabled=e.target.checked; renderOptBids(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
+  const obPortExcl=$('#ob-portexclude'); if(obPortExcl) obPortExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); upd(); };
+  const obPortExclClear=$('#ob-portexclude-clear'); if(obPortExclClear) obPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
   $('#ob-actionf').onchange=e=>{ st.actionFilter=e.target.value; upd(); };
