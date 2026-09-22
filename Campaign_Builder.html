@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-22 15:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-09-22 16:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -940,7 +940,9 @@ function skwTemplate(cfg){
 // The keyword is ALWAYS embedded in the name — with a detected template (suffix copied + date refreshed)
 // or, failing that, with the manual fields — either way the keyword itself is never optional.
 function buildSkwName(cfg, keyword, template){
-  const slug=slugifyKeyword(keyword);
+  // Keyword-ul apare între ghilimele în numele campaniei (doar în NUME — 'Keyword Text' rămâne
+  // neschimbat, targetarea reală nu e afectată). Matches naming convention deja folosită în cont.
+  const slug=`"${slugifyKeyword(keyword)}"`;
   const sep=cfg.separator||'_';
   if(template){ const suffix=refreshAgentToken(refreshDateToken(template.suffix), cfg.agent); return [cfg.prefix, cfg.matchType, slug, suffix].filter(x=>x!=='').join(sep); }
   return [cfg.prefix, cfg.matchType, slug, cfg.tip, cfg.brand, cfg.asin, cfg.agent, cfg.monthyear, cfg.agency].map(x=>String(x==null?'':x).trim()).filter(x=>x!=='').join(sep);
