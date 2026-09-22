@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 11:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 11:06</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3256,7 +3256,7 @@ function renderOptBids(){
   bind('ob-maxkw','maxKwForRaise',v=>+v||0);
   $('#ob-maxkwgate').onchange=e=>{ st.maxKwGateEnabled=e.target.checked; renderOptBids(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
-  const obPortExcl=$('#ob-portexclude'); if(obPortExcl) obPortExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); upd(); };
+  const obPortExcl=$('#ob-portexclude'); if(obPortExcl) obPortExcl.onchange=debounce(()=>{ st.excludePorts=Array.from(obPortExcl.selectedOptions).map(o=>o.value); upd(); },400);
   const obPortExclClear=$('#ob-portexclude-clear'); if(obPortExclClear) obPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
