@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-21 18:43</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 09:45</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2686,6 +2686,17 @@ function increaseTierFor(acos, st){
   if(acos<st.incHi1) return st.incPct1;
   return null;
 }
+// Same tier shape as increaseTierFor, but returns a flat $ amount instead of a %, so the bump doesn't scale
+// with the bid's own size (a $3 keyword and a $0.30 keyword get the same $ nudge). Separate function rather
+// than repurposing increaseTierFor's return value — that one is still used as a % by the Bid Optimizer's own
+// legacy fields and as a $ amount by the Budget tab, so overloading it a third way would make its meaning
+// depend on which tab called it.
+function increaseDollarTierFor(acos, st){
+  if(acos<st.incHi3) return st.incDollar3;
+  if(acos<st.incHi2) return st.incDollar2;
+  if(acos<st.incHi1) return st.incDollar1;
+  return null;
+}
 // ACoS is undefined at 0 orders (nothing to divide spend by), so a 0-order target can't go through the ACoS
 // tiers at all — it used to just fall through untouched. Graduated the same way, but keyed on CLICKS instead:
 // more clicks with zero orders is a stronger "this isn't converting" signal, so it earns a bigger cut, mirroring
@@ -2896,9 +2907,13 @@ function renderOptBids(){
   if(st.hi1===undefined) st.hi1=40; if(st.dec1===undefined) st.dec1=10;
   if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
   if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
-  if(st.incHi1===undefined) st.incHi1=20; if(st.incPct1===undefined) st.incPct1=10;
-  if(st.incHi2===undefined) st.incHi2=10; if(st.incPct2===undefined) st.incPct2=20;
-  if(st.incHi3===undefined) st.incHi3=5; if(st.incPct3===undefined) st.incPct3=35;
+  // Flat $ amounts, not %, so the bump doesn't scale with how big the bid already is — a $0.20-vs-$3 keyword
+  // and a $0.20-vs-$0.50 keyword get the same nudge instead of the cheap one barely moving. Separate keys from
+  // the old incPct1/2/3 (kept alive only by the Budget tab's own namespace) so a saved percentage value can't
+  // silently get reinterpreted as a dollar amount for someone with old localStorage state.
+  if(st.incHi1===undefined) st.incHi1=20; if(st.incDollar1===undefined) st.incDollar1=0.03;
+  if(st.incHi2===undefined) st.incHi2=10; if(st.incDollar2===undefined) st.incDollar2=0.05;
+  if(st.incHi3===undefined) st.incHi3=5; if(st.incDollar3===undefined) st.incDollar3=0.08;
   if(st.minOrdersInc===undefined) st.minOrdersInc=1; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
@@ -3034,9 +3049,9 @@ function renderOptBids(){
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc){
-        const incPct=increaseTierFor(effAcos, st);
-        if(incPct!=null){
-          let candidateBid=+(t.bid*(1+incPct/100)).toFixed(2);
+        const incDollar=increaseDollarTierFor(effAcos, st);
+        if(incDollar!=null){
+          let candidateBid=+(t.bid+incDollar).toFixed(2);
           // The keyword's overall ACoS can look healthy purely on the strength of its OTHER placements —
           // raising the one shared bid still raises spend on every placement that shares it, including one
           // that's individually bad. Cap the raise so it never pushes a bad placement's effective bid
@@ -3049,7 +3064,7 @@ function renderOptBids(){
               if(cap<candidateBid) candidateBid=cap;
             });
           }
-          if(candidateBid>t.bid){ action='increase'; pct=+(((candidateBid-t.bid)/t.bid)*100).toFixed(1); newBid=candidateBid; reason=`healthy ACoS (${fAcos(d.acos)})`; }
+          if(candidateBid>t.bid){ action='increase'; pct=+(((candidateBid-t.bid)/t.bid)*100).toFixed(1); newBid=candidateBid; reason=`healthy ACoS (${fAcos(d.acos)}) +${fMoney(incDollar)}`; }
         }
       }
     }
@@ -3177,14 +3192,14 @@ function renderOptBids(){
         <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
         <div class="field"><label>-%</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:70px;" ${st.deriveTiers?'disabled':''}></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
+      <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it. Flat $ amounts, not % — the bump doesn't scale with how big the bid already is.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="ob-inchi1" value="${st.incHi1}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
-        <div class="field"><label>+%</label><input type="number" id="ob-inc1" value="${st.incPct1}" style="width:70px;"></div>
+        <div class="field"><label>+$</label><input type="number" step="0.01" min="0" id="ob-inc1" value="${st.incDollar1}" style="width:70px;"></div>
         <div class="field"><label>Tier 2: ACoS &lt;</label><input type="number" id="ob-inchi2" value="${st.incHi2}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
-        <div class="field"><label>+%</label><input type="number" id="ob-inc2" value="${st.incPct2}" style="width:70px;"></div>
+        <div class="field"><label>+$</label><input type="number" step="0.01" min="0" id="ob-inc2" value="${st.incDollar2}" style="width:70px;"></div>
         <div class="field"><label>Tier 3: ACoS &lt;</label><input type="number" id="ob-inchi3" value="${st.incHi3}" style="width:80px;" ${st.deriveTiers?'disabled':''}></div>
-        <div class="field"><label>+%</label><input type="number" id="ob-inc3" value="${st.incPct3}" style="width:70px;"></div>
+        <div class="field"><label>+$</label><input type="number" step="0.01" min="0" id="ob-inc3" value="${st.incDollar3}" style="width:70px;"></div>
       </div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Min Orders (for increase)</label><input type="number" id="ob-mo" value="${st.minOrdersInc}" style="width:90px;"></div>
@@ -3257,9 +3272,9 @@ function renderOptBids(){
   bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
   bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
-  bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incPct1',v=>+v||0);
-  bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incPct2',v=>+v||0);
-  bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incPct3',v=>+v||0);
+  bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incDollar1',v=>+v||0);
+  bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incDollar2',v=>+v||0);
+  bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incDollar3',v=>+v||0);
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   bind('ob-zerohi1','zeroHi1',v=>+v||0); bind('ob-zerodec1','zeroDec1',v=>+v||0);
@@ -3821,7 +3836,10 @@ function computeSingleKwRows(product){
   const st=stFor('singlekw');
   if(st.threshold===undefined) st.threshold=10;
   if(st.safety===undefined) st.safety=10;   // % cushion under min CPC → bid = min(cpc)*0.9
-  if(st.boost===undefined) st.boost=20;     // % above CPC on good placements → target = cpc*1.20 (matches real Butler ruleset)
+  // Flat $ above CPC, not % (was cpc*1.20, matching the real Butler ruleset's % — changed to $ so the boost
+  // doesn't fluctuate with the placement's own CPC/bid size: a cheap and an expensive placement get the same
+  // $ nudge instead of the expensive one getting a much bigger jump for the same "good performance" signal).
+  if(st.boostDollar===undefined) st.boostDollar=0.10;
   const enabledCamps=optimizableCampaignIds(product);
   const singleKw=singleKwCampaigns(product);
   // One row per single-kw campaign; each row also carries the per-placement moves for export/rendering.
@@ -3847,7 +3865,6 @@ function computeSingleKwRows(product){
     const pst=stFor('optplace'); if(pst.acosGoal===undefined) pst.acosGoal=20;
     const goal=pst.acosGoal;
     const thr=st.threshold;
-    const boostM=1+st.boost/100;
     const safetyM=1-st.safety/100;
     // Baseline bid = safety cushion under the cheapest observed CPC. Skip placements with no clicks (no CPC).
     const cpcsWithData=placements.filter(p=>p.cpc>0).map(p=>p.cpc);
@@ -3897,12 +3914,12 @@ function computeSingleKwRows(product){
           if(p.clicks>thr){
             newPct=0; act='decrease'; why=`${p.clicks} clicks, 0 orders → 0%`;
           } else {
-            targetCpc=d.cpc*boostM;
-            why=`test (${p.clicks} clicks, 0 orders) → boost +${st.boost}%`;
+            targetCpc=d.cpc+st.boostDollar;
+            why=`test (${p.clicks} clicks, 0 orders) → boost +${fMoney(st.boostDollar)}`;
           }
         } else if(d.acos>0 && d.acos<goal){
-          targetCpc=d.cpc*boostM;
-          why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${st.boost}%`;
+          targetCpc=d.cpc+st.boostDollar;
+          why=`ACoS ${fAcos(d.acos)} sub goal ${goal}% → boost +${fMoney(st.boostDollar)}`;
         } else if(d.acos>goal){
           isCutPath=true;
           const cutPct=Math.min(0.30, Math.max(0, 2*(d.acos-goal*1.1)/100));
@@ -4039,7 +4056,7 @@ function renderSingleKw(){
         <div class="field"><label>ACoS goal global</label><input type="number" id="sk-goal" min="1" value="${(stFor('optplace').acosGoal||20)}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(un singur goal pentru toate, la fel ca în Butler)</span></div>
         <div class="field"><label>Peste câte clicks fără vânzare cutează</label><input type="number" id="sk-thr" min="1" value="${st.threshold}" style="width:80px;" title="Un placement cu ZERO orders și peste atâtea clicks primește cut. Dacă are orders dar ACoS > goal, pragul e jumătate din asta (ex: 10→5)."></div>
         <div class="field"><label>Cât cobori bidul sub cel mai mic CPC</label><input type="number" id="sk-safety" min="0" max="50" value="${st.safety}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 10% — bid la 90% din CPC minim)</span></div>
-        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" id="sk-boost" min="0" max="100" value="${st.boost}" style="width:80px;"> %<span class="hint" style="margin-left:6px;">(default 20% — la fel ca PPC Butler — target CPC = CPC × 1.20)</span></div>
+        <div class="field"><label>Cât crește placement-ul bun peste CPC-ul lui</label><input type="number" step="0.01" min="0" id="sk-boost" value="${st.boostDollar}" style="width:80px;"> $<span class="hint" style="margin-left:6px;">(default $0.10 — fix, nu proporțional cu CPC-ul, ca să nu sară mai mult pe placement-urile scumpe)</span></div>
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="sk-port">${portOptions(st.port)}</select></div>
@@ -4067,7 +4084,7 @@ function renderSingleKw(){
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('sk-thr','threshold',v=>+v||1);
   bind('sk-safety','safety',v=>+v||0);
-  bind('sk-boost','boost',v=>+v||0);
+  bind('sk-boost','boostDollar',v=>+v||0);
   const goalEl=$('#sk-goal'); if(goalEl) goalEl.oninput=debounce(()=>{ stFor('optplace').acosGoal=+goalEl.value||20; upd(); },300);
   $('#sk-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#sk-camp').oninput=debounce(()=>{st.camp=$('#sk-camp').value; upd();},220);
