@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-22 16:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-24 15:18</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1624,7 +1624,16 @@ function renderHarvesting(){
     detail.innerHTML=`<td></td><td colspan="${colspan}" class="l" style="background:#fbfaff;padding:10px 14px;"><div style="font-weight:600;margin-bottom:6px;">${matches.length} campaign(s) already targeting “${esc(oppMap[uid].searchTerm)}”:</div>${list}</td>`;
     tr.after(detail);
   });
-  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); const y=window.scrollY; renderHarvesting(); window.scrollTo(0,y); });
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{
+    const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id);
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    const keep=w?{top:w.scrollTop,left:w.scrollLeft}:null;
+    renderHarvesting();
+    window.scrollTo(0,y);
+    const w2=document.querySelector('.tablewrap');
+    if(w2 && keep){ w2.scrollTop=keep.top; w2.scrollLeft=keep.left; }
+  });
   $('#hv-acos').oninput=debounce(()=>{st.acos=+$('#hv-acos').value||0; renderHarvesting();},350);
   $('#hv-conv').oninput=debounce(()=>{st.minConv=+$('#hv-conv').value||1; renderHarvesting();},350);
   $('#hv-port').onchange=e=>{st.port=e.target.value; renderHarvesting();};
@@ -1640,7 +1649,13 @@ function renderHarvesting(){
   $('#hv-selall').onclick=()=>{
     const allSel = opps.length && opps.every(r=>sel.has(r._uid));
     if(allSel) opps.forEach(r=>sel.delete(r._uid)); else opps.forEach(r=>sel.add(r._uid));
-    const y=window.scrollY; renderHarvesting(); window.scrollTo(0,y);
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    const keep=w?{top:w.scrollTop,left:w.scrollLeft}:null;
+    renderHarvesting();
+    window.scrollTo(0,y);
+    const w2=document.querySelector('.tablewrap');
+    if(w2 && keep){ w2.scrollTop=keep.top; w2.scrollLeft=keep.left; }
   };
   const hvCopyBtn=$('#hv-copy'); if(hvCopyBtn) hvCopyBtn.onclick=()=>{
     const text=[...new Set(selOpps.map(o=>o.searchTerm))].sort().join('\n');
@@ -1889,7 +1904,16 @@ function renderNgRoots(){
       ${renderLaunchPanel(st, ngSel)}
     </div>`;
   ngTbl.wire($('#hv-ng-table'));
-  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{ const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id); const y=window.scrollY; renderNgRoots(); window.scrollTo(0,y); });
+  document.querySelectorAll('[data-tog]').forEach(t=>t.onclick=()=>{
+    const id=t.dataset.tog; sel.has(id)?sel.delete(id):sel.add(id);
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    const keep=w?{top:w.scrollTop,left:w.scrollLeft}:null;
+    renderNgRoots();
+    window.scrollTo(0,y);
+    const w2=document.querySelector('.tablewrap');
+    if(w2 && keep){ w2.scrollTop=keep.top; w2.scrollLeft=keep.left; }
+  });
   $('#hv-ngacos').oninput=debounce(()=>{st.ngAcos=+$('#hv-ngacos').value||0; renderNgRoots();},350);
   $('#hv-ngmo').oninput=debounce(()=>{st.ngMinOrders=+$('#hv-ngmo').value||1; renderNgRoots();},250);
   $('#hv-ngmi').oninput=debounce(()=>{st.ngMinImpr=+$('#hv-ngmi').value||0; renderNgRoots();},250);
@@ -1904,7 +1928,13 @@ function renderNgRoots(){
   $('#hv-ngselall').onclick=()=>{
     const allSel = ngRows.length && ngRows.every(r=>sel.has(r._uid));
     if(allSel) ngRows.forEach(r=>sel.delete(r._uid)); else ngRows.forEach(r=>sel.add(r._uid));
-    const y=window.scrollY; renderNgRoots(); window.scrollTo(0,y);
+    const y=window.scrollY;
+    const w=document.querySelector('.tablewrap');
+    const keep=w?{top:w.scrollTop,left:w.scrollLeft}:null;
+    renderNgRoots();
+    window.scrollTo(0,y);
+    const w2=document.querySelector('.tablewrap');
+    if(w2 && keep){ w2.scrollTop=keep.top; w2.scrollLeft=keep.left; }
   };
   wireLaunchPanel(st, ngSel, renderNgRoots);
 }
