@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:13</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2692,9 +2692,10 @@ function decreaseTierFor(acos, st){
 // means $3.51, not $3.25). A % scales with the price, so an expensive placement or keyword took a far bigger
 // real cut than a cheap one sitting just as far over goal.
 function bidTierDefaults(bst){
-  if(bst.hi1===undefined) bst.hi1=40; if(bst.dec1===undefined) bst.dec1=0.10;
-  if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=0.20;
-  if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=0.30;
+  // Alex's own values (25 sep 2026) — settings live only in memory, so these are what every fresh load starts on.
+  if(bst.hi1===undefined) bst.hi1=80; if(bst.dec1===undefined) bst.dec1=0.10;
+  if(bst.hi2===undefined) bst.hi2=120; if(bst.dec2===undefined) bst.dec2=0.15;
+  if(bst.hi3===undefined) bst.hi3=180; if(bst.dec3===undefined) bst.dec3=0.20;
   // Increase ($) defaults set by Alex (25 sep 2026). Order doesn't matter to increaseDollarTierFor (it sorts
   // by threshold), but these read naturally: ACoS<15 is the best tier and gets the biggest bump.
   if(bst.incHi1===undefined) bst.incHi1=15; if(bst.incDollar1===undefined) bst.incDollar1=0.15;
