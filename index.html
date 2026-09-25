@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:24</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3802,6 +3802,13 @@ function computePlacementOptRows(product, filters){
     // Reuses the existing "enough clicks to mean something" setting (same one the 0-order Tier 1 above already
     // uses) as Butler's "threshold" product variable — no new number introduced for this.
     const threshold=st.z1Clicks;
+    // Step 3's own volume gate — separate number from `threshold` above, set by Alex (25 sep 2026) after
+    // seeing a placement's ONLY click get treated as a confident 200%→33% cut. The real cause was structural,
+    // not a data problem: when a placement is the sole one with any CPC, it anchors against itself, and the
+    // "still testing" branch (CPC×1.2 ÷ CPC×0.9) always lands on exactly 33% regardless of the CPC value or
+    // click count — it was never really "evaluating" that one click, just hitting a fixed ratio. Below this
+    // many clicks, a placement is left alone entirely by Step 3, whichever branch would have fired.
+    if(st.butlerMinClicks===undefined) st.butlerMinClicks=7;
     Object.keys(byCampSingle).forEach(cid=>{
       const pl=byCampSingle[cid];
       const domT=dominantTargetByCamp.get(cid);
@@ -3844,7 +3851,7 @@ function computePlacementOptRows(product, filters){
       // already zeroed.
       if(minCpc<Infinity){
         ['top','rest','pp'].forEach(k=>{
-          const p=pl[k]; if(!p || zeroed[k] || p.cpc<=0) return;
+          const p=pl[k]; if(!p || zeroed[k] || p.cpc<=0 || p.clicks<st.butlerMinClicks) return;
           const acos=p.orders>0? p.acos : 0;
           const numerator = (acos>0 && acos<goal) ? p.cpc*1.2
             : (acos===0) ? p.cpc*1.2
@@ -3941,6 +3948,10 @@ function renderOptPlacements(){
       </div>
       <div class="hint" style="margin-bottom:10px;" title="Cuts aim at a target effective bid (this placement's own CPC minus the tier %), then act only on whatever gap is left — so a placement already brought down by a previous run or a manual edit produces no suggestion instead of being cut twice. Single-keyword campaigns use their real bid for that maths; multi-keyword ones scale the multiplier itself by the same percentage, since their keywords' bids can differ many times over.">${st.singleOnly? `Multi-keyword campaigns get decreases only (raises/push are single-keyword — see checkbox below).` : `Raises need ${st.raiseMinOrders}+ orders on multi-keyword campaigns, just 1 on single-keyword.`} Hover for details.</div>
       ${renderPortfolioGoalPanel(S.product)}
+      <div class="hint" style="margin-bottom:4px;" title="Below this many clicks, Step 3 (the CPC-vs-goal formula) leaves that placement alone entirely, whichever branch would otherwise have fired. Added 25 sep 2026: a placement with just 1 click and no orders was landing on a confident-looking 33% — not because the formula weighed that one click, but because a placement with no siblings that have any CPC data anchors against itself, and CPC×1.2 ÷ CPC×0.9 is always exactly 33%, regardless of the click count.">Single-kw (Butler) — min clicks before a placement gets touched</div>
+      <div class="ctrls" style="margin-bottom:12px;">
+        <div class="field"><label>Min clicks (Step 3)</label><input type="number" id="op-butlerminclicks" min="0" value="${st.butlerMinClicks}" style="width:90px;"></div>
+      </div>
       <div class="hint" style="margin-bottom:8px;" title="Uses the SAME Tier 1/2/3 as the Bid Optimizer tab — edit them there, not here, so a placement and its own campaign's bid always agree on what counts as bad.">Graduated decrease — the worse the ACoS, the bigger the cut (&gt;${bst.hi1}%→-${bst.dec1}pp, &gt;${bst.hi2}%→-${bst.dec2}pp, &gt;${bst.hi3}%→-${bst.dec3}pp).</div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Raise by (points)</label><input type="number" id="op-raisestep" min="1" value="${st.raiseStep}" style="width:90px;" title="Added to a placement's % when its ACoS is at or under the goal. The threshold itself comes from the ACoS goal above — there is no separate 'increase if ACoS <' setting, which used to be a hardcoded 20 that quietly overrode the goal on accounts targeting less than that."></div>
@@ -3982,6 +3993,7 @@ function renderOptPlacements(){
   const raiseMinOrdEl=$('#op-raiseminord'); if(raiseMinOrdEl) raiseMinOrdEl.oninput=debounce(()=>{st.raiseMinOrders=+raiseMinOrdEl.value||1; renderOptPlacements();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-raisestep','raiseStep',v=>+v||1);
+  bind('op-butlerminclicks','butlerMinClicks',v=>+v||0);
   bind('op-zerohi1','zeroHi1',v=>+v||0); bind('op-zerodec1','zeroDec1',v=>+v||0);
   bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
   bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
