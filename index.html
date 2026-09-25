@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:32</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:50</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3783,6 +3783,82 @@ function computePlacementOptRows(product, filters){
       if(compPct>=p.percentage+1 && compPct>p.newPct){ p.newPct=compPct; if(p.action==='none') p.action='compensate'; }
     });
   });
+  // ================= Butler-faithful single-kw (exactly 1 enabled target/campaign) override =================
+  // Alex confirmed (25 sep 2026) he wants single-kw campaigns to run Butler's real SUP algorithm exactly, not
+  // this file's own independently-built floor-override/compensation logic above — verified against Butler's
+  // actual rule definitions (ruleset 28902 "1st Step" = bid, ruleset 28903 "2nd Step" = placement) AND against
+  // its real execution history (69 of 176 sampled campaign-days showed placements moving in OPPOSITE
+  // directions in the same run, confirming genuine per-placement compensation, not one shared number). The
+  // logic above still runs first, unchanged — multi-kw still uses exactly that, nothing here touches it. This
+  // block only overwrites its result for single-kw campaigns.
+  {
+    const byCampSingle={};
+    allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampSingle[r.campaignId]=byCampSingle[r.campaignId]||{})[r.placeType]=r; });
+    // Reuses the existing "enough clicks to mean something" setting (same one the 0-order Tier 1 above already
+    // uses) as Butler's "threshold" product variable — no new number introduced for this.
+    const threshold=st.z1Clicks;
+    Object.keys(byCampSingle).forEach(cid=>{
+      const pl=byCampSingle[cid];
+      const domT=dominantTargetByCamp.get(cid);
+      if(!domT) return;
+      const anyRow=pl.top||pl.rest||pl.pp; if(!anyRow) return;
+      const goal=acosGoalFor(anyRow.portfolioName)>0? acosGoalFor(anyRow.portfolioName) : 20;
+      const cpcOf=p=> (p && p.cpc>0) ? p.cpc : Infinity;
+      const minCpc=Math.min(cpcOf(pl.top), cpcOf(pl.rest), cpcOf(pl.pp));
+      // ---- Step 1 (rules 162747+162748, same action, different trigger): shared bid → 90% of the cheapest
+      // real placement CPC, but only once at least one placement actually earns the correction — 0 orders past
+      // threshold, or orders with ACoS over goal past threshold. Butler's formula only ever cuts (min/maxBid
+      // are both the same value), so a computed bid ABOVE the current one is simply not applied.
+      const step1Fires=['top','rest','pp'].some(k=>{ const p=pl[k]; if(!p || !(p.clicks>threshold)) return false;
+        return p.orders===0 || (p.orders>0 && p.acos>goal); });
+      if(step1Fires && minCpc<Infinity){
+        const newBid=Math.max(0.20, +(minCpc*0.9).toFixed(2));
+        if(newBid<domT.bid) floorBidOverrides[cid]={newBid, oldBid:domT.bid};
+        else delete floorBidOverrides[cid];
+      } else {
+        delete floorBidOverrides[cid];
+      }
+      // ---- Step 2 (rule 162751) — implemented as its name/description say, not as it's actually wired in
+      // Butler: it checks the whole KEYWORD's totals there (ordersCustom1/clicksCustom1, a real bug confirmed
+      // against sibling rule 162752 which correctly uses the per-placement variables) instead of this one
+      // placement's own orders/clicks. Zero out a placement with 0 orders of ITS OWN and enough clicks of ITS
+      // OWN, full stop.
+      const zeroed={};
+      ['top','rest','pp'].forEach(k=>{
+        const p=pl[k]; if(!p) return;
+        if(p.orders===0 && p.clicks>threshold){
+          zeroed[k]=true;
+          if(p.percentage>0){ p.newPct=0; p.action='decrease'; p.why=`Butler: 0 comenzi, ${p.clicks} clicks > prag (${threshold})`; }
+          else { p.newPct=0; p.action='none'; p.why='deja la 0%'; }
+        }
+      });
+      // ---- Step 3 (rule 162752): each placement targets ITS OWN CPC — a 20% premium if its own ACoS beats
+      // goal (or it's still untested, 0 orders under threshold), a discount capped at 30% off if not — divided
+      // by the cheapest real CPC among the three ×0.9. The cheapest placement anchors near 0%; the others land
+      // above or below it based on THEIR OWN performance, not a single shared number. Skips placements Step 2
+      // already zeroed.
+      if(minCpc<Infinity){
+        ['top','rest','pp'].forEach(k=>{
+          const p=pl[k]; if(!p || zeroed[k] || p.cpc<=0) return;
+          const acos=p.orders>0? p.acos : 0;
+          const numerator = (acos>0 && acos<goal) ? p.cpc*1.2
+            : (acos===0) ? p.cpc*1.2
+            : p.cpc*(1-Math.min(30, 2*(acos-goal*1.1))/100)*1.1;
+          const denominator=Math.max(0.20, minCpc*0.9);
+          let newPct=Math.max(0, Math.min(900, Math.round((numerator/denominator-1)*100)));
+          // Deliberate departure from Butler (Alex, 25 sep 2026): Product Pages never gets an increase, no
+          // matter which branch produced one — not the "ACoS beats goal" reward, not the "still testing, 0
+          // orders" allowance. Same reasoning as everywhere else in this file: PP is usually the placement
+          // crowding out the other two, not the one that needs help. It can still be cut like any other.
+          if(k==='pp' && newPct>p.percentage) newPct=p.percentage;
+          if(newPct!==p.percentage){
+            p.newPct=newPct; p.action = newPct>p.percentage?'increase':'decrease';
+            p.why=`Butler: CPC ${fMoney(p.cpc)} (${p.orders>0?'ACoS '+fAcos(p.acos):'test, 0 comenzi'}) vs ancora ${fMoney(denominator)}`;
+          } else { p.newPct=p.percentage; p.action='none'; p.why='deja la target'; }
+        });
+      }
+    });
+  }
   // Which campaigns have a placement stuck above the push ceiling with too few clicks — the Bid Optimizer
   // uses this to bump that campaign's highest-bid keyword/target by a small $ amount instead of pushing the
   // % further, since % has already proven it isn't the lever there.
