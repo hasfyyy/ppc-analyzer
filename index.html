@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 12:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 12:29</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2560,6 +2560,10 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio — not just where each root's search terms happened to already appear.${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
+// Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
+// "66. COR | Cortisol Reducer | B0H63SX8TH | budget 150", or a stray ASIN column from an external sheet)
+// rather than requiring the whole string to BE one.
+const ASIN_FIND_RE=/b0[a-z0-9]{8}/i;
 function exportNegatives(product,rows){
   if(!rows.length){ alert('No candidates to export.'); return; }
   const prod=product==='SB'?'Sponsored Brands':'Sponsored Products';
@@ -2863,17 +2867,22 @@ function classifyPortfolios(product){
 function exportPortfolioGoalTemplate(product){
   const rows=classifyPortfolios(product);
   const pst=stFor('optplace');
-  const aoa=[['Portfolio','Spend','Clicks','CVR %','Tier','ACoS Goal']];
+  const aoa=[['Portfolio','ASIN','Spend','Clicks','CVR %','Tier','ACoS Goal']];
   rows.forEach(r=>{
     const tierLabel = r.manualTier? TIER_LABELS[r.manualTier] : `Auto (${TIER_LABELS[r.autoTier]})`;
-    aoa.push([r.portfolioName, +r.spend.toFixed(2), r.clicks, +r.cvr.toFixed(2), tierLabel, pst.portfolioGoals[r.portfolioName]||'']);
+    const asinM=r.portfolioName.match(ASIN_FIND_RE);
+    aoa.push([r.portfolioName, asinM?asinM[0].toUpperCase():'', +r.spend.toFixed(2), r.clicks, +r.cvr.toFixed(2), tierLabel, pst.portfolioGoals[r.portfolioName]||'']);
   });
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'ACoS Goals');
   XLSX.writeFile(wb, productFilePrefix(product)+'acos_goals_template.xlsx');
 }
-function importPortfolioGoalTemplate(file, onDone){
+// Matches primarily by ASIN, not by the tool's exact portfolio-name string — an external planning sheet (the
+// client's roadmap, say) is naturally organized by product/ASIN, not by Alex's "NN. XXX | Name | ASIN | budget"
+// naming convention, and forcing an exact string match made the round-trip useless for exactly that workflow.
+// Falls back to exact Portfolio name match for rows with no ASIN (or no ASIN column at all).
+function importPortfolioGoalTemplate(file, product, onDone){
   const reader=new FileReader();
   reader.onload=ev=>{
     try{
@@ -2882,16 +2891,27 @@ function importPortfolioGoalTemplate(file, onDone){
       const aoa=XLSX.utils.sheet_to_json(ws,{header:1});
       const header=(aoa[0]||[]).map(h=>String(h||'').toLowerCase().trim());
       const nameIdx=header.indexOf('portfolio');
+      const asinIdx=header.indexOf('asin');
       const goalIdx=header.findIndex(h=>h.includes('acos goal'));
-      if(nameIdx<0 || goalIdx<0){ alert('Nu găsesc coloanele "Portfolio" și "ACoS Goal" în fișier — nu edita header-ul din șablon.'); return; }
+      if(goalIdx<0 || (nameIdx<0 && asinIdx<0)){ alert('Nu găsesc coloana "ACoS Goal" și cel puțin una din "Portfolio"/"ASIN" în fișier — nu edita header-ul din șablon.'); return; }
+      // Live portfolios in the tool right now, indexed by whatever ASIN their name embeds — the actual join key.
+      const live=classifyPortfolios(product);
+      const byAsin={};
+      live.forEach(r=>{ const m=r.portfolioName.match(ASIN_FIND_RE); if(m){ const k=m[0].toLowerCase(); (byAsin[k]=byAsin[k]||[]).push(r.portfolioName); } });
+      const liveNames=new Set(live.map(r=>r.portfolioName));
       const pst=stFor('optplace');
-      let applied=0;
+      let applied=0, unmatched=[];
       aoa.slice(1).forEach(row=>{
-        const name=String(row[nameIdx]||'').trim(); const val=+row[goalIdx];
-        if(!name) return;
-        if(val>0) { pst.portfolioGoals[name]=val; applied++; }
+        const val=+row[goalIdx]; if(!(val>0)) return;
+        const asinCell=asinIdx>=0? String(row[asinIdx]||'').trim() : '';
+        const nameCell=nameIdx>=0? String(row[nameIdx]||'').trim() : '';
+        const asin=(asinCell.match(ASIN_FIND_RE)||nameCell.match(ASIN_FIND_RE)||[])[0];
+        let matches=asin? (byAsin[asin.toLowerCase()]||[]) : [];
+        if(!matches.length && nameCell && liveNames.has(nameCell)) matches=[nameCell];
+        if(!matches.length){ if(nameCell||asinCell) unmatched.push(nameCell||asinCell); return; }
+        matches.forEach(pn=>{ pst.portfolioGoals[pn]=val; applied++; });
       });
-      alert(`Aplicat ${applied} goal-uri din fișier.`);
+      alert(`Aplicat ${applied} goal-uri din fișier.`+(unmatched.length? `\n\nNepotrivite (${unmatched.length}), n-au fost găsite în cont: ${unmatched.slice(0,15).join(', ')}${unmatched.length>15?'…':''}`:''));
       onDone();
     }catch(err){ alert('Eroare la citirea fișierului: '+err.message); }
   };
@@ -2954,7 +2974,7 @@ function wirePortfolioGoalPanel(product, onChange){
   const expBtn=$('#pg-export-template'); if(expBtn) expBtn.onclick=()=>exportPortfolioGoalTemplate(product);
   const impEl=$('#pg-import'); if(impEl) impEl.onchange=e=>{
     const file=e.target.files[0]; if(!file) return;
-    importPortfolioGoalTemplate(file, onChange);
+    importPortfolioGoalTemplate(file, product, onChange);
     e.target.value='';
   };
   document.querySelectorAll('[data-pg-tier]').forEach(el=>el.onchange=()=>{
