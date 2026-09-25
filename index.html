@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 12:29</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3092,9 +3092,18 @@ function renderOptBids(){
     const category=bidCategoryFor(t, brandTermsArr);
     const acosAdj=bidCategoryAdj(category, st);
     const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
-    // Plain graduated decrease — fixed, hand-set ACoS thresholds (st.hi1/2/3, st.dec1/2/3), not derived from
-    // any ACoS goal. Alex didn't like tiers silently moving whenever the goal changed.
-    const decTiers = st;
+    // Graduated decrease/increase thresholds, hand-set (st.hi1/2/3, st.incHi1/2/3) — Alex didn't want them
+    // silently rewritten by a goal (that was the old "Derive tiers from goal" toggle, removed). But he DOES
+    // want a portfolio-specific ACoS goal (the same override used by Placement Optimizer, set by hand or via
+    // the Excel round-trip) to shift where they trigger for THAT portfolio's targets — without touching the
+    // input fields, so a portfolio with no override (or before any template is uploaded at all) falls back to
+    // exactly the hand-set numbers above, unchanged. Same shape as Placement Optimizer's own goal-relative
+    // tiers, just scaled off the account default instead of hardcoded multipliers, since the cut %/​$ amounts
+    // here are absolute settings, not multiples of the goal.
+    const pGoal=acosGoalFor(t.portfolioName);
+    const goalScale = (pGoal>0 && pst.acosGoal>0) ? pGoal/pst.acosGoal : 1;
+    const decTiers = goalScale===1 ? st : {hi1:st.hi1*goalScale, dec1:st.dec1, hi2:st.hi2*goalScale, dec2:st.dec2, hi3:st.hi3*goalScale, dec3:st.dec3};
+    const incTiers = goalScale===1 ? st : {incHi1:st.incHi1*goalScale, incHi2:st.incHi2*goalScale, incHi3:st.incHi3*goalScale, incDollar1:st.incDollar1, incDollar2:st.incDollar2, incDollar3:st.incDollar3};
     let action='none', newBid=t.bid, pct=null, reason=null;
     const floorOverride=floorBidOverrides[t.campaignId];
     // Computed off the campaign's DOMINANT target's bid (computePlacementOptRows already guards newBid against
@@ -3127,7 +3136,7 @@ function renderOptBids(){
       }
       if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
       else if(t.orders>=st.minOrdersInc){
-        const incDollar=increaseDollarTierFor(effAcos, st);
+        const incDollar=increaseDollarTierFor(effAcos, incTiers);
         if(incDollar!=null){
           let candidateBid=+(t.bid+incDollar).toFixed(2);
           // The keyword's overall ACoS can look healthy purely on the strength of its OTHER placements —
