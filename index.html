@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3115,7 +3115,12 @@ function renderOptBids(){
     // goal earns protection from cuts, never eligibility for a raise (confirmed on real data 25 sep 2026: a
     // 140% goal scaled the increase bar up 7x, so a target at 172.9% ACoS — genuinely bad — qualified anyway).
     const pGoal=acosGoalFor(t.portfolioName);
-    const decTiers = pGoal>0 ? {hi1:pGoal, dec1:st.dec1, hi2:pGoal+(st.hi2-st.hi1), dec2:st.dec2, hi3:pGoal+(st.hi3-st.hi1), dec3:st.dec3} : st;
+    // Gaps clamped to ≥0 (Math.max) — if Tier 2/3 ever end up typed below Tier 1 (mid-edit, or a stale saved
+    // value), a raw subtraction would push the goal-anchored Tier 2/3 threshold BELOW Tier 1, silently
+    // inverting the cut ladder for every portfolio with an override. Worst case here is a gap of 0 (Tier 2
+    // collapses onto Tier 1), never a reversal — caught 25 sep 2026 verifying with a real but stale hi1/hi2
+    // combo (80/70) in this exact formula.
+    const decTiers = pGoal>0 ? {hi1:pGoal, dec1:st.dec1, hi2:pGoal+Math.max(0,st.hi2-st.hi1), dec2:st.dec2, hi3:pGoal+Math.max(0,st.hi3-st.hi1), dec3:st.dec3} : st;
     const incTiers = st;
     let action='none', newBid=t.bid, pct=null, reason=null;
     const floorOverride=floorBidOverrides[t.campaignId];
