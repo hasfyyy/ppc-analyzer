@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:20</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3527,14 +3527,14 @@ function computePlacementOptRows(product, filters){
       if(np<e.percentage){ action='decrease'; newPct=np; why=cutWhy; }
       else if(e.percentage<=0){ action='floor-bad'; newPct=0; why=`${cutWhy} → modifier already at 0%`; }
       else why='already at target';
-    } else if(allowRaise && e.placeType!=='business' && d.acos<=goal && (isSingle? e.orders>=1 : e.orders>=st.raiseMinOrders)){
-      // Amazon Business is left out of raises deliberately — it's a separate audience with its own dynamics,
-      // not one of the three placements this workflow steers.
-      // Multi-keyword campaigns need more evidence than single-keyword ones before a raise. The asymmetry is
-      // real: the % is shared, so cutting on a bad average at worst underbids a good keyword (bounded — you
-      // save money), while raising on a good average can pour spend into the keywords that don't convert
-      // (unbounded). One keyword's placement figures ARE that keyword's; an average across many hides how
-      // unevenly it's distributed, so it has to clear a higher bar to be acted on.
+    } else if(!isSingle && allowRaise && e.placeType!=='business' && d.acos<=goal && e.orders>=st.raiseMinOrders){
+      // Multi-keyword only — single-kw raises are decided by the single-kw block below ($ tiers on the
+      // placement's own CPC). Letting this branch claim a single-kw placement also hid it from the push checks
+      // below: a TOS with 3 clicks and 1 good order got nothing at all, while one with 3 clicks and 0 orders
+      // could still be pushed (25 sep 2026).
+      // Amazon Business is left out of raises deliberately — it's a separate audience with its own dynamics.
+      // Raising a shared % needs more evidence than cutting it: cutting on a bad average at worst underbids a
+      // good keyword (bounded), raising on a good average can pour spend into the ones that don't convert.
       action='increase'; newPct=Math.min(900, e.percentage+st.raiseStep); why=`ACoS ${fAcos(d.acos)} at or under goal`;
     } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImprFor(e.campaignId)){
       // The placement-level twin of the keyword "wake" rule: showing plenty and still buying nothing. With no
