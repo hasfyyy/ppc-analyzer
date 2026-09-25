@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:32</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2887,7 +2887,12 @@ function exportPortfolioGoalTemplate(product){
 // client's roadmap, say) is naturally organized by product/ASIN, not by Alex's "NN. XXX | Name | ASIN | budget"
 // naming convention, and forcing an exact string match made the round-trip useless for exactly that workflow.
 // Falls back to exact Portfolio name match for rows with no ASIN (or no ASIN column at all).
+// Reports the result as a dismissible banner (pst.importMsg, rendered by renderPortfolioGoalPanel) instead of
+// a blocking alert() — a native dialog stalls any automated/scripted upload of this same file (browser
+// extension driving the page, a future headless run) until a human clicks OK, which defeats the point of a
+// round-trippable template.
 function importPortfolioGoalTemplate(file, product, onDone){
+  const pst=stFor('optplace');
   const reader=new FileReader();
   reader.onload=ev=>{
     try{
@@ -2898,13 +2903,12 @@ function importPortfolioGoalTemplate(file, product, onDone){
       const nameIdx=header.indexOf('portfolio');
       const asinIdx=header.indexOf('asin');
       const goalIdx=header.findIndex(h=>h.includes('acos goal'));
-      if(goalIdx<0 || (nameIdx<0 && asinIdx<0)){ alert('Nu găsesc coloana "ACoS Goal" și cel puțin una din "Portfolio"/"ASIN" în fișier — nu edita header-ul din șablon.'); return; }
+      if(goalIdx<0 || (nameIdx<0 && asinIdx<0)){ pst.importMsg='Nu găsesc coloana "ACoS Goal" și cel puțin una din "Portfolio"/"ASIN" în fișier — nu edita header-ul din șablon.'; onDone(); return; }
       // Live portfolios in the tool right now, indexed by whatever ASIN their name embeds — the actual join key.
       const live=classifyPortfolios(product);
       const byAsin={};
       live.forEach(r=>{ const m=r.portfolioName.match(ASIN_FIND_RE); if(m){ const k=m[0].toLowerCase(); (byAsin[k]=byAsin[k]||[]).push(r.portfolioName); } });
       const liveNames=new Set(live.map(r=>r.portfolioName));
-      const pst=stFor('optplace');
       let applied=0, unmatched=[];
       aoa.slice(1).forEach(row=>{
         const val=+row[goalIdx]; if(!(val>0)) return;
@@ -2916,9 +2920,9 @@ function importPortfolioGoalTemplate(file, product, onDone){
         if(!matches.length){ if(nameCell||asinCell) unmatched.push(nameCell||asinCell); return; }
         matches.forEach(pn=>{ pst.portfolioGoals[pn]=val; applied++; });
       });
-      alert(`Aplicat ${applied} goal-uri din fișier.`+(unmatched.length? `\n\nNepotrivite (${unmatched.length}), n-au fost găsite în cont: ${unmatched.slice(0,15).join(', ')}${unmatched.length>15?'…':''}`:''));
+      pst.importMsg = `Aplicat ${applied} goal-uri din fișier.`+(unmatched.length? ` Nepotrivite (${unmatched.length}), n-au fost găsite în cont: ${unmatched.slice(0,15).join(', ')}${unmatched.length>15?'…':''}`:'');
       onDone();
-    }catch(err){ alert('Eroare la citirea fișierului: '+err.message); }
+    }catch(err){ pst.importMsg='Eroare la citirea fișierului: '+err.message; onDone(); }
   };
   reader.readAsArrayBuffer(file);
 }
@@ -2943,8 +2947,9 @@ function renderPortfolioGoalPanel(product){
     <div class="ctrls" style="margin-bottom:8px;align-items:flex-end;">
       <button class="btn ghost" id="pg-export-template" style="margin-bottom:2px;">⬇ Descarcă șablon Excel</button>
       <label class="btn ghost" style="margin-bottom:2px;cursor:pointer;">⬆ Încarcă șablon completat<input type="file" id="pg-import" accept=".xlsx,.xls" style="display:none;"></label>
-      <div class="hint" style="align-self:center;">Descarcă, completează coloana „ACoS Goal" în Excel (gol = rămâne pe goal-ul global), reîncarcă — portofoliile din fișier sunt potrivite după nume.</div>
+      <div class="hint" style="align-self:center;">Descarcă, completează coloana „ACoS Goal" în Excel (gol = rămâne pe goal-ul global), reîncarcă — portofoliile din fișier sunt potrivite după ASIN (nu după nume).</div>
     </div>
+    ${pst.importMsg?`<div class="hint" style="margin-bottom:8px;background:#f0f4ff;padding:8px;border-radius:6px;">${esc(pst.importMsg)} <a href="#" id="pg-import-msg-clear" style="margin-left:8px;color:#dc2626;">×</a></div>`:''}
     <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Spend</th><th>Clicks</th><th>CVR</th><th class="l">Tier</th><th>ACoS Goal</th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td class="l">${esc(r.portfolioName)}</td><td>${fMoney(r.spend)}</td><td>${fInt(r.clicks)}</td><td>${fPct(r.cvr)}</td><td class="l">
       <select data-pg-tier="${esc(r.portfolioName)}" style="font-size:12px;">
@@ -2982,6 +2987,7 @@ function wirePortfolioGoalPanel(product, onChange){
     importPortfolioGoalTemplate(file, product, onChange);
     e.target.value='';
   };
+  const impMsgClear=$('#pg-import-msg-clear'); if(impMsgClear) impMsgClear.onclick=e=>{ e.preventDefault(); delete pst.importMsg; onChange(); };
   document.querySelectorAll('[data-pg-tier]').forEach(el=>el.onchange=()=>{
     const pf=el.dataset.pgTier; const tier=el.value;
     if(!tier){ delete pst.portfolioTier[pf]; delete pst.portfolioGoals[pf]; }
@@ -3099,18 +3105,18 @@ function renderOptBids(){
     const category=bidCategoryFor(t, brandTermsArr);
     const acosAdj=bidCategoryAdj(category, st);
     const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
-    // Graduated decrease/increase thresholds, hand-set (st.hi1/2/3, st.incHi1/2/3) — Alex didn't want them
-    // silently rewritten by a goal (that was the old "Derive tiers from goal" toggle, removed). But he DOES
-    // want a portfolio-specific ACoS goal (the same override used by Placement Optimizer, set by hand or via
-    // the Excel round-trip) to shift where they trigger for THAT portfolio's targets — without touching the
-    // input fields, so a portfolio with no override (or before any template is uploaded at all) falls back to
-    // exactly the hand-set numbers above, unchanged. Same shape as Placement Optimizer's own goal-relative
-    // tiers, just scaled off the account default instead of hardcoded multipliers, since the cut %/​$ amounts
-    // here are absolute settings, not multiples of the goal.
+    // DECREASE — a portfolio's own ACoS goal (panel below, or the Excel round-trip) IS Tier 1 directly, no
+    // second reference number, no ratio: above your goal, the mild cut already applies. Tier 2/3 sit the same
+    // distance above Tier 1 that the hand-set fields already carry (st.hi2-st.hi1, st.hi3-st.hi1), so tuning
+    // those 3 fields still tunes every portfolio's spacing, just anchored at each one's own goal instead of at
+    // a shared absolute number. No override on a portfolio → falls back to st.hi1/2/3 exactly, untouched.
+    // Example: goal 55% → Tier 1 at 55%, Tier 2 at 85% (55+30), Tier 3 at 115% (55+60) with today's 40/70/100.
+    // INCREASE thresholds (st.incHi1/2/3) stay flat, same bar for every portfolio, goal or no goal — a loose
+    // goal earns protection from cuts, never eligibility for a raise (confirmed on real data 25 sep 2026: a
+    // 140% goal scaled the increase bar up 7x, so a target at 172.9% ACoS — genuinely bad — qualified anyway).
     const pGoal=acosGoalFor(t.portfolioName);
-    const goalScale = (pGoal>0 && pst.acosGoal>0) ? pGoal/pst.acosGoal : 1;
-    const decTiers = goalScale===1 ? st : {hi1:st.hi1*goalScale, dec1:st.dec1, hi2:st.hi2*goalScale, dec2:st.dec2, hi3:st.hi3*goalScale, dec3:st.dec3};
-    const incTiers = goalScale===1 ? st : {incHi1:st.incHi1*goalScale, incHi2:st.incHi2*goalScale, incHi3:st.incHi3*goalScale, incDollar1:st.incDollar1, incDollar2:st.incDollar2, incDollar3:st.incDollar3};
+    const decTiers = pGoal>0 ? {hi1:pGoal, dec1:st.dec1, hi2:pGoal+(st.hi2-st.hi1), dec2:st.dec2, hi3:pGoal+(st.hi3-st.hi1), dec3:st.dec3} : st;
+    const incTiers = st;
     let action='none', newBid=t.bid, pct=null, reason=null;
     const floorOverride=floorBidOverrides[t.campaignId];
     // Computed off the campaign's DOMINANT target's bid (computePlacementOptRows already guards newBid against
