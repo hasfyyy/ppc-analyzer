@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 13:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2729,10 +2729,15 @@ function increaseTierFor(acos, st){
 // than repurposing increaseTierFor's return value — that one is still used as a % by the Bid Optimizer's own
 // legacy fields and as a $ amount by the Budget tab, so overloading it a third way would make its meaning
 // depend on which tab called it.
+// Sorted by threshold instead of assuming which field holds the smallest one — the UI labels the fields
+// "Tier 1/2/3" left to right, and typing them in the natural reading order (smallest ACoS, biggest $ first)
+// used to silently break this: the old version always checked incHi3 first, so a Tier 3 field holding the
+// LARGEST threshold (typed last, as the loosest catch-all) swallowed every ACoS below it before Tier 1/2 ever
+// got a chance to fire. Sorting removes the ordering requirement entirely — the tightest threshold always
+// wins, regardless of which numbered field it was typed into.
 function increaseDollarTierFor(acos, st){
-  if(acos<st.incHi3) return st.incDollar3;
-  if(acos<st.incHi2) return st.incDollar2;
-  if(acos<st.incHi1) return st.incDollar1;
+  const tiers=[[st.incHi1,st.incDollar1],[st.incHi2,st.incDollar2],[st.incHi3,st.incDollar3]].sort((a,b)=>a[0]-b[0]);
+  for(const [hi,dollar] of tiers){ if(acos<hi) return dollar; }
   return null;
 }
 // ACoS is undefined at 0 orders (nothing to divide spend by), so a 0-order target can't go through the ACoS
@@ -3008,10 +3013,12 @@ function renderOptBids(){
   // Flat $ amounts, not %, so the bump doesn't scale with how big the bid already is — a $0.20-vs-$3 keyword
   // and a $0.20-vs-$0.50 keyword get the same nudge instead of the cheap one barely moving. Separate keys from
   // the old incPct1/2/3 (kept alive only by the Budget tab's own namespace) so a saved percentage value can't
-  // silently get reinterpreted as a dollar amount for someone with old localStorage state.
-  if(st.incHi1===undefined) st.incHi1=20; if(st.incDollar1===undefined) st.incDollar1=0.03;
-  if(st.incHi2===undefined) st.incHi2=10; if(st.incDollar2===undefined) st.incDollar2=0.05;
-  if(st.incHi3===undefined) st.incHi3=5; if(st.incDollar3===undefined) st.incDollar3=0.08;
+  // silently get reinterpreted as a dollar amount for someone with old localStorage state. Defaults set by
+  // Alex (25 sep 2026) — order doesn't matter to the engine (increaseDollarTierFor sorts by threshold), but
+  // these read naturally top-to-bottom: ACoS<15 is the best tier and gets the biggest bump.
+  if(st.incHi1===undefined) st.incHi1=15; if(st.incDollar1===undefined) st.incDollar1=0.15;
+  if(st.incHi2===undefined) st.incHi2=25; if(st.incDollar2===undefined) st.incDollar2=0.10;
+  if(st.incHi3===undefined) st.incHi3=30; if(st.incDollar3===undefined) st.incDollar3=0.05;
   if(st.minOrdersInc===undefined) st.minOrdersInc=1; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
@@ -3276,7 +3283,7 @@ function renderOptBids(){
         <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
         <div class="field"><label>-%</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:70px;"></div>
       </div>
-      <div class="hint" style="margin:12px 0 4px;" title="Each tier's ACoS threshold must be lower than the one before it. Flat $ amounts, not % — the bump doesn't scale with how big the bid already is.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
+      <div class="hint" style="margin:12px 0 4px;" title="Order doesn't matter — whichever tier has the tightest ACoS threshold wins first, regardless of which field it's typed into. Flat $ amounts, not % — the bump doesn't scale with how big the bid already is.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: ACoS &lt;</label><input type="number" id="ob-inchi1" value="${st.incHi1}" style="width:80px;"></div>
         <div class="field"><label>+$</label><input type="number" step="0.01" min="0" id="ob-inc1" value="${st.incDollar1}" style="width:70px;"></div>
