@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:33</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:49</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3102,8 +3102,6 @@ function renderOptBids(){
   placementOpt.allRows.forEach(pr=>{ if(!pr.isSingle || pr.placeType==='business') return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
   const pst=placementOpt.st; // Placement Optimizer's own state (stFor('optplace')) — the floor-override fields live there, not here; this is a shortcut onto the SAME values, not a separate copy.
   const floorBidOverrides=placementOpt.floorBidOverrides||{};
-  const stuckHighByCamp=placementOpt.stuckHighByCamp||new Map();
-  const topTargetByCamp=placementOpt.topTargetByCamp||new Map();
   // Stale data is FLAGGED, not blocked. Both cuts and raises converge on the goal over successive runs, so a
   // half-done manual change just gets topped up next run — the flag exists so a surprising number has a
   // visible explanation ("this campaign was edited mid-window"), not to suppress the suggestion. The real
@@ -3228,22 +3226,11 @@ function renderOptBids(){
       else if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'wake', newBid:+(t.bid*(1+st.wakePct/100)).toFixed(2), kwCount:kwCounts[t.campaignId]||0}, t));
       else { action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=t.impressions>0?`${fInt(t.impressions)} impressions, 0 clicks`:`0 impressions, 0 clicks`; }
     }
-    // A TOS/ROS placement in this campaign is already past the push ceiling and still can't buy clicks — %
-    // has proven it isn't the lever, so nudge the bid itself instead. Only the campaign's single highest-bid
-    // target gets this (picked via topTargetByCamp), so a multi-keyword campaign doesn't get every keyword
-    // bumped for the same one stuck placement. Sized off THIS target's own bid (% + a small $ floor for very
-    // cheap keywords), not the account's average CPC — a flat account-wide dollar figure meant for the
-    // account's expensive keywords landed as a 30%+ jump on a $1.49 one, which is what "too aggressive" meant
-    // here: the bump wasn't wrong to try, its SIZE just wasn't scaled to what it was actually bumping.
-    if(action==='none'){
-      const stuckPlacements=stuckHighByCamp.get(t.campaignId);
-      const top=topTargetByCamp.get(t.campaignId);
-      if(stuckPlacements && stuckPlacements.length && top && top.id===t.id){
-        const bump=Math.max(pst.stuckBumpMinDollar||0.02, +(t.bid*(pst.stuckBumpPct||10)/100).toFixed(2));
-        action='stuck-bump'; newBid=+(t.bid+bump).toFixed(2);
-        reason=`${stuckPlacements.join(' & ')} stuck past ${pst.pushCeiling}% with too few clicks — testing a bid bump since % isn't working`;
-      }
-    }
+    // A "stuck-bump" step used to sit here: when a TOS/ROS placement in this campaign was already past the
+    // push ceiling and still hadn't bought clicks, it nudged the campaign's highest-bid keyword's $ bid instead.
+    // Removed (Alex, 25 sep 2026) — it fired off click count alone, no ACoS/order data, and produced suggestions
+    // like NKS's "+$0.16, testing a bid bump" off a single click. See the matching removal note above (the
+    // 'stuck-high' branch that used to feed `stuckHighByCamp`).
     if(action==='none') return null;
     const row=Object.assign({action,pct,newBid,reason,category},t,d);
     row.stale = isStale(t.campaignId);
@@ -3251,7 +3238,7 @@ function renderOptBids(){
     // 'none' placements carry newPct===percentage (nothing suggested) — left in here they still rendered as
     // "↑ 200%→200%" below (the arrow ternary defaults to ↑ for anything that isn't literally 'decrease'),
     // showing a change that never happened next to every real one.
-    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='stuck-high' && p.action!=='none') : null;
+    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='none') : null;
     return row;
   }).filter(Boolean);
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
@@ -3277,7 +3264,6 @@ function renderOptBids(){
   const actionBadge=r=>{
     if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
     if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
-    if(r.action==='stuck-bump') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="${esc(r.reason||'')}">↑ +${fMoney(r.newBid-r.bid)} (stuck placement)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
   };
   const cols=[
@@ -3379,7 +3365,6 @@ function renderOptBids(){
           <option value="decrease" ${st.actionFilter==='decrease'?'selected':''}>Decreases only (${allRows.filter(r=>r.action==='decrease').length})</option>
           <option value="increase" ${st.actionFilter==='increase'?'selected':''}>Increases only (${allRows.filter(r=>r.action==='increase').length})</option>
           <option value="wake" ${st.actionFilter==='wake'?'selected':''}>Woken up only (${allRows.filter(r=>r.action==='wake').length})</option>
-          <option value="stuck-bump" ${st.actionFilter==='stuck-bump'?'selected':''}>Stuck placement only (${allRows.filter(r=>r.action==='stuck-bump').length})</option>
         </select></div>
         <div class="spacer"></div>
         <button class="btn grad" id="ob-export" ${rows.some(r=>sel.has(r._uid))?'':'disabled'}>Export Bid Update (${rows.filter(r=>sel.has(r._uid)).length})</button>
@@ -3500,8 +3485,6 @@ function computePlacementOptRows(product, filters){
   // just single-keyword, since it never touches the shared bid, only that placement's own %.
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushClicks===undefined) st.pushClicks=5; if(st.pushStep===undefined) st.pushStep=10;
   if(st.pushCeiling===undefined) st.pushCeiling=300;
-  if(st.stuckBumpPct===undefined) st.stuckBumpPct=10;
-  if(st.stuckBumpMinDollar===undefined) st.stuckBumpMinDollar=0.02;
   // 0 orders has no ACoS to grade against, so it runs on its own click-based ladder — same graduated shape,
   // mirroring the Bid Optimizer's own 0-order tiers one axis over (clicks instead of ACoS).
   if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
@@ -3521,12 +3504,6 @@ function computePlacementOptRows(product, filters){
   // real floor for that placement's cost.
   const singleTargetByCamp=new Map();
   DATA.targets.forEach(t=>{ if(t.product===product && t.state==='enabled' && t.bid>0 && !singleTargetByCamp.has(t.campaignId)) singleTargetByCamp.set(t.campaignId, t); });
-  // Highest-bid enabled target per campaign, regardless of how many targets it has — used to pick ONE
-  // keyword/target to bump when a placement is stuck-high in a multi-keyword campaign (same "most likely
-  // culprit" reasoning as the floor override uses), so a stuck placement doesn't get every keyword in its
-  // campaign bumped redundantly.
-  const topTargetByCamp=new Map();
-  DATA.targets.forEach(t=>{ if(t.product!==product || t.state!=='enabled' || t.bid<=0) return; const cur=topTargetByCamp.get(t.campaignId); if(!cur || t.bid>cur.bid) topTargetByCamp.set(t.campaignId, t); });
   // The target that actually BOUGHT the traffic, not the one with the biggest number on it. Plenty of
   // campaigns carry leftover keywords sitting at a high bid that win nothing — one here has a €1.08 keyword
   // with zero clicks next to a €0.42 one taking all 401. Anchoring the CPC maths to the highest bid would
@@ -3652,12 +3629,14 @@ function computePlacementOptRows(product, filters){
       // stuck at the floor — the % isn't the thing holding it back, the auction volume is. Product Pages is
       // deliberately excluded — it's usually the placement doing the crowding-out, not the one needing help.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
-    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage>=st.pushCeiling){
-      // Already pushed past the ceiling and STILL can't buy clicks — more % clearly isn't the lever anymore.
-      // No % change proposed (nothing to export here); flagged so it surfaces as "needs a bid review" instead
-      // of silently repeating an ineffective push every week.
-      action='stuck-high';
     }
+    // A "stuck past the push ceiling" branch used to sit here — flagged a placement as 'stuck-high' whenever
+    // its % was already at/above pushCeiling and it still had under `pushClicks` clicks, and (in the Bid
+    // Optimizer) bumped the keyword's $ bid instead. Removed entirely (Alex, 25 sep 2026): confirmed on NKS
+    // (SUP_PHRASE nattokinase) — Top of Search sat at 1 click, 0 orders, and this fired a "+$0.16, testing a
+    // bid bump since % isn't working" suggestion off that single click alone, no ACoS or order data involved
+    // at all. Alex: "nu ai cum sa faci ceva dupa 2 clicks... n are sens", then explicitly "trebuie neaparat
+    // scoasa asta cu placement stuck nu imi place ce face".
     // (A legacy "raise if ACoS < 20" branch used to sit here. It could only ever fire on accounts whose goal
     // was BELOW 20 — and then it raised placements that were above that goal, because the 20 was hardcoded
     // and silently outranked the setting. The goal-relative raise above covers every case it was meant to.)
@@ -3898,11 +3877,6 @@ function computePlacementOptRows(product, filters){
       }
     });
   }
-  // Which campaigns have a placement stuck above the push ceiling with too few clicks — the Bid Optimizer
-  // uses this to bump that campaign's highest-bid keyword/target by a small $ amount instead of pushing the
-  // % further, since % has already proven it isn't the lever there.
-  const stuckHighByCamp=new Map();
-  allRows.forEach(r=>{ if(r.action==='stuck-high'){ const list=stuckHighByCamp.get(r.campaignId)||[]; list.push(r.placementName); stuckHighByCamp.set(r.campaignId, list); } });
   // What the percentage actually MEANS in money. A placement % is only half the story: when the floor
   // override also moves the campaign's base bid, the same "15% → 16%" can be a 17% CUT in what this
   // placement really bids, because the base it multiplies just dropped. Reading the % column alone made a
@@ -3919,8 +3893,8 @@ function computePlacementOptRows(product, filters){
     }
   });
   if(st.camp) allRows=allRows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
-  const rows=allRows.filter(r=>r.action!=='none' && r.action!=='floor-bad' && r.action!=='stuck-high');
-  return {rows, allRows, st, bst, rowsRaw, floorBidOverrides, stuckHighByCamp, topTargetByCamp};
+  const rows=allRows.filter(r=>r.action!=='none' && r.action!=='floor-bad');
+  return {rows, allRows, st, bst, rowsRaw, floorBidOverrides};
 }
 function renderOptPlacements(){
   const {rows: rowsAll, st, bst, rowsRaw}=computePlacementOptRows(S.product, {});
