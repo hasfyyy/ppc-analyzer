@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:24</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2830,6 +2830,15 @@ function acosGoalFor(portfolioName){
   const g=pst.portfolioGoals[portfolioName||'(No Portfolio)'];
   return (g && g>0) ? g : pst.acosGoal;
 }
+// Same override pattern as acosGoalFor — Butler's own "threshold" (minimum clicks before it acts) is also a
+// per-product variable there, not one account-wide number (Alex, 25 sep 2026). Missing/zero falls back to the
+// account-wide minimum set in the panel (default 7, never lower — a 1-2 click sample isn't enough to judge).
+function clickThresholdFor(portfolioName){
+  const pst=stFor('optplace');
+  if(pst.portfolioThresholds===undefined) pst.portfolioThresholds={};
+  const t=pst.portfolioThresholds[portfolioName||'(No Portfolio)'];
+  return (t && t>0) ? t : (pst.butlerMinClicks||7);
+}
 // Classifies every portfolio into New/Low Data, Underperformer, or Mature using only what's already in this
 // file (clicks and CVR) — no real launch date available, so click volume is the stand-in for "new or tiny".
 // Transparent and re-runnable: it only overwrites portfolioGoals for portfolios matching a tier rule, so a
@@ -2872,11 +2881,12 @@ function classifyPortfolios(product){
 function exportPortfolioGoalTemplate(product){
   const rows=classifyPortfolios(product);
   const pst=stFor('optplace');
-  const aoa=[['Portfolio','ASIN','Spend','Clicks','CVR %','Tier','ACoS Goal']];
+  if(pst.portfolioThresholds===undefined) pst.portfolioThresholds={};
+  const aoa=[['Portfolio','ASIN','Spend','Clicks','CVR %','Tier','ACoS Goal','Click Threshold']];
   rows.forEach(r=>{
     const tierLabel = r.manualTier? TIER_LABELS[r.manualTier] : `Auto (${TIER_LABELS[r.autoTier]})`;
     const asinM=r.portfolioName.match(ASIN_FIND_RE);
-    aoa.push([r.portfolioName, asinM?asinM[0].toUpperCase():'', +r.spend.toFixed(2), r.clicks, +r.cvr.toFixed(2), tierLabel, pst.portfolioGoals[r.portfolioName]||'']);
+    aoa.push([r.portfolioName, asinM?asinM[0].toUpperCase():'', +r.spend.toFixed(2), r.clicks, +r.cvr.toFixed(2), tierLabel, pst.portfolioGoals[r.portfolioName]||'', pst.portfolioThresholds[r.portfolioName]||'']);
   });
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   const wb=XLSX.utils.book_new();
@@ -2893,6 +2903,7 @@ function exportPortfolioGoalTemplate(product){
 // round-trippable template.
 function importPortfolioGoalTemplate(file, product, onDone){
   const pst=stFor('optplace');
+  if(pst.portfolioThresholds===undefined) pst.portfolioThresholds={};
   const reader=new FileReader();
   reader.onload=ev=>{
     try{
@@ -2903,24 +2914,32 @@ function importPortfolioGoalTemplate(file, product, onDone){
       const nameIdx=header.indexOf('portfolio');
       const asinIdx=header.indexOf('asin');
       const goalIdx=header.findIndex(h=>h.includes('acos goal'));
+      // Optional — older templates (before Click Threshold existed) just won't have this column.
+      const threshIdx=header.findIndex(h=>h.includes('click threshold'));
       if(goalIdx<0 || (nameIdx<0 && asinIdx<0)){ pst.importMsg='Nu găsesc coloana "ACoS Goal" și cel puțin una din "Portfolio"/"ASIN" în fișier — nu edita header-ul din șablon.'; onDone(); return; }
       // Live portfolios in the tool right now, indexed by whatever ASIN their name embeds — the actual join key.
       const live=classifyPortfolios(product);
       const byAsin={};
       live.forEach(r=>{ const m=r.portfolioName.match(ASIN_FIND_RE); if(m){ const k=m[0].toLowerCase(); (byAsin[k]=byAsin[k]||[]).push(r.portfolioName); } });
       const liveNames=new Set(live.map(r=>r.portfolioName));
-      let applied=0, unmatched=[];
+      let appliedGoal=0, appliedThresh=0, unmatched=[];
       aoa.slice(1).forEach(row=>{
-        const val=+row[goalIdx]; if(!(val>0)) return;
+        const goalVal=+row[goalIdx];
+        const threshVal=threshIdx>=0? +row[threshIdx] : NaN;
+        const hasGoal=goalVal>0, hasThresh=threshVal>0;
+        if(!hasGoal && !hasThresh) return;
         const asinCell=asinIdx>=0? String(row[asinIdx]||'').trim() : '';
         const nameCell=nameIdx>=0? String(row[nameIdx]||'').trim() : '';
         const asin=(asinCell.match(ASIN_FIND_RE)||nameCell.match(ASIN_FIND_RE)||[])[0];
         let matches=asin? (byAsin[asin.toLowerCase()]||[]) : [];
         if(!matches.length && nameCell && liveNames.has(nameCell)) matches=[nameCell];
         if(!matches.length){ if(nameCell||asinCell) unmatched.push(nameCell||asinCell); return; }
-        matches.forEach(pn=>{ pst.portfolioGoals[pn]=val; applied++; });
+        matches.forEach(pn=>{
+          if(hasGoal){ pst.portfolioGoals[pn]=goalVal; appliedGoal++; }
+          if(hasThresh){ pst.portfolioThresholds[pn]=threshVal; appliedThresh++; }
+        });
       });
-      pst.importMsg = `Aplicat ${applied} goal-uri din fișier.`+(unmatched.length? ` Nepotrivite (${unmatched.length}), n-au fost găsite în cont: ${unmatched.slice(0,15).join(', ')}${unmatched.length>15?'…':''}`:'');
+      pst.importMsg = `Aplicat ${appliedGoal} goal-uri`+(appliedThresh?` și ${appliedThresh} praguri de clicks`:'')+` din fișier.`+(unmatched.length? ` Nepotrivite (${unmatched.length}), n-au fost găsite în cont: ${unmatched.slice(0,15).join(', ')}${unmatched.length>15?'…':''}`:'');
       onDone();
     }catch(err){ pst.importMsg='Eroare la citirea fișierului: '+err.message; onDone(); }
   };
@@ -2928,6 +2947,8 @@ function importPortfolioGoalTemplate(file, product, onDone){
 }
 function renderPortfolioGoalPanel(product){
   const pst=stFor('optplace'); if(pst.portfolioGoals===undefined) pst.portfolioGoals={};
+  if(pst.portfolioThresholds===undefined) pst.portfolioThresholds={};
+  if(pst.butlerMinClicks===undefined) pst.butlerMinClicks=7;
   const rows=classifyPortfolios(product);
   const overrideCount=Object.keys(pst.portfolioGoals).filter(k=>pst.portfolioGoals[k]>0).length;
   const g=pst.acosGoal||20;
@@ -2947,10 +2968,14 @@ function renderPortfolioGoalPanel(product){
     <div class="ctrls" style="margin-bottom:8px;align-items:flex-end;">
       <button class="btn ghost" id="pg-export-template" style="margin-bottom:2px;">⬇ Descarcă șablon Excel</button>
       <label class="btn ghost" style="margin-bottom:2px;cursor:pointer;">⬆ Încarcă șablon completat<input type="file" id="pg-import" accept=".xlsx,.xls" style="display:none;"></label>
-      <div class="hint" style="align-self:center;">Descarcă, completează coloana „ACoS Goal" în Excel (gol = rămâne pe goal-ul global), reîncarcă — portofoliile din fișier sunt potrivite după ASIN (nu după nume).</div>
+      <div class="hint" style="align-self:center;">Descarcă, completează coloanele „ACoS Goal" și „Click Threshold" în Excel (gol = rămâne pe globalul de mai jos), reîncarcă — portofoliile din fișier sunt potrivite după ASIN (nu după nume).</div>
+    </div>
+    <div class="ctrls" style="margin-bottom:8px;align-items:flex-end;">
+      <div class="field" style="flex:0 0 auto;"><label>Click threshold global (single-kw)</label><input type="number" id="pg-globalthreshold" min="1" value="${pst.butlerMinClicks}" style="width:80px;"></div>
+      <div class="hint" style="align-self:center;">Minimul de clicks înainte ca Butler (single-kw) să acționeze pe un placement — la fel per-portofoliu ca ACoS goal-ul, în coloana de mai jos.</div>
     </div>
     ${pst.importMsg?`<div class="hint" style="margin-bottom:8px;background:#f0f4ff;padding:8px;border-radius:6px;">${esc(pst.importMsg)} <a href="#" id="pg-import-msg-clear" style="margin-left:8px;color:#dc2626;">×</a></div>`:''}
-    <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Spend</th><th>Clicks</th><th>CVR</th><th class="l">Tier</th><th>ACoS Goal</th></tr></thead><tbody>
+    <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Spend</th><th>Clicks</th><th>CVR</th><th class="l">Tier</th><th>ACoS Goal</th><th>Click Threshold</th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td class="l">${esc(r.portfolioName)}</td><td>${fMoney(r.spend)}</td><td>${fInt(r.clicks)}</td><td>${fPct(r.cvr)}</td><td class="l">
       <select data-pg-tier="${esc(r.portfolioName)}" style="font-size:12px;">
         <option value="" ${!r.manualTier?'selected':''}>Auto (${esc(TIER_LABELS[r.autoTier])})</option>
@@ -2958,7 +2983,8 @@ function renderPortfolioGoalPanel(product){
         <option value="new" ${r.manualTier==='new'?'selected':''}>New / Low Data</option>
         <option value="bad" ${r.manualTier==='bad'?'selected':''}>Underperformer</option>
       </select></td>
-      <td><input type="number" step="0.1" min="0" data-pg-goal="${esc(r.portfolioName)}" placeholder="${pst.acosGoal}" value="${pst.portfolioGoals[r.portfolioName]||''}" style="width:80px;"></td></tr>`).join('')}
+      <td><input type="number" step="0.1" min="0" data-pg-goal="${esc(r.portfolioName)}" placeholder="${pst.acosGoal}" value="${pst.portfolioGoals[r.portfolioName]||''}" style="width:80px;"></td>
+      <td><input type="number" step="1" min="0" data-pg-threshold="${esc(r.portfolioName)}" placeholder="${pst.butlerMinClicks}" value="${pst.portfolioThresholds[r.portfolioName]||''}" style="width:80px;"></td></tr>`).join('')}
     </tbody></table>
   </details>`;
 }
@@ -2970,6 +2996,7 @@ function wirePortfolioGoalPanel(product, onChange){
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ pst[key]=parse(el.value); onChange(); },300); };
   bind('pg-newspend','newLaunchSpend',v=>+v||0);
   bind('pg-badcvr','underperformCvrPct',v=>+v||0);
+  bind('pg-globalthreshold','butlerMinClicks',v=>+v||7);
   // Multipliers are stored, but the UI now shows the ABSOLUTE goal %; convert back on input.
   const g=()=>pst.acosGoal||20;
   const bindGoal=(id,mkey)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ const gv=+el.value||g(); pst[mkey]=+(gv/g()).toFixed(3); onChange(); },300); };
@@ -2980,7 +3007,7 @@ function wirePortfolioGoalPanel(product, onChange){
     classifyPortfolios(product).forEach(r=>{ if(!r.manualTier && r.tier!=='mature') pst.portfolioGoals[r.portfolioName]=r.suggestedGoal; });
     onChange();
   };
-  const clearBtn=$('#pg-clearall'); if(clearBtn) clearBtn.onclick=()=>{ pst.portfolioGoals={}; pst.portfolioTier={}; onChange(); };
+  const clearBtn=$('#pg-clearall'); if(clearBtn) clearBtn.onclick=()=>{ pst.portfolioGoals={}; pst.portfolioTier={}; pst.portfolioThresholds={}; onChange(); };
   const expBtn=$('#pg-export-template'); if(expBtn) expBtn.onclick=()=>exportPortfolioGoalTemplate(product);
   const impEl=$('#pg-import'); if(impEl) impEl.onchange=e=>{
     const file=e.target.files[0]; if(!file) return;
@@ -2997,6 +3024,11 @@ function wirePortfolioGoalPanel(product, onChange){
   document.querySelectorAll('[data-pg-goal]').forEach(el=>el.oninput=debounce(()=>{
     const pf=el.dataset.pgGoal; const v=+el.value;
     if(v>0) pst.portfolioGoals[pf]=v; else delete pst.portfolioGoals[pf];
+    onChange();
+  },300));
+  document.querySelectorAll('[data-pg-threshold]').forEach(el=>el.oninput=debounce(()=>{
+    const pf=el.dataset.pgThreshold; const v=+el.value;
+    if(v>0) pst.portfolioThresholds[pf]=v; else delete pst.portfolioThresholds[pf];
     onChange();
   },300));
 }
@@ -3799,22 +3831,17 @@ function computePlacementOptRows(product, filters){
   {
     const byCampSingle={};
     allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampSingle[r.campaignId]=byCampSingle[r.campaignId]||{})[r.placeType]=r; });
-    // Reuses the existing "enough clicks to mean something" setting (same one the 0-order Tier 1 above already
-    // uses) as Butler's "threshold" product variable — no new number introduced for this.
-    const threshold=st.z1Clicks;
-    // Step 3's own volume gate — separate number from `threshold` above, set by Alex (25 sep 2026) after
-    // seeing a placement's ONLY click get treated as a confident 200%→33% cut. The real cause was structural,
-    // not a data problem: when a placement is the sole one with any CPC, it anchors against itself, and the
-    // "still testing" branch (CPC×1.2 ÷ CPC×0.9) always lands on exactly 33% regardless of the CPC value or
-    // click count — it was never really "evaluating" that one click, just hitting a fixed ratio. Below this
-    // many clicks, a placement is left alone entirely by Step 3, whichever branch would have fired.
-    if(st.butlerMinClicks===undefined) st.butlerMinClicks=7;
     Object.keys(byCampSingle).forEach(cid=>{
       const pl=byCampSingle[cid];
       const domT=dominantTargetByCamp.get(cid);
       if(!domT) return;
       const anyRow=pl.top||pl.rest||pl.pp; if(!anyRow) return;
       const goal=acosGoalFor(anyRow.portfolioName)>0? acosGoalFor(anyRow.portfolioName) : 20;
+      // Butler's "threshold" (minimum clicks before it acts) is a per-product variable there too, same as ACoS
+      // goal above — used by all 3 steps alike, since the real platform reads its own single `threshold` for
+      // all of them. Per-portfolio override (Alex, 25 sep 2026), falls back to the account-wide minimum (7,
+      // never lower — a 1-2 click sample isn't enough to judge, per Alex's explicit pushback on that idea).
+      const threshold=clickThresholdFor(anyRow.portfolioName);
       const cpcOf=p=> (p && p.cpc>0) ? p.cpc : Infinity;
       const minCpc=Math.min(cpcOf(pl.top), cpcOf(pl.rest), cpcOf(pl.pp));
       // ---- Step 1 (rules 162747+162748, same action, different trigger): shared bid → 90% of the cheapest
@@ -3851,7 +3878,7 @@ function computePlacementOptRows(product, filters){
       // already zeroed.
       if(minCpc<Infinity){
         ['top','rest','pp'].forEach(k=>{
-          const p=pl[k]; if(!p || zeroed[k] || p.cpc<=0 || p.clicks<st.butlerMinClicks) return;
+          const p=pl[k]; if(!p || zeroed[k] || p.cpc<=0 || p.clicks<threshold) return;
           const acos=p.orders>0? p.acos : 0;
           const numerator = (acos>0 && acos<goal) ? p.cpc*1.2
             : (acos===0) ? p.cpc*1.2
@@ -3948,10 +3975,6 @@ function renderOptPlacements(){
       </div>
       <div class="hint" style="margin-bottom:10px;" title="Cuts aim at a target effective bid (this placement's own CPC minus the tier %), then act only on whatever gap is left — so a placement already brought down by a previous run or a manual edit produces no suggestion instead of being cut twice. Single-keyword campaigns use their real bid for that maths; multi-keyword ones scale the multiplier itself by the same percentage, since their keywords' bids can differ many times over.">${st.singleOnly? `Multi-keyword campaigns get decreases only (raises/push are single-keyword — see checkbox below).` : `Raises need ${st.raiseMinOrders}+ orders on multi-keyword campaigns, just 1 on single-keyword.`} Hover for details.</div>
       ${renderPortfolioGoalPanel(S.product)}
-      <div class="hint" style="margin-bottom:4px;" title="Below this many clicks, Step 3 (the CPC-vs-goal formula) leaves that placement alone entirely, whichever branch would otherwise have fired. Added 25 sep 2026: a placement with just 1 click and no orders was landing on a confident-looking 33% — not because the formula weighed that one click, but because a placement with no siblings that have any CPC data anchors against itself, and CPC×1.2 ÷ CPC×0.9 is always exactly 33%, regardless of the click count.">Single-kw (Butler) — min clicks before a placement gets touched</div>
-      <div class="ctrls" style="margin-bottom:12px;">
-        <div class="field"><label>Min clicks (Step 3)</label><input type="number" id="op-butlerminclicks" min="0" value="${st.butlerMinClicks}" style="width:90px;"></div>
-      </div>
       <div class="hint" style="margin-bottom:8px;" title="Uses the SAME Tier 1/2/3 as the Bid Optimizer tab — edit them there, not here, so a placement and its own campaign's bid always agree on what counts as bad.">Graduated decrease — the worse the ACoS, the bigger the cut (&gt;${bst.hi1}%→-${bst.dec1}pp, &gt;${bst.hi2}%→-${bst.dec2}pp, &gt;${bst.hi3}%→-${bst.dec3}pp).</div>
       <div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Raise by (points)</label><input type="number" id="op-raisestep" min="1" value="${st.raiseStep}" style="width:90px;" title="Added to a placement's % when its ACoS is at or under the goal. The threshold itself comes from the ACoS goal above — there is no separate 'increase if ACoS <' setting, which used to be a hardcoded 20 that quietly overrode the goal on accounts targeting less than that."></div>
@@ -3993,7 +4016,6 @@ function renderOptPlacements(){
   const raiseMinOrdEl=$('#op-raiseminord'); if(raiseMinOrdEl) raiseMinOrdEl.oninput=debounce(()=>{st.raiseMinOrders=+raiseMinOrdEl.value||1; renderOptPlacements();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-raisestep','raiseStep',v=>+v||1);
-  bind('op-butlerminclicks','butlerMinClicks',v=>+v||0);
   bind('op-zerohi1','zeroHi1',v=>+v||0); bind('op-zerodec1','zeroDec1',v=>+v||0);
   bind('op-zerohi2','zeroHi2',v=>+v||0); bind('op-zerodec2','zeroDec2',v=>+v||0);
   bind('op-zerohi3','zeroHi3',v=>+v||0); bind('op-zerodec3','zeroDec3',v=>+v||0);
