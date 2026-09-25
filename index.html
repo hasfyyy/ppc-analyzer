@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:49</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:52</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3484,7 +3484,6 @@ function computePlacementOptRows(product, filters){
   // is usually the placement doing the crowding-out in the first place) — and works for every campaign, not
   // just single-keyword, since it never touches the shared bid, only that placement's own %.
   if(st.pushEnabled===undefined) st.pushEnabled=true; if(st.pushClicks===undefined) st.pushClicks=5; if(st.pushStep===undefined) st.pushStep=10;
-  if(st.pushCeiling===undefined) st.pushCeiling=300;
   // 0 orders has no ACoS to grade against, so it runs on its own click-based ladder — same graduated shape,
   // mirroring the Bid Optimizer's own 0-order tiers one axis over (clicks instead of ACoS).
   if(st.zeroHi1===undefined) st.zeroHi1=9; if(st.zeroDec1===undefined) st.zeroDec1=10;
@@ -3610,14 +3609,16 @@ function computePlacementOptRows(product, filters){
       // (unbounded). One keyword's placement figures ARE that keyword's; an average across many hides how
       // unevenly it's distributed, so it has to clear a higher bar to be acted on.
       action='increase'; newPct=Math.min(900, e.percentage+st.raiseStep); why=`ACoS ${fAcos(d.acos)} at or under goal`;
-    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImprFor(e.campaignId) && e.percentage<st.pushCeiling){
+    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks===0 && e.impressions>=placeWakeImprFor(e.campaignId)){
       // The placement-level twin of the keyword "wake" rule: showing plenty and still buying nothing. With no
       // clicks there is no CPC to test the bid against, so the impression count has to carry the whole
       // argument — which is why it uses the CTR-derived floor rather than a fixed number. At a 0.7% CTR,
       // 4 impressions with no clicks is the expected outcome and says nothing; 842 of them is a real signal.
+      // No ceiling on the current % (Alex, 25 sep 2026) — a too-high resulting CPC gets caught and fixed
+      // separately in the CPC Flag tab, so this doesn't need its own cap to guard against it.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
       why=`${fInt(e.impressions)} impressions, no clicks`;
-    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && e.percentage<st.pushCeiling && baseBid>0 && d.cpc>0 && baseBid*(1+e.percentage/100)<=d.cpc*1.05){
+    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && baseBid>0 && d.cpc>0 && baseBid*(1+e.percentage/100)<=d.cpc*1.05){
       // Only push when the bid is actually the binding constraint — i.e. the effective bid is at or below what
       // this placement's auctions really cost. If the effective bid already clears the CPC comfortably, more %
       // buys nothing: it isn't losing auctions on price, it simply isn't getting the volume, and pushing a
