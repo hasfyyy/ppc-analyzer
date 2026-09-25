@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:14</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2712,6 +2712,11 @@ function bidTierDefaults(bst){
 // uploaded goal → the typed Tier 1/2/3 exactly. Reads portfolioGoals directly, not acosGoalFor(): that one
 // falls back to the account-wide goal, which silently re-anchored every portfolio WITHOUT a template row onto
 // that single number instead of leaving it on the typed tiers.
+// A keyword cut lands below what it actually PAYS, not just below its bid (Alex, 25 sep 2026: bid $2.55, CPC
+// $2.00, −$0.20 → $1.80) — a bid far above its own CPC was never the real price. The LOWER of the two, because
+// placement % can push a keyword's CPC above its base bid, and anchoring on that CPC would then never cut at all.
+function cutBase(t, d){ return d.cpc>0 ? Math.min(t.bid, d.cpc) : t.bid; }
+function cutBaseLabel(t, d){ return d.cpc>0 && d.cpc<t.bid ? `CPC ${fMoney(d.cpc)}` : `bid ${fMoney(t.bid)}`; }
 function decTiersFor(portfolioName, bst){
   const g=(stFor('optplace').portfolioGoals||{})[portfolioName||'(No Portfolio)'];
   if(!(g>0)) return bst;
@@ -3147,8 +3152,8 @@ function renderOptBids(){
     } else if(!butlerOwned && (t.clicks>=st.minClicks || t.orders>=st.minOrdersInc) && t.spend>=st.minSpend){
       const decDollar = t.orders>=1? decreaseTierFor(effAcos, decTiers) : null;
       if(decDollar!=null){
-        const nb=Math.max(0.02, +(t.bid-decDollar).toFixed(2));
-        if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`ACoS ${fAcos(d.acos)} → -${fMoney(decDollar)}`; }
+        const nb=Math.max(0.02, +(cutBase(t,d)-decDollar).toFixed(2));
+        if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`ACoS ${fAcos(d.acos)} → ${cutBaseLabel(t,d)} − ${fMoney(decDollar)}`; }
       } else if(t.orders>=st.minOrdersInc){
         const incDollar=increaseDollarTierFor(effAcos, incTiers);
         if(incDollar>0){ newBid=+(t.bid+incDollar).toFixed(2); action='increase'; pct=+(((newBid-t.bid)/t.bid)*100).toFixed(1); reason=`healthy ACoS (${fAcos(d.acos)}) +${fMoney(incDollar)}`; }
@@ -3161,8 +3166,8 @@ function renderOptBids(){
     if(action==='none' && !butlerOwned && t.orders===0){
       const zdec=zeroOrderDecreaseTierFor(t.clicks, st);
       if(zdec!=null){
-        const nb=Math.max(0.02, +(t.bid-zdec).toFixed(2));
-        if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`0 orders, ${t.clicks} wasted clicks → -${fMoney(zdec)}`; }
+        const nb=Math.max(0.02, +(cutBase(t,d)-zdec).toFixed(2));
+        if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`0 orders, ${t.clicks} wasted clicks → ${cutBaseLabel(t,d)} − ${fMoney(zdec)}`; }
       }
     }
     // Priced out of the auction: a bid well under what this keyword actually costs, so it never even gets
@@ -3267,7 +3272,7 @@ function renderOptBids(){
         <div class="field grow"><label>Brand terms (comma-separated)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}" title="Matched against campaign name, portfolio name, AND the keyword/target text itself."></div>
       </div>
       ${renderPortfolioGoalPanel(S.product)}
-      <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Flat $, not % — keywords: bid minus this amount; placements: this placement's own CPC minus this amount becomes its target effective bid. Typing 10 is read as 10 cents ($0.10). A portfolio with an uploaded ACoS goal uses that goal as Tier 1 (Tier 2/3 keep the same gaps). The category allowance above shifts the ACoS fed into these tiers for keywords.">Graduated decrease, in $ — hover for details.</div>
+      <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Flat $, not % — keywords: the lower of bid and CPC, minus this amount (bid $2.55, CPC $2.00, -$0.20 → $1.80); placements: this placement's own CPC minus this amount becomes its target effective bid. Typing 10 is read as 10 cents ($0.10). A portfolio with an uploaded ACoS goal uses that goal as Tier 1 (Tier 2/3 keep the same gaps). The category allowance above shifts the ACoS fed into these tiers for keywords.">Graduated decrease, in $ — hover for details.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
         <div class="field"><label>-$</label><input type="number" step="0.01" min="0" id="ob-dec1" value="${st.dec1}" style="width:70px;"></div>
@@ -3294,7 +3299,7 @@ function renderOptBids(){
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
       ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="ob-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
-      <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake). Flat $, not %: keywords lose this much bid; multi-keyword placements get their multiplier scaled so what their keywords pay drops by about this much. Single-keyword placements with 0 orders go to 0% once they reach the click threshold instead. Typing 10 is read as 10 cents ($0.10).">0 orders — runs on clicks instead of ACoS (undefined with no sales). A graduated cut in $ for proven wasted spend.</div>
+      <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake). Flat $, not %: keywords go to the lower of bid and CPC, minus this amount; multi-keyword placements get their multiplier scaled so what their keywords pay drops by about this much. Single-keyword placements with 0 orders go to 0% once they reach the click threshold instead. Typing 10 is read as 10 cents ($0.10).">0 orders — runs on clicks instead of ACoS (undefined with no sales). A graduated cut in $ for proven wasted spend.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
         <div class="field"><label>-$</label><input type="number" step="0.01" min="0" id="ob-zerodec1" value="${st.zeroDec1}" style="width:70px;"></div>
