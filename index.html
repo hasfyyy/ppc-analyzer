@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 14:52</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 15:58</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2688,32 +2688,28 @@ function decreaseTierFor(acos, st){
   if(acos>=st.hi1) return st.dec1;
   return null;
 }
-// Single-keyword campaigns share ONE bid across every placement — if a placement fix already absorbs most
-// of the bad spend, cutting the full bid on top would double-penalize the placements that were already fine.
-// Rather than an all-or-nothing suppression, scale the cut down by how much of the bad spend is ALREADY
-// covered by a real (non-floor) placement decrease: fully covered → no bid cut needed; not covered at all
-// (or stuck at the 0% floor, unfixable at the placement level) → the full tiered cut still applies.
-function scaleDecByPlacementCoverage(decPct, placements){
-  if(decPct==null) return null;
-  // ineffectiveFloor is a decrease in name only — it landed at 0% but the shared base bid alone already
-  // clears that placement's real cost, so nothing actually changes there. Treated exactly like floor-bad:
-  // doesn't count as "handled", and forces the full base-bid cut since that's genuinely the only lever left.
-  const hasFloorBad = placements.some(p=>p.action==='floor-bad' || p.ineffectiveFloor);
-  if(hasFloorBad) return decPct;
-  // alreadyAtTarget counts too, not just an active 'decrease' this run — it means THIS placement had a real
-  // ACoS problem (cutPct!=null) that a previous run (or a manual edit) already brought down to where a cut
-  // would land it. Only crediting the live 'decrease' rows meant a placement fixed last week stopped counting
-  // as "handled" the moment it stopped needing further action, so the bid took the FULL tier cut all over
-  // again on a problem that was mostly already solved on the placement side.
-  const decreasedSpend = placements.filter(p=>(p.action==='decrease' || p.alreadyAtTarget) && !p.ineffectiveFloor).reduce((s,p)=>s+p.spend,0);
-  const totalSpend = placements.reduce((s,p)=>s+p.spend,0);
-  const coverage = totalSpend>0 ? Math.min(1, decreasedSpend/totalSpend) : 0;
-  // Once a placement fix already covers most of the campaign's spend, the leftover bid cut it scales down to
-  // is a 1-2 cent nudge on a $1 bid — not wrong, but not worth a suggestion either. Skip the bid entirely once
-  // the placement fix is handling the clear majority of the spend, instead of exporting a symbolic residual.
-  if(coverage>=0.8) return null;
-  const scaled = +(decPct*(1-coverage)).toFixed(1);
-  return scaled>0.05 ? scaled : null;
+// The graduated decrease values (dec1/2/3) are flat $, not % (Alex, 25 sep 2026: Tier 1 "-10" on a $3.61 CPC
+// means $3.51, not $3.25). A % scales with the price, so an expensive placement or keyword took a far bigger
+// real cut than a cheap one sitting just as far over goal.
+function bidTierDefaults(bst){
+  if(bst.hi1===undefined) bst.hi1=40; if(bst.dec1===undefined) bst.dec1=0.10;
+  if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=0.20;
+  if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=0.30;
+  // Increase ($) defaults set by Alex (25 sep 2026). Order doesn't matter to increaseDollarTierFor (it sorts
+  // by threshold), but these read naturally: ACoS<15 is the best tier and gets the biggest bump.
+  if(bst.incHi1===undefined) bst.incHi1=15; if(bst.incDollar1===undefined) bst.incDollar1=0.15;
+  if(bst.incHi2===undefined) bst.incHi2=25; if(bst.incDollar2===undefined) bst.incDollar2=0.10;
+  if(bst.incHi3===undefined) bst.incHi3=30; if(bst.incDollar3===undefined) bst.incDollar3=0.05;
+}
+// One portfolio's decrease ladder: an uploaded ACoS goal IS Tier 1, and Tier 2/3 keep the same gap above it
+// that the typed fields carry (clamped ≥0 so a mistyped Tier 2 below Tier 1 can't invert the ladder). No
+// uploaded goal → the typed Tier 1/2/3 exactly. Reads portfolioGoals directly, not acosGoalFor(): that one
+// falls back to the account-wide goal, which silently re-anchored every portfolio WITHOUT a template row onto
+// that single number instead of leaving it on the typed tiers.
+function decTiersFor(portfolioName, bst){
+  const g=(stFor('optplace').portfolioGoals||{})[portfolioName||'(No Portfolio)'];
+  if(!(g>0)) return bst;
+  return {hi1:g, dec1:bst.dec1, hi2:g+Math.max(0,bst.hi2-bst.hi1), dec2:bst.dec2, hi3:g+Math.max(0,bst.hi3-bst.hi1), dec3:bst.dec3};
 }
 // Mirrors decreaseTierFor: three escalating tiers on the way down in ACoS too — a keyword at 5% ACoS is a
 // much better opportunity than one that just barely cleared 20%, so it should get a bigger bid bump, not the
@@ -2805,17 +2801,11 @@ function staleSignalsFor(campaignId, product){
   return out;
 }
 function campaignRecentlyChanged(campaignId, product){ return staleSignalsFor(campaignId, product).length>0; }
-// The ACoS goal and its tier ladder are ONE setting shared by the Bid and Placement optimizers — kept on the
-// placement state as the single source of truth so editing it in either tab moves both. Tiers are multiples
-// of the goal rather than fixed percentages: on a 20% target, cutting only above 50% ACoS means tolerating
-// 2.5x the goal before reacting, while on a 45% target a 50% threshold fires almost immediately. Expressed
-// as multiples, one number retunes the whole ladder for the account.
+// The account-wide ACoS goal lives on the placement state, shared by both optimizers. The decrease ladder
+// itself is the Bid Optimizer's Tier 1/2/3 (see decTiersFor) — one table for keywords and placements alike.
 function goalTiers(){
   const g=stFor('optplace');
   if(g.acosGoal===undefined) g.acosGoal=20;
-  if(g.t1Mult===undefined) g.t1Mult=1.25; if(g.t1Cut===undefined) g.t1Cut=10;
-  if(g.t2Mult===undefined) g.t2Mult=2.5;  if(g.t2Cut===undefined) g.t2Cut=15;
-  if(g.t3Mult===undefined) g.t3Mult=4.5;  if(g.t3Cut===undefined) g.t3Cut=25;
   if(g.raiseStep===undefined) g.raiseStep=5;
   if(g.raiseMinOrders===undefined) g.raiseMinOrders=3; // multi-keyword only; single-keyword raises need just 1
   return g;
@@ -3045,18 +3035,7 @@ function singleKwCampaigns(product){
 }
 function renderOptBids(){
   const st=stFor('optbids');
-  if(st.hi1===undefined) st.hi1=40; if(st.dec1===undefined) st.dec1=10;
-  if(st.hi2===undefined) st.hi2=70; if(st.dec2===undefined) st.dec2=20;
-  if(st.hi3===undefined) st.hi3=100; if(st.dec3===undefined) st.dec3=30;
-  // Flat $ amounts, not %, so the bump doesn't scale with how big the bid already is — a $0.20-vs-$3 keyword
-  // and a $0.20-vs-$0.50 keyword get the same nudge instead of the cheap one barely moving. Separate keys from
-  // the old incPct1/2/3 (kept alive only by the Budget tab's own namespace) so a saved percentage value can't
-  // silently get reinterpreted as a dollar amount for someone with old localStorage state. Defaults set by
-  // Alex (25 sep 2026) — order doesn't matter to the engine (increaseDollarTierFor sorts by threshold), but
-  // these read naturally top-to-bottom: ACoS<15 is the best tier and gets the biggest bump.
-  if(st.incHi1===undefined) st.incHi1=15; if(st.incDollar1===undefined) st.incDollar1=0.15;
-  if(st.incHi2===undefined) st.incHi2=25; if(st.incDollar2===undefined) st.incDollar2=0.10;
-  if(st.incHi3===undefined) st.incHi3=30; if(st.incDollar3===undefined) st.incDollar3=0.05;
+  bidTierDefaults(st);
   if(st.minOrdersInc===undefined) st.minOrdersInc=1; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   // 0-order rules run on their OWN click thresholds, independent of the Min Clicks/Min Spend gate above (that
   // gate exists for the ACoS tiers, which need enough volume for ACoS to mean anything — a 0-order target
@@ -3100,7 +3079,6 @@ function renderOptBids(){
   // Amazon Business excluded here too, same reason as computePlacementOptRows — its totals duplicate the
   // other placements' rather than being a real sibling sharing this campaign's bid.
   placementOpt.allRows.forEach(pr=>{ if(!pr.isSingle || pr.placeType==='business') return; (placementsByCamp[pr.campaignId]=placementsByCamp[pr.campaignId]||[]).push(pr); });
-  const pst=placementOpt.st; // Placement Optimizer's own state (stFor('optplace')) — the floor-override fields live there, not here; this is a shortcut onto the SAME values, not a separate copy.
   const floorBidOverrides=placementOpt.floorBidOverrides||{};
   // Stale data is FLAGGED, not blocked. Both cuts and raises converge on the goal over successive runs, so a
   // half-done manual change just gets topped up next run — the flag exists so a surprising number has a
@@ -3135,23 +3113,17 @@ function renderOptBids(){
     const category=bidCategoryFor(t, brandTermsArr);
     const acosAdj=bidCategoryAdj(category, st);
     const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
-    // DECREASE — a portfolio's own ACoS goal (panel below, or the Excel round-trip) IS Tier 1 directly, no
-    // second reference number, no ratio: above your goal, the mild cut already applies. Tier 2/3 sit the same
-    // distance above Tier 1 that the hand-set fields already carry (st.hi2-st.hi1, st.hi3-st.hi1), so tuning
-    // those 3 fields still tunes every portfolio's spacing, just anchored at each one's own goal instead of at
-    // a shared absolute number. No override on a portfolio → falls back to st.hi1/2/3 exactly, untouched.
-    // Example: goal 55% → Tier 1 at 55%, Tier 2 at 85% (55+30), Tier 3 at 115% (55+60) with today's 40/70/100.
-    // INCREASE thresholds (st.incHi1/2/3) stay flat, same bar for every portfolio, goal or no goal — a loose
-    // goal earns protection from cuts, never eligibility for a raise (confirmed on real data 25 sep 2026: a
-    // 140% goal scaled the increase bar up 7x, so a target at 172.9% ACoS — genuinely bad — qualified anyway).
-    const pGoal=acosGoalFor(t.portfolioName);
-    // Gaps clamped to ≥0 (Math.max) — if Tier 2/3 ever end up typed below Tier 1 (mid-edit, or a stale saved
-    // value), a raw subtraction would push the goal-anchored Tier 2/3 threshold BELOW Tier 1, silently
-    // inverting the cut ladder for every portfolio with an override. Worst case here is a gap of 0 (Tier 2
-    // collapses onto Tier 1), never a reversal — caught 25 sep 2026 verifying with a real but stale hi1/hi2
-    // combo (80/70) in this exact formula.
-    const decTiers = pGoal>0 ? {hi1:pGoal, dec1:st.dec1, hi2:pGoal+Math.max(0,st.hi2-st.hi1), dec2:st.dec2, hi3:pGoal+Math.max(0,st.hi3-st.hi1), dec3:st.dec3} : st;
-    const incTiers = st;
+    // DECREASE ladder: the portfolio's uploaded ACoS goal IS Tier 1 (see decTiersFor); no uploaded goal → the
+    // typed Tier 1/2/3 as-is. INCREASE thresholds (incHi1/2/3) stay flat for every portfolio — a loose goal
+    // earns protection from cuts, never eligibility for a raise (a 140% goal scaling the increase bar let a
+    // 172.9%-ACoS target qualify, 25 sep 2026).
+    const decTiers=decTiersFor(t.portfolioName, st);
+    const incTiers=st;
+    // A single-kw campaign with placement data is steered entirely by computePlacementOptRows: its bid moves
+    // ONLY through Step 1 (floorBidOverrides), everything else through its placements. The keyword tiers below
+    // used to cut the same bid again on top — $1.72→$1.68 on MGG, whose cheapest placement was beating goal,
+    // where Alex wanted the bid left alone and only TOS/ROS cut (25 sep 2026).
+    const butlerOwned=singleKw.has(t.campaignId) && (placementsByCamp[t.campaignId]||[]).some(p=>p.clicks>0);
     let action='none', newBid=t.bid, pct=null, reason=null;
     const floorOverride=floorBidOverrides[t.campaignId];
     // Computed off the campaign's DOMINANT target's bid (computePlacementOptRows already guards newBid against
@@ -3161,56 +3133,30 @@ function renderOptBids(){
     // badge (the two minus signs — "↓ --24%" — are the tell). Only take the override if it's really a cut
     // for THIS specific target too; otherwise fall through to its own normal tiered logic below.
     if(floorOverride && floorOverride.newBid<t.bid){
-      // A sibling placement is stuck at 0% and still bleeding — the Placement Optimizer already worked out
-      // the CPC/ACoS-goal bid this campaign needs (see computePlacementOptRows) instead of guessing from
-      // this keyword's own ACoS tier, which has nothing to do with what that specific placement costs.
       action='decrease'; newBid=floorOverride.newBid;
       pct=+(((t.bid-newBid)/t.bid)*100).toFixed(1);
-      reason=`placement stuck at 0% floor — bid set to its CPC minus buffer`;
+      reason=floorOverride.why;
     // Conversions outrank the click floor. Min Clicks is there to stop a ratio built on too little data being
     // acted on — but the uncertainty comes from having few CONVERSIONS, not few clicks, and the gate had that
     // backwards: 10 clicks with a single order sailed through while 9 clicks with three orders was blocked,
     // even though the second is strictly stronger evidence. Real cases here were keywords converting at 10-12%
     // ACoS against a 35% goal, frozen on a shared bid purely for being one click short.
-    } else if((t.clicks>=st.minClicks || t.orders>=st.minOrdersInc) && t.spend>=st.minSpend){
-      let decPct = t.orders>=1? decreaseTierFor(effAcos, decTiers) : null;
-      // Single-keyword campaigns only: the base bid is the ONE lever shared by every placement. If a
-      // placement fix already covers PART of the bad spend, cut the bid only for the part it doesn't cover
-      // — a proportional scale-down instead of an all-or-nothing suppression, so a partially-fixed campaign
-      // still gets some correction right away instead of waiting on the placement fix alone. A placement
-      // stuck at its 0% floor (unfixable there) always keeps the full cut.
-      if(decPct!=null && singleKw.has(t.campaignId)){
-        decPct = scaleDecByPlacementCoverage(decPct, placementsByCamp[t.campaignId]||[]);
-      }
-      if(decPct!=null){ action='decrease'; pct=decPct; newBid=Math.max(0.02, +(t.bid*(1-decPct/100)).toFixed(2)); }
-      else if(t.orders>=st.minOrdersInc){
+    } else if(!butlerOwned && (t.clicks>=st.minClicks || t.orders>=st.minOrdersInc) && t.spend>=st.minSpend){
+      const decDollar = t.orders>=1? decreaseTierFor(effAcos, decTiers) : null;
+      if(decDollar!=null){
+        const nb=Math.max(0.02, +(t.bid-decDollar).toFixed(2));
+        if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`ACoS ${fAcos(d.acos)} → -${fMoney(decDollar)}`; }
+      } else if(t.orders>=st.minOrdersInc){
         const incDollar=increaseDollarTierFor(effAcos, incTiers);
-        if(incDollar!=null){
-          let candidateBid=+(t.bid+incDollar).toFixed(2);
-          // The keyword's overall ACoS can look healthy purely on the strength of its OTHER placements —
-          // raising the one shared bid still raises spend on every placement that shares it, including one
-          // that's individually bad. Cap the raise so it never pushes a bad placement's effective bid
-          // (bid × (1+its own %)) past that placement's own CPC; skip the increase entirely rather than
-          // apply a smaller one if even the OLD bid already clears it (nothing to safely raise here).
-          if(singleKw.has(t.campaignId)){
-            (placementsByCamp[t.campaignId]||[]).forEach(p=>{
-              if(!(p.clicks>0 && p.acos>pst.floorGoal)) return;
-              const cap=p.cpc>0 ? +(p.cpc/(1+(p.percentage||0)/100)).toFixed(2) : Infinity;
-              if(cap<candidateBid) candidateBid=cap;
-            });
-          }
-          if(candidateBid>t.bid){ action='increase'; pct=+(((candidateBid-t.bid)/t.bid)*100).toFixed(1); newBid=candidateBid; reason=`healthy ACoS (${fAcos(d.acos)}) +${fMoney(incDollar)}`; }
-        }
+        if(incDollar>0){ newBid=+(t.bid+incDollar).toFixed(2); action='increase'; pct=+(((newBid-t.bid)/t.bid)*100).toFixed(1); reason=`healthy ACoS (${fAcos(d.acos)}) +${fMoney(incDollar)}`; }
       }
     }
     // 0 orders has no ACoS to grade against (nothing to divide spend by), so it runs on its own click-based
-    // ladder instead, independent of Min Clicks/Min Spend above: too little data yet (1 click, benefit of the
-    // doubt) gets a small bump; proven wasted clicks gets a graduated cut, same shape as the ACoS tiers just
-    // keyed on clicks. 0 clicks stays out of this — that's the "wake" rule below, a different problem (never
-    // winning an auction at all vs. losing money in the auctions it does win).
-    if(action==='none' && t.orders===0){
-      let zdec=zeroOrderDecreaseTierFor(t.clicks, st);
-      if(zdec!=null && singleKw.has(t.campaignId)) zdec=scaleDecByPlacementCoverage(zdec, placementsByCamp[t.campaignId]||[]);
+    // ladder instead, independent of Min Clicks/Min Spend above — graduated like the ACoS tiers, keyed on clicks.
+    // 0 clicks stays out of this — that's the "wake" rule below, a different problem (never winning an auction
+    // at all vs. losing money in the auctions it does win).
+    if(action==='none' && !butlerOwned && t.orders===0){
+      const zdec=zeroOrderDecreaseTierFor(t.clicks, st);
       if(zdec!=null){ action='decrease'; pct=zdec; newBid=Math.max(0.02, +(t.bid*(1-zdec/100)).toFixed(2)); reason=`0 orders, ${t.clicks} wasted clicks`; }
     }
     // Priced out of the auction: a bid well under what this keyword actually costs, so it never even gets
@@ -3231,14 +3177,20 @@ function renderOptBids(){
     // Removed (Alex, 25 sep 2026) — it fired off click count alone, no ACoS/order data, and produced suggestions
     // like NKS's "+$0.16, testing a bid bump" off a single click. See the matching removal note above (the
     // 'stuck-high' branch that used to feed `stuckHighByCamp`).
-    if(action==='none') return null;
-    const row=Object.assign({action,pct,newBid,reason,category},t,d);
-    row.stale = isStale(t.campaignId);
     // Only the real, exportable placement moves — a 'floor-bad' entry has no percentage change to show.
     // 'none' placements carry newPct===percentage (nothing suggested) — left in here they still rendered as
     // "↑ 200%→200%" below (the arrow ternary defaults to ↑ for anything that isn't literally 'decrease'),
     // showing a change that never happened next to every real one.
-    row.placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='none') : null;
+    const placementChanges = singleKw.has(t.campaignId) ? (placementsByCamp[t.campaignId]||[]).filter(p=>p.action!=='floor-bad' && p.action!=='none') : null;
+    // A single-kw campaign whose bid stays put can still have placement moves — without a row of its own
+    // they showed up nowhere (the Placement tab hides single-kw by default, since they're bundled here).
+    if(action==='none'){
+      if(!(placementChanges && placementChanges.length)) return null;
+      action='placements';
+    }
+    const row=Object.assign({action,pct,newBid,reason,category},t,d);
+    row.stale = isStale(t.campaignId);
+    row.placementChanges = placementChanges;
     return row;
   }).filter(Boolean);
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
@@ -3262,9 +3214,10 @@ function renderOptBids(){
   const sel=selFor('optbids');
   const totals=agg(rows);
   const actionBadge=r=>{
-    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${r.pct}%</span>`;
+    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.reason||'')}">↓ -${fMoney(r.bid-r.newBid)}</span>`;
     if(r.action==='wake') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="${esc(r.reason||'')}">↑ +${r.pct}% (wake)</span>`;
-    return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${r.pct}%</span>`;
+    if(r.action==='placements') return `<span class="badge" style="background:#f1f5f9;color:#475569;" title="Bidul rămâne; se schimbă doar placement-urile din coloana din dreapta.">bid neschimbat</span>`;
+    return `<span class="badge" style="background:#dcfce7;color:#15803d;" title="${esc(r.reason||'')}">↑ +${fMoney(r.newBid-r.bid)}</span>`;
   };
   const cols=[
     {key:'action',label:'Action',l:true,noSort:true,cell:actionBadge},
@@ -3288,7 +3241,12 @@ function renderOptBids(){
     {key:'placementChanges',label:'Placement (this campaign)',l:true,wrap:true,noSort:true,cell:r=>{
       if(r.placementChanges===null) return '<span class="muted">multi-kw — see below</span>';
       if(!r.placementChanges.length) return '<span class="muted">no change suggested</span>';
-      return r.placementChanges.map(p=>`${esc(p.placementName)} ${p.action==='decrease'?'↓':'↑'} ${p.percentage}%→${p.newPct}%${p.ineffectiveFloor?' <span class="muted" title="Base bid alone still clears this placement\'s CPC — won\'t stop spend by itself.">(won\'t stop spend alone)</span>':''}`).join(', ');
+      // Effective bid next to the % — the % alone hides what the placement will actually bid (127%→104% reads
+      // like a big cut; $3.90→$3.51 is the real move, and it's how the targets are set).
+      // Arrow follows the EFFECTIVE bid, not the % — when the shared bid drops under it, a real cut can come
+      // with a higher % (92%→153% while $1.40→$1.16), and a compensation moves the % with no real change at all.
+      const arrow=p=> p.action==='compensate' ? '⇄' : p.oldEffBid>0 ? (p.newEffBid<p.oldEffBid?'↓':'↑') : (p.newPct<p.percentage?'↓':'↑');
+      return r.placementChanges.map(p=>`<span title="${esc(p.why||'')}">${esc(p.placementName)} ${arrow(p)} ${p.percentage}%→${p.newPct}%${p.oldEffBid>0?` <span class="muted">(${fMoney(p.oldEffBid)}→${fMoney(p.newEffBid)})</span>`:''}</span>${p.ineffectiveFloor?' <span class="muted" title="Base bid alone still clears this placement\'s CPC — won\'t stop spend by itself.">(won\'t stop spend alone)</span>':''}`).join(', ');
     }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
@@ -3303,14 +3261,14 @@ function renderOptBids(){
         <div class="field grow"><label>Brand terms (comma-separated)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}" title="Matched against campaign name, portfolio name, AND the keyword/target text itself."></div>
       </div>
       ${renderPortfolioGoalPanel(S.product)}
-      <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Each tier's ACoS threshold must be higher than the one before it. The category allowance above shifts the ACoS fed into these tiers, so the SAME thresholds end up stricter or looser depending on what's being targeted.">Graduated decrease — hover for details.</div>
+      <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Flat $, not % — keywords: bid minus this amount; placements: this placement's own CPC minus this amount becomes its target effective bid. Typing 10 is read as 10 cents ($0.10). A portfolio with an uploaded ACoS goal uses that goal as Tier 1 (Tier 2/3 keep the same gaps). The category allowance above shifts the ACoS fed into these tiers for keywords.">Graduated decrease, in $ — hover for details.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: ACoS &gt;</label><input type="number" id="ob-hi1" value="${st.hi1}" style="width:80px;"></div>
-        <div class="field"><label>-%</label><input type="number" id="ob-dec1" value="${st.dec1}" style="width:70px;"></div>
+        <div class="field"><label>-$</label><input type="number" step="0.01" min="0" id="ob-dec1" value="${st.dec1}" style="width:70px;"></div>
         <div class="field"><label>Tier 2: ACoS &gt;</label><input type="number" id="ob-hi2" value="${st.hi2}" style="width:80px;"></div>
-        <div class="field"><label>-%</label><input type="number" id="ob-dec2" value="${st.dec2}" style="width:70px;"></div>
+        <div class="field"><label>-$</label><input type="number" step="0.01" min="0" id="ob-dec2" value="${st.dec2}" style="width:70px;"></div>
         <div class="field"><label>Tier 3: ACoS &gt;</label><input type="number" id="ob-hi3" value="${st.hi3}" style="width:80px;"></div>
-        <div class="field"><label>-%</label><input type="number" id="ob-dec3" value="${st.dec3}" style="width:70px;"></div>
+        <div class="field"><label>-$</label><input type="number" step="0.01" min="0" id="ob-dec3" value="${st.dec3}" style="width:70px;"></div>
       </div>
       <div class="hint" style="margin:12px 0 4px;" title="Order doesn't matter — whichever tier has the tightest ACoS threshold wins first, regardless of which field it's typed into. Flat $ amounts, not % — the bump doesn't scale with how big the bid already is.">Graduated increase, mirrored — the lower the ACoS, the bigger the bump.</div>
       <div class="ctrls">
@@ -3390,9 +3348,12 @@ function renderOptBids(){
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
   bind('ob-brandterms','brandTerms',v=>v);
-  bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',v=>+v||0);
-  bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',v=>+v||0);
-  bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',v=>+v||0);
+  // These fields used to be %, typed as 10/15/20 — read a whole number as cents so the old habit lands on
+  // $0.10, not a $10 cut that would floor every bid it touches.
+  const parseDecDollar=v=>{ const n=+v||0; return n>=1 ? +(n/100).toFixed(2) : n; };
+  bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',parseDecDollar);
+  bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',parseDecDollar);
+  bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',parseDecDollar);
   bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incDollar1',v=>+v||0);
   bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incDollar2',v=>+v||0);
   bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incDollar3',v=>+v||0);
@@ -3440,7 +3401,9 @@ function exportBidOptimization(product, rows){
   const prod=productLabel(product);
   // SD has no keyword-style targeting — its rows carry their own srcEntity (Contextual/Audience Targeting)
   // and use the shared Targeting ID column, not Keyword ID / Product Targeting ID.
-  const out=rows.map(r=>{
+  // 'placements' rows (single-kw, bid unchanged) carry only their placement moves — no bid row for them.
+  const bidRows=rows.filter(r=>r.newBid!==r.bid);
+  const out=bidRows.map(r=>{
     if(product==='SD') return bulkRow({'Product':prod,'Entity':r.srcEntity||'Contextual Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Targeting ID':r.id,'Bid':r.newBid});
     return bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id}));
   });
@@ -3453,7 +3416,7 @@ function exportBidOptimization(product, rows){
     out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
   }); });
   writeBulk(out, productFilePrefix(product)+'bid_optimization_bulk.xlsx', productSheetName(product));
-  alert(`Exported ${out.length} row(s): ${rows.length} bid update(s)${plCount?` + ${plCount} placement update(s)`:''}.`);
+  alert(`Exported ${out.length} row(s): ${bidRows.length} bid update(s)${plCount?` + ${plCount} placement update(s)`:''}.`);
 }
 // Used by the Placement Optimizer below.
 function computePlacementOptRows(product, filters){
@@ -3464,13 +3427,8 @@ function computePlacementOptRows(product, filters){
   // weren't linked was exactly what made Floor Override's "is this placement bad?" check silently disagree
   // with what the Bid Optimizer tab showed on screen. One number, edited in one place (Bid Optimizer).
   const bst=stFor('optbids');
-  if(bst.hi1===undefined) bst.hi1=40; if(bst.dec1===undefined) bst.dec1=10;
-  if(bst.hi2===undefined) bst.hi2=70; if(bst.dec2===undefined) bst.dec2=20;
-  if(bst.hi3===undefined) bst.hi3=100; if(bst.dec3===undefined) bst.dec3=30;
-  // Target-bid engine (see the decision block below). Tier thresholds are multiples of the ACoS goal, so one
-  // set of rules works across accounts with different targets; the cut is how far under the placement's own
-  // CPC the effective bid should land.
-  goalTiers(); // shared ACoS goal + tier ladder (same object as st here, see goalTiers)
+  bidTierDefaults(bst);
+  goalTiers(); // shared account ACoS goal + raise step (same object as st here)
   // Zero-order ladder runs on clicks, not money: with no orders there is no ACoS and no conversion value to
   // price against, just "how much traffic did it burn without producing anything".
   if(st.z1Clicks===undefined) st.z1Clicks=10; if(st.z1Cut===undefined) st.z1Cut=10;
@@ -3543,63 +3501,30 @@ function computePlacementOptRows(product, filters){
     // spend into keywords that don't convert, hidden by the average), so singleOnly only gates THAT half —
     // it never blocks the correction of a placement that's already been left bad.
     const allowRaise = !st.singleOnly || isSingle;
-    // Below zeroOrderClicks there isn't enough traffic yet to tell a slow starter from a dead end, so a
-    // zero-order placement still gets the benefit of the doubt (falls through to push/increase below). At or
-    // above it, spend with nothing to show for it is a real signal — cut it like any other bad performer,
-    // even though there's no ACoS to compute (division by zero sales).
-    // ---- decision engine: aim at a TARGET EFFECTIVE BID, then act only on the gap that is left ----
-    // The old logic subtracted a flat number of points from the modifier, which says nothing about what the
-    // placement actually costs: -20pp off a 150% modifier and off a 25% one are wildly different real cuts.
-    // Instead the tier picks how far below this placement's OWN CPC the effective bid should land, and the
-    // modifier is whatever gets it there. Crucially it then compares that target against where the bid
-    // ALREADY is: if a previous run (or a manual edit) already brought it down, there is nothing left to do
-    // and no suggestion is produced, instead of blindly cutting the same placement a second time.
     const goal=acosGoalFor(e.portfolioName)>0? acosGoalFor(e.portfolioName) : 20;
     const domT=dominantTargetByCamp.get(e.campaignId);
     const baseBid=domT? domT.bid : 0;
-    let cutPct=null, cutWhy='';
-    if(e.orders>=1){
-      // Thresholds ride on the account's ACoS goal rather than being fixed numbers, so the same tiers work
-      // whether the target is 20% or 45%.
-      if(d.acos>goal*st.t3Mult){ cutPct=st.t3Cut; cutWhy=`ACoS ${fAcos(d.acos)} (tier 3)`; }
-      else if(d.acos>goal*st.t2Mult){ cutPct=st.t2Cut; cutWhy=`ACoS ${fAcos(d.acos)} (tier 2)`; }
-      else if(d.acos>goal*st.t1Mult){ cutPct=st.t1Cut; cutWhy=`ACoS ${fAcos(d.acos)} (tier 1)`; }
-    } else if(e.clicks>0){
-      // No orders means no ACoS at all (spend/0 is undefined, not "infinitely bad"), so there is nothing to
-      // grade against a goal here. The only honest question is whether it has had enough traffic to prove
-      // itself, which is a click count — and the more clicks it burned without converting, the deeper the cut.
-      if(e.clicks>=st.z3Clicks){ cutPct=st.z3Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
-      else if(e.clicks>=st.z2Clicks){ cutPct=st.z2Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
-      else if(e.clicks>=st.z1Clicks){ cutPct=st.z1Cut; cutWhy=`${fInt(e.clicks)} clicks, no orders`; }
-    }
-    let ineffectiveFloor=false, alreadyAtTarget=false, targetEffBid=null, why='';
-    if(cutPct!=null && !isSingle){
-      // Multi-keyword campaigns have no single base bid to aim a target CPC at — the keywords sharing this
-      // placement can differ 20x in bid, so dividing a CPC-derived target by any one of them (the highest,
-      // say) produces a nonsense percentage: a gentle tier-1 trim came out as "157% → 0%", wiping the
-      // modifier entirely. Scale the multiplier itself instead: multiplying (1+%) by (1-cut) lowers what
-      // EVERY keyword pays on this placement by exactly the tier's percentage, whatever their individual bids.
-      const factor=1-cutPct/100;
-      const np=Math.max(0, Math.round(((1+e.percentage/100)*factor-1)*100));
-      if(np<e.percentage){ action='decrease'; newPct=np; why=`${cutWhy} → -${cutPct}% on this placement's bids`; }
-      else if(e.percentage<=0){ action='floor-bad'; newPct=0; why=`${cutWhy} → modifier already at 0%`; }
-      else { alreadyAtTarget=true; why='already at target'; }
-    } else if(cutPct!=null && baseBid>0 && d.cpc>0){
-      targetEffBid=+(d.cpc*(1-cutPct/100)).toFixed(4);
-      const currentEff=baseBid*(1+e.percentage/100);
-      if(currentEff<=targetEffBid*1.0005){
-        // Already at or under where this cut would put it — the correction has been made already.
-        alreadyAtTarget=true; why=`already at target (€${currentEff.toFixed(2)} ≤ €${targetEffBid.toFixed(2)})`;
-      } else {
-        let np=Math.round((targetEffBid/baseBid-1)*100);
-        if(np<0){ np=0; ineffectiveFloor=true; } // modifier alone can't reach it — base bid is the only lever left
-        if(np>e.percentage) np=e.percentage;     // a cut may never RAISE the modifier
-        if(np<e.percentage){ action='decrease'; newPct=np; why=`${cutWhy} → CPC €${d.cpc.toFixed(2)} -${cutPct}% = €${targetEffBid.toFixed(2)} effective`; }
-        else if(ineffectiveFloor){ action='floor-bad'; newPct=0; why=`${cutWhy} → needs €${targetEffBid.toFixed(2)} effective, modifier already at 0%`; }
-        else { alreadyAtTarget=true; why='already at target'; }
+    // Cuts here are multi-kw only — single-kw placements are decided entirely by the single-kw block below.
+    // Multi-kw has no single base bid to aim a target at (its keywords' bids can differ 20x), so the cut
+    // scales the multiplier itself: × (1 − $cut ÷ this placement's CPC) lowers what its keywords pay here by
+    // about that many $ on average — the same flat-$ Tier 1/2/3 as keywords, not a % of the price.
+    let factor=null, cutWhy='';
+    if(!isSingle){
+      if(e.orders>=1){
+        const dec=decreaseTierFor(d.acos, decTiersFor(e.portfolioName, bst));
+        if(dec!=null && d.cpc>0){ factor=Math.max(0, 1-dec/d.cpc); cutWhy=`ACoS ${fAcos(d.acos)} → -${fMoney(dec)} din CPC ${fMoney(d.cpc)}`; }
+      } else if(e.clicks>0){
+        // No orders → no ACoS at all, only "how much traffic did it burn": a click-count ladder, still in %.
+        const z = e.clicks>=st.z3Clicks? st.z3Cut : e.clicks>=st.z2Clicks? st.z2Cut : e.clicks>=st.z1Clicks? st.z1Cut : null;
+        if(z!=null){ factor=1-z/100; cutWhy=`${fInt(e.clicks)} clicks, no orders → -${z}%`; }
       }
-    } else if(cutPct!=null){
-      action='floor-bad'; why=cutWhy;
+    }
+    let why='';
+    if(factor!=null){
+      const np=Math.max(0, Math.round(((1+e.percentage/100)*factor-1)*100));
+      if(np<e.percentage){ action='decrease'; newPct=np; why=cutWhy; }
+      else if(e.percentage<=0){ action='floor-bad'; newPct=0; why=`${cutWhy} → modifier already at 0%`; }
+      else why='already at target';
     } else if(allowRaise && e.placeType!=='business' && d.acos<=goal && (isSingle? e.orders>=1 : e.orders>=st.raiseMinOrders)){
       // Amazon Business is left out of raises deliberately — it's a separate audience with its own dynamics,
       // not one of the three placements this workflow steers.
@@ -3641,241 +3566,83 @@ function computePlacementOptRows(product, filters){
     // (A legacy "raise if ACoS < 20" branch used to sit here. It could only ever fire on accounts whose goal
     // was BELOW 20 — and then it raised placements that were above that goal, because the 20 was hardcoded
     // and silently outranked the setting. The goal-relative raise above covers every case it was meant to.)
-    return Object.assign({action,newPct,isSingle,isStrictSingle:isSingle,ineffectiveFloor,alreadyAtTarget},e,d);
+    return Object.assign({action,newPct,why,isSingle,isStrictSingle:isSingle,ineffectiveFloor:false},e,d);
   });
-  // Compensation pass: a floor-bad placement (0%, bad performance) can't be fixed here, so the Bid Optimizer
-  // will cut the shared bid instead. That bid cut also drags down every OTHER placement's effective bid
-  // (bid × (1+%/100)) in the same single-keyword campaign — including ones that were performing fine. Bump
-  // those placements' % just enough to keep their own effective bid where it was before the cut, so a good
-  // placement (e.g. Top of Search) doesn't get collateral damage from a bad one (e.g. Rest of Search) sharing
-  // its campaign's only lever.
-  if(bst.minClicks===undefined) bst.minClicks=10; if(bst.minSpend===undefined) bst.minSpend=0;
-  if(bst.zeroLowClicks===undefined) bst.zeroLowClicks=0;
-  if(bst.zeroHi1===undefined) bst.zeroHi1=3; if(bst.zeroDec1===undefined) bst.zeroDec1=10;
-  if(bst.zeroHi2===undefined) bst.zeroHi2=6; if(bst.zeroDec2===undefined) bst.zeroDec2=20;
-  if(bst.zeroHi3===undefined) bst.zeroHi3=10; if(bst.zeroDec3===undefined) bst.zeroDec3=30;
-  // --- CPC/ACoS-goal floor override -----------------------------------------------------------------
-  // A floor-bad (or ineffective-floor) placement means the % lever is spent — the shared bid is the only
-  // thing left that can move it. Rather than keep guessing that bid cut from the keyword's own ACoS tier
-  // (which has nothing to do with what THIS placement's auctions actually cost), anchor it to the real
-  // going rate: (worst floor-bad placement's own CPC) × (1 − buffer%). Every OTHER placement in that same
-  // campaign then gets raised back to the OLD bid's effective level (plus a bonus once it's beating the
-  // ACoS goal by a wide margin) so it doesn't take collateral damage from a bid cut aimed at its sibling.
-  // Only overrides campaigns where this is unambiguous (a real floor-bad placement AND a real good one to
-  // protect) — everything else still falls through to the tiered bid cut below, unchanged.
-  // Deliberately its own setting, not reused from hi1/hi2/hi3 above — those tune the UNRELATED graduated
-  // tier cuts that still apply to every other (non-floor-bad) placement; sharing a number would mean tuning
-  // one silently retunes the other.
-  if(st.floorGoal===undefined) st.floorGoal=50;
-  if(st.floorBuffer===undefined) st.floorBuffer=15;
-  // Floor Goal and Bonus Gap are thresholds, so they belong to the account's ACoS goal rather than being
-  // typed in separately — left standalone they contradicted it (a 50% Floor Goal kept "protecting" placements
-  // at 48% ACoS on an account targeting 20%) and, worse, they are coupled: the bonus test is
-  // (floorGoal - acos) >= bonusGap, so lowering Floor Goal to 25 by hand silently made the bonus require a
-  // negative ACoS and it stopped firing entirely. Derived together they stay coherent:
-  //   protect what is not bad enough to cut  → floorGoal = the tier-1 threshold
-  //   reward what is actually meeting target → bonus when acos <= the goal itself
-  if(st.floorAuto===undefined) st.floorAuto=true;
-  if(st.floorAuto){
-    st.floorGoal=Math.round(st.acosGoal*st.t1Mult);
-    st.floorBonusGap=Math.max(1, Math.round(st.floorGoal-st.acosGoal));
-  }
-  // A pure % cut/bonus falls apart at the extremes: 15% off a $0.50 CPC is a $0.075 nudge (meaningless —
-  // won't change what auctions get won), while a flat $ amount big enough to matter there would be a
-  // rounding error on a $4+ CPC. Taking whichever is LARGER — the % or a small fixed $ floor — keeps the
-  // cut/bonus meaningful at cheap-CPC accounts without needing a bigger % that would overcut expensive ones.
-  if(st.floorBufferMinDollar===undefined) st.floorBufferMinDollar=0.05;
-  if(st.floorBonusGap===undefined) st.floorBonusGap=25;
-  if(st.floorBonusPct===undefined) st.floorBonusPct=10;
-  if(st.floorBonusMinDollar===undefined) st.floorBonusMinDollar=0.05;
-  if(st.floorCompCeilingPct===undefined) st.floorCompCeilingPct=25;
   const floorBidOverrides={};
-  const byCampForFloor={};
-  // Amazon Business isn't a sibling placement like TOS/ROS/PP — Amazon reports its clicks/spend/sales as
-  // the B2B-buyer slice of the SAME traffic (its totals equal the sum of the other three, confirmed on a
-  // real account: 119 = 31+78+10 clicks), which is also why Amazon's own campaign UI never lists it
-  // alongside them. Folding it into this shared-bid math as if it were a fourth exclusive bucket double-
-  // counts that traffic and skews the anchor/compensation numbers for the real placements. It still shows
-  // up everywhere else (Overview, Placement tab) as its own row — just excluded from this specific
-  // single-bid-shared-across-siblings computation.
-  allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampForFloor[r.campaignId]=byCampForFloor[r.campaignId]||[]).push(r); });
-  Object.keys(byCampForFloor).forEach(cid=>{
-    const plc=byCampForFloor[cid];
-    const target=dominantTargetByCamp.get(cid); // the bid that actually bought this campaign's traffic
-    if(!target) return;
-    const floorBad=plc.filter(p=>(p.action==='floor-bad'||p.ineffectiveFloor) && p.clicks>0);
-    if(!floorBad.length) return;
-    const goodOnes=plc.filter(p=>p.clicks>0 && p.orders>0 && p.acos<=st.floorGoal && !floorBad.includes(p));
-    if(!goodOnes.length) return;
-    // Each bad placement gets its OWN ceiling (its own CPC × buffer), not a shared floor of zero — the
-    // worst-CPC one becomes the anchor (0%, since its target equals the new bid exactly), but a less-bad
-    // placement among the bad ones still deserves a gentler cut than the anchor, reflected as a small
-    // positive % that lands its effective bid right at its own target instead of the anchor's.
-    const badTargets=floorBad.map(p=>({p, target:Math.max(0.02, p.cpc-Math.max(p.cpc*st.floorBuffer/100, st.floorBufferMinDollar))}));
-    const newBid=+Math.min(...badTargets.map(x=>x.target)).toFixed(2);
-    // If a bad placement's own % was already large, its observed CPC reflects that inflated effective bid,
-    // not the campaign's base bid — cutting 15% off an already-boosted CPC can land ABOVE the old base bid,
-    // which would raise the shared bid instead of cutting it. That contradicts the entire premise of this
-    // override, so skip it outright rather than force a "cut" that isn't one; the campaign falls through to
-    // the normal tiered decrease below instead.
-    if(newBid>=target.bid) return;
-    floorBidOverrides[cid]={newBid, oldBid:target.bid};
-    plc.forEach(p=>{
-      const badEntry=badTargets.find(x=>x.p===p);
-      if(badEntry){
-        const pct=Math.max(0, Math.min(900, Math.round((badEntry.target/newBid-1)*100)));
-        p.newPct=pct;
-        // The anchor (its own target === the new bid) genuinely lands at 0% — no real % change, correctly
-        // excluded from export below. Any OTHER bad placement getting a real bump above its old % needs to
-        // actually export that change, so it can't stay labeled 'floor-bad' (which every export/table filter
-        // in this file treats as "nothing to show").
-        p.action = pct>p.percentage ? 'compensate' : 'floor-bad';
-        return;
-      }
-      // The goodOnes.length check above only gates whether the CAMPAIGN qualifies for the override at all
-      // (is there at least one placement worth protecting) — it doesn't mean every OTHER non-bad placement
-      // here individually clears the bar. A placement sitting above floorGoal but not bad enough to be
-      // 'floor-bad' (e.g. ACoS 33% against a 30% goal, on a placement optimizer tier that only kicks in at
-      // 40%+) was still getting bumped by this loop just for being "not bad", identical to a genuinely good
-      // sibling — re-check the same ACoS<=floorGoal bar per placement, not just once for the whole campaign.
-      if(!(p.clicks>0 && p.orders>0 && p.acos<=st.floorGoal)) return;
-      // Protect what this placement was ACTUALLY getting before (base × its own old %), not the campaign's
-      // raw base bid — a good placement that already carried a big % of its own would otherwise get judged
-      // against a number far below what it was really bidding, and get crushed toward 0% instead of kept
-      // where it was working.
-      const oldEffective=target.bid*(1+(p.percentage||0)/100);
-      const gap=st.floorGoal-p.acos;
-      const bonusDollar=(p.orders>0 && gap>=st.floorBonusGap)?Math.max(oldEffective*st.floorBonusPct/100, st.floorBonusMinDollar):0;
-      // "Protect the old effective bid" can itself be the bug: if this placement's modifier was already set
-      // generously (55%/45% while its own CPC shows auctions were won for far less), protecting — then
-      // bonus-ing — that old effective bid just compounds the over-bid instead of fixing anything. Measured on
-      // a real campaign: CPC $1.88, old effective bid already $4.09, and this formula wanted to push it to
-      // $4.49 — more than double the going rate on 4 clicks of evidence. Cap at this placement's own CPC plus
-      // a margin, same anchor-to-reality principle the cut side already uses, so compensation can protect a
-      // placement from collateral damage without ever bidding it up past what it actually costs to win there.
-      const cpcCeiling = p.cpc>0 ? p.cpc*(1+st.floorCompCeilingPct/100) : Infinity;
-      const targetEff=Math.min(oldEffective+bonusDollar, cpcCeiling);
-      const compPct=Math.max(0, Math.min(900, Math.round((targetEff/newBid-1)*100)));
-      if(compPct>p.newPct){ p.newPct=compPct; if(p.action==='none'||p.action==='compensate') p.action='compensate'; }
-    });
-  });
-  const byCampAll={};
-  // Same reasoning as byCampForFloor above — Amazon Business duplicates the other three placements' totals,
-  // not a real sibling sharing the bid.
-  allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampAll[r.campaignId]=byCampAll[r.campaignId]||[]).push(r); });
-  // singleTargetByCamp built up front now (needed by the ineffective-floor check above too) — indexed once,
-  // not re-scanned per campaign, since a DATA.targets.find() inside this per-campaign loop is O(campaigns ×
-  // targets) and is exactly what made the tab lock up the tab/browser on bigger accounts.
-  Object.keys(byCampAll).forEach(cid=>{
-    if(floorBidOverrides[cid]) return; // handled by the CPC/goal override above instead
-    const plc=byCampAll[cid];
-    const target=dominantTargetByCamp.get(cid); // the bid that actually bought this campaign's traffic
-    if(!target) return;
-    const td=derive(agg([target]));
-    // Mirrors the Bid Optimizer's own decision exactly — same two paths (ACoS tiers when there's at least one
-    // order, click tiers when there are none), or compensation would protect placements against a cut that
-    // doesn't actually match what gets applied.
-    let decPct=null;
-    if(target.orders>=1){
-      if(target.clicks>=bst.minClicks && target.spend>=bst.minSpend) decPct=decreaseTierFor(td.acos, bst);
-    } else if(!(target.clicks>=1 && target.clicks<bst.zeroLowClicks)){
-      decPct=zeroOrderDecreaseTierFor(target.clicks, bst);
-    }
-    // Same proportional scale-down as the Bid Optimizer uses to decide the ACTUAL cut that will land — compensate
-    // based on that real number, not the raw tier value, or a fully-scaled-away cut would still bump placements
-    // that don't need protecting.
-    decPct=scaleDecByPlacementCoverage(decPct, plc);
-    if(decPct==null) return;
-    const factor=1/(1-decPct/100);
-    plc.forEach(p=>{
-      if(p.action==='decrease' || p.action==='floor-bad' || p.percentage<=0) return;
-      // Not individually flagged 'decrease' just means this placement didn't have enough of its OWN clicks
-      // to be judged on its own — not that it's actually a good performer. Only protect it from the bid cut
-      // if it's actually earning that (same bar the floor-override uses), or every placement with too little
-      // volume to be judged gets bumped by default, whether it deserves it or not.
-      if(!(p.clicks>0 && p.orders>0 && p.acos<=st.floorGoal)) return;
-      const compPct=Math.min(900, Math.round((1+p.percentage/100)*factor*100-100));
-      // A sub-1-point bump (15%→15.3%, rounded) changes nothing about which auctions get won — it's noise
-      // in the export, not a real correction. Only register it once it's at least 1 whole point.
-      if(compPct>=p.percentage+1 && compPct>p.newPct){ p.newPct=compPct; if(p.action==='none') p.action='compensate'; }
-    });
-  });
-  // ================= Butler-faithful single-kw (exactly 1 enabled target/campaign) override =================
-  // Alex confirmed (25 sep 2026) he wants single-kw campaigns to run Butler's real SUP algorithm exactly, not
-  // this file's own independently-built floor-override/compensation logic above — verified against Butler's
-  // actual rule definitions (ruleset 28902 "1st Step" = bid, ruleset 28903 "2nd Step" = placement) AND against
-  // its real execution history (69 of 176 sampled campaign-days showed placements moving in OPPOSITE
-  // directions in the same run, confirming genuine per-placement compensation, not one shared number). The
-  // logic above still runs first, unchanged — multi-kw still uses exactly that, nothing here touches it. This
-  // block only overwrites its result for single-kw campaigns.
+  // ================= single-kw campaigns (exactly 1 enabled target): bid + placements =================
+  // Owns every single-kw campaign outright — the engine above skips cuts for these, and whatever it did set
+  // (a generic raise, say) is replaced here; only a push under the click threshold survives. Structure kept
+  // from Butler's SUP rules, amounts changed to Alex's (25 sep 2026):
+  //  Step 1 — shared bid, ONLY when the anchor (lowest CPC among placements with enough clicks) is itself
+  //    bad. With the anchor fine, a bid cut fixes nothing the placement % can't, and risks starving the
+  //    placement that works. New bid = anchor CPC −15%; every placement's % is then recomputed so its
+  //    effective bid stays exactly where it was — the bid move alone changes nothing.
+  //  Step 2 — 0 orders with clicks at/over the threshold → 0%.
+  //  Step 3 — each placement against ITS OWN CPC only. Butler divides by the cheapest placement's CPC
+  //    instead, which turned a TOS 20pp over goal into 127%→47% ($3.90→$2.47 on a $3.61 CPC). Over Tier 1 →
+  //    target = CPC − that tier's $; under an increase tier → CPC + that tier's $ (never Product Pages, it's
+  //    usually the placement crowding the other two out); in between → nothing. A cut never raises the %, a
+  //    raise never lowers it — already past the target means already done.
   {
     const byCampSingle={};
     allRows.forEach(r=>{ if(r.isSingle && r.placeType!=='business') (byCampSingle[r.campaignId]=byCampSingle[r.campaignId]||{})[r.placeType]=r; });
     Object.keys(byCampSingle).forEach(cid=>{
       const pl=byCampSingle[cid];
+      const keys=['top','rest','pp'].filter(k=>pl[k]);
+      const pf=pl[keys[0]].portfolioName;
+      const tiers=decTiersFor(pf, bst);
+      const threshold=clickThresholdFor(pf);
+      const isBad=p=>p.orders===0 || decreaseTierFor(p.acos, tiers)!=null;
+      // Under the threshold nothing moves, except a push while the placement hasn't shown a bad ACoS yet —
+      // starved of clicks, not proven bad.
+      const keepPush=p=>p.action==='push' && !(p.orders>0 && decreaseTierFor(p.acos, tiers)!=null);
       const domT=dominantTargetByCamp.get(cid);
-      if(!domT) return;
-      const anyRow=pl.top||pl.rest||pl.pp; if(!anyRow) return;
-      const goal=acosGoalFor(anyRow.portfolioName)>0? acosGoalFor(anyRow.portfolioName) : 20;
-      // Butler's "threshold" (minimum clicks before it acts) is a per-product variable there too, same as ACoS
-      // goal above — used by all 3 steps alike, since the real platform reads its own single `threshold` for
-      // all of them. Per-portfolio override (Alex, 25 sep 2026), falls back to the account-wide minimum (7,
-      // never lower — a 1-2 click sample isn't enough to judge, per Alex's explicit pushback on that idea).
-      const threshold=clickThresholdFor(anyRow.portfolioName);
-      const cpcOf=p=> (p && p.cpc>0) ? p.cpc : Infinity;
-      const minCpc=Math.min(cpcOf(pl.top), cpcOf(pl.rest), cpcOf(pl.pp));
-      // ---- Step 1 (rules 162747+162748, same action, different trigger): shared bid → 90% of the cheapest
-      // real placement CPC, but only once at least one placement actually earns the correction — 0 orders past
-      // threshold, or orders with ACoS over goal past threshold. Butler's formula only ever cuts (min/maxBid
-      // are both the same value), so a computed bid ABOVE the current one is simply not applied.
-      const step1Fires=['top','rest','pp'].some(k=>{ const p=pl[k]; if(!p || !(p.clicks>threshold)) return false;
-        return p.orders===0 || (p.orders>0 && p.acos>goal); });
-      if(step1Fires && minCpc<Infinity){
-        const newBid=Math.max(0.20, +(minCpc*0.9).toFixed(2));
-        if(newBid<domT.bid) floorBidOverrides[cid]={newBid, oldBid:domT.bid};
-        else delete floorBidOverrides[cid];
-      } else {
-        delete floorBidOverrides[cid];
+      if(!domT){ keys.forEach(k=>{ const p=pl[k]; if(!keepPush(p)){ p.action='none'; p.newPct=p.percentage; } }); return; }
+      const oldBid=domT.bid;
+      let anchor=null;
+      keys.forEach(k=>{ const p=pl[k]; if(p.cpc>0 && p.clicks>=threshold && (!anchor || p.cpc<anchor.cpc)) anchor=p; });
+      let bid=oldBid;
+      if(anchor && isBad(anchor)){
+        const nb=Math.max(0.20, +(anchor.cpc*0.85).toFixed(2));
+        if(nb<oldBid){ bid=nb; floorBidOverrides[cid]={newBid:nb, oldBid, why:`${anchor.placementName} (cel mai mic CPC, ${fMoney(anchor.cpc)}) ${anchor.orders===0?'fără comenzi':'ACoS '+fAcos(anchor.acos)} → bid 15% sub CPC-ul lui`}; }
       }
-      // ---- Step 2 (rule 162751) — implemented as its name/description say, not as it's actually wired in
-      // Butler: it checks the whole KEYWORD's totals there (ordersCustom1/clicksCustom1, a real bug confirmed
-      // against sibling rule 162752 which correctly uses the per-placement variables) instead of this one
-      // placement's own orders/clicks. Zero out a placement with 0 orders of ITS OWN and enough clicks of ITS
-      // OWN, full stop.
-      const zeroed={};
-      ['top','rest','pp'].forEach(k=>{
-        const p=pl[k]; if(!p) return;
-        if(p.orders===0 && p.clicks>threshold){
-          zeroed[k]=true;
-          if(p.percentage>0){ p.newPct=0; p.action='decrease'; p.why=`Butler: 0 comenzi, ${p.clicks} clicks > prag (${threshold})`; }
-          else { p.newPct=0; p.action='none'; p.why='deja la 0%'; }
+      const pctFor=eff=>Math.max(0, Math.min(900, Math.round((eff/bid-1)*100)));
+      keys.forEach(k=>{
+        const p=pl[k];
+        const oldEff=oldBid*(1+p.percentage/100);
+        const keepPct= bid===oldBid ? p.percentage : pctFor(oldEff);
+        let newPct=keepPct, action= keepPct!==p.percentage ? 'compensate' : 'none', floorNote=false;
+        let why= action==='compensate' ? `păstrează bid-ul efectiv ${fMoney(oldEff)} la bidul nou ${fMoney(bid)}` : '';
+        if(p.clicks<threshold){
+          if(keepPush(p)){ newPct=Math.min(900, keepPct+st.pushStep); action='push'; why=p.why||`sub ${st.pushClicks} clicks — mai mult loc în licitații`; }
+        } else if(p.orders===0){
+          newPct=0; action= p.percentage>0 ? 'decrease' : 'none';
+          why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold})`;
+        } else if(p.cpc>0){
+          const dec=decreaseTierFor(p.acos, tiers);
+          const inc= dec==null && k!=='pp' ? increaseDollarTierFor(p.acos, bst) : null;
+          if(dec!=null){
+            const target=Math.max(0.02, p.cpc-dec);
+            if(target<oldEff){
+              const np=Math.min(keepPct, pctFor(target));
+              if(np<keepPct){ newPct=np; action='decrease'; }
+              floorNote = np===0 && bid>target;
+              why=`ACoS ${fAcos(p.acos)}: CPC ${fMoney(p.cpc)} − ${fMoney(dec)} = ${fMoney(target)} țintă`;
+            } else why=`ACoS ${fAcos(p.acos)}, dar bid-ul efectiv ${fMoney(oldEff)} e deja sub ținta ${fMoney(target)}`;
+          } else if(inc>0){
+            const target=p.cpc+inc;
+            if(target>oldEff){
+              const np=Math.max(keepPct, pctFor(target));
+              if(np>keepPct){ newPct=np; action='increase'; }
+              why=`ACoS ${fAcos(p.acos)}: CPC ${fMoney(p.cpc)} + ${fMoney(inc)} = ${fMoney(target)} țintă`;
+            }
+          }
         }
+        // Same % as before means nothing to export here — any effective change comes from the bid (Step 1),
+        // which the keyword row already carries.
+        if(newPct===p.percentage) action='none';
+        p.newPct=newPct; p.action=action; p.why=why; p.ineffectiveFloor=floorNote;
       });
-      // ---- Step 3 (rule 162752): each placement targets ITS OWN CPC — a 20% premium if its own ACoS beats
-      // goal (or it's still untested, 0 orders under threshold), a discount capped at 30% off if not — divided
-      // by the cheapest real CPC among the three ×0.9. The cheapest placement anchors near 0%; the others land
-      // above or below it based on THEIR OWN performance, not a single shared number. Skips placements Step 2
-      // already zeroed.
-      if(minCpc<Infinity){
-        ['top','rest','pp'].forEach(k=>{
-          const p=pl[k]; if(!p || zeroed[k] || p.cpc<=0 || p.clicks<threshold) return;
-          const acos=p.orders>0? p.acos : 0;
-          const numerator = (acos>0 && acos<goal) ? p.cpc*1.2
-            : (acos===0) ? p.cpc*1.2
-            : p.cpc*(1-Math.min(30, 2*(acos-goal*1.1))/100)*1.1;
-          const denominator=Math.max(0.20, minCpc*0.9);
-          let newPct=Math.max(0, Math.min(900, Math.round((numerator/denominator-1)*100)));
-          // Deliberate departure from Butler (Alex, 25 sep 2026): Product Pages never gets an increase, no
-          // matter which branch produced one — not the "ACoS beats goal" reward, not the "still testing, 0
-          // orders" allowance. Same reasoning as everywhere else in this file: PP is usually the placement
-          // crowding out the other two, not the one that needs help. It can still be cut like any other.
-          if(k==='pp' && newPct>p.percentage) newPct=p.percentage;
-          if(newPct!==p.percentage){
-            p.newPct=newPct; p.action = newPct>p.percentage?'increase':'decrease';
-            p.why=`Butler: CPC ${fMoney(p.cpc)} (${p.orders>0?'ACoS '+fAcos(p.acos):'test, 0 comenzi'}) vs ancora ${fMoney(denominator)}`;
-          } else { p.newPct=p.percentage; p.action='none'; p.why='deja la target'; }
-        });
-      }
     });
   }
   // What the percentage actually MEANS in money. A placement % is only half the story: when the floor
@@ -3903,11 +3670,8 @@ function renderOptPlacements(){
   // Single-keyword campaigns' placement suggestions are already bundled into their SP Bid Changes row above
   // (same underlying computation) — showing them here too invites doing the same export twice, so they're
   // hidden by default. Multi-keyword campaigns only ever get decrease suggestions, which live here exclusively.
-  // Gated on STRICT single-keyword (one enabled target), not the broader "effectively single" (one keyword
-  // taking ~80%+ of clicks) that floorBidOverrides above uses — Bid Optimizer's own inline placement bundle
-  // (row.placementChanges) only fires for the strict case too. Using the broader flag here hid the compensate
-  // rows for a real 2-target AUTO campaign (dominant keyword at 87% share) from BOTH places at once — its Bid
-  // Optimizer row said "multi-kw — see below" while "below" was itself filtered out here, by default.
+  // Gated on STRICT single-keyword (one enabled target) — the same set Bid Optimizer bundles inline
+  // (row.placementChanges), so nothing ends up hidden from both places at once.
   let rows = st.hideSingleKw ? rowsAll.filter(r=>!r.isStrictSingle) : rowsAll;
   // Stable identity (campaign + placement), not a positional index — same reasoning as Bid Optimizer above.
   rows.forEach(r=>r._uid=r.campaignId+'|'+r.rawPlacement);
@@ -3915,12 +3679,14 @@ function renderOptPlacements(){
   const totals=agg(rows);
   const actionBadgePl=r=>{
     if(r.action==='decrease' && r.ineffectiveFloor) return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Hits the 0% floor, but the shared base bid alone already clears this placement's own CPC (${fMoney(r.cpc)}) — spend here won't actually drop until the base bid itself gets cut too.">↓ -${(r.percentage-r.newPct).toFixed(1)}pp (won't stop spend alone)</span>`;
-    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;">↓ -${(r.percentage-r.newPct).toFixed(1)}pp</span>`;
+    // A single-kw cut can land at a HIGHER % when the shared bid drops under it — show the real $ drop then.
+    if(r.action==='decrease' && r.newPct>r.percentage) return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.why||'')}">↓ -${fMoney(r.oldEffBid-r.newEffBid)} efectiv</span>`;
+    if(r.action==='decrease') return `<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="${esc(r.why||'')}">↓ -${(r.percentage-r.newPct).toFixed(1)}pp</span>`;
     // Compensation can push a 'push'/'increase' row's newPct further than its own base step, so the badge
     // always shows the REAL delta actually being applied, not just the rule's nominal step size.
     const delta=(r.newPct-r.percentage).toFixed(1);
     if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Under ${st.pushClicks} clicks on Top of Search / Rest of Search — pushed up regardless of its current % or ACoS, so it gets a real shot at winning auctions there before another placement eats the whole budget.">↑ +${delta}pp (push)</span>`;
-    if(r.action==='compensate') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="Another placement in this campaign is stuck at 0% with bad performance, so the shared bid is getting cut instead. This bump keeps THIS placement's own effective bid where it was.">↑ +${delta}pp (compensate)</span>`;
+    if(r.action==='compensate') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="The shared bid is being cut (this campaign's cheapest placement is over goal). This bump keeps THIS placement's own effective bid where it was.">↑ +${delta}pp (compensate)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${delta}pp</span>`;
   };
   const cols=[
@@ -3946,13 +3712,13 @@ function renderOptPlacements(){
       <div class="ctrls" style="margin-bottom:10px;">
         <div class="field"><label>ACoS goal %</label><input type="number" id="op-acosgoal" min="1" value="${st.acosGoal}" style="width:90px;"></div>
         ${!st.singleOnly?`<div class="field"><label>Raise needs orders (multi-kw)</label><input type="number" id="op-raiseminord" min="1" value="${st.raiseMinOrders}" style="width:110px;" title="How many orders a placement must have before a MULTI-keyword campaign's % is raised. Higher than the single-keyword bar (1) because the figure is an average across every keyword sharing that placement — a good average can hide keywords that don't convert, and raising the shared % scales spend on all of them."></div>`:''}
-        <div class="hint" style="align-self:center;" title="Every tier below is a multiple of this, so one number retunes the whole ladder for the account.">Cut ${st.t1Cut}% above <b>${(st.acosGoal*st.t1Mult).toFixed(0)}%</b>, ${st.t2Cut}% above <b>${(st.acosGoal*st.t2Mult).toFixed(0)}%</b>, ${st.t3Cut}% above <b>${(st.acosGoal*st.t3Mult).toFixed(0)}%</b> — raise ${st.raiseStep}pp at or under <b>${st.acosGoal}%</b>.</div>
+        <div class="hint" style="align-self:center;" title="Used where a placement's portfolio has no uploaded goal of its own, and for the multi-keyword raise.">Multi-kw raise: +${st.raiseStep}pp at or under <b>${st.acosGoal}%</b>.</div>
       </div>
-      <div class="hint" style="margin-bottom:10px;" title="Cuts aim at a target effective bid (this placement's own CPC minus the tier %), then act only on whatever gap is left — so a placement already brought down by a previous run or a manual edit produces no suggestion instead of being cut twice. Single-keyword campaigns use their real bid for that maths; multi-keyword ones scale the multiplier itself by the same percentage, since their keywords' bids can differ many times over.">${st.singleOnly? `Multi-keyword campaigns get decreases only (raises/push are single-keyword — see checkbox below).` : `Raises need ${st.raiseMinOrders}+ orders on multi-keyword campaigns, just 1 on single-keyword.`} Hover for details.</div>
+      <div class="hint" style="margin-bottom:10px;" title="Single-keyword: each placement gets a target effective bid from its OWN CPC (minus the decrease tier's $ when over Tier 1, plus the increase tier's $ when under an increase tier — never Product Pages), and only the gap that's left gets acted on, so a placement already there produces no suggestion. The shared bid only moves when the cheapest placement is itself bad. Multi-keyword: the multiplier is scaled so what its keywords pay there drops by about the tier's $, since their bids can differ many times over.">${st.singleOnly? `Multi-keyword campaigns get decreases only (raises/push are single-keyword — see checkbox below).` : `Raises need ${st.raiseMinOrders}+ orders on multi-keyword campaigns.`} Hover for details.</div>
       ${renderPortfolioGoalPanel(S.product)}
-      <div class="hint" style="margin-bottom:8px;" title="Uses the SAME Tier 1/2/3 as the Bid Optimizer tab — edit them there, not here, so a placement and its own campaign's bid always agree on what counts as bad.">Graduated decrease — the worse the ACoS, the bigger the cut (&gt;${bst.hi1}%→-${bst.dec1}pp, &gt;${bst.hi2}%→-${bst.dec2}pp, &gt;${bst.hi3}%→-${bst.dec3}pp).</div>
+      <div class="hint" style="margin-bottom:8px;" title="Uses the SAME Tier 1/2/3 as the Bid Optimizer tab — edit them there, not here, so a placement and its own campaign's bid always agree on what counts as bad. A portfolio with an uploaded ACoS goal uses that goal as Tier 1.">Graduated decrease, in $ off the CPC (&gt;${bst.hi1}%→-${fMoney(bst.dec1)}, &gt;${bst.hi2}%→-${fMoney(bst.dec2)}, &gt;${bst.hi3}%→-${fMoney(bst.dec3)}).</div>
       <div class="ctrls" style="margin-top:12px;">
-        <div class="field"><label>Raise by (points)</label><input type="number" id="op-raisestep" min="1" value="${st.raiseStep}" style="width:90px;" title="Added to a placement's % when its ACoS is at or under the goal. The threshold itself comes from the ACoS goal above — there is no separate 'increase if ACoS <' setting, which used to be a hardcoded 20 that quietly overrode the goal on accounts targeting less than that."></div>
+        <div class="field"><label>Raise by (points)</label><input type="number" id="op-raisestep" min="1" value="${st.raiseStep}" style="width:90px;" title="Multi-keyword only: added to a placement's % when its ACoS is at or under the goal. Single-keyword raises use the Bid Optimizer's $ increase tiers instead."></div>
         <div class="field"><label>Portfolio</label><select id="op-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="op-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
