@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 12:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 12:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2855,6 +2855,48 @@ function classifyPortfolios(product){
     return Object.assign({tier,autoTier,manualTier,suggestedGoal:tierGoal(tier,pst)},e,d);
   }).sort((a,b)=>b.spend-a.spend);
 }
+// Auto-classify only catches "new" (low spend) and "underperformer" (low CVR vs account average) — it has no
+// signal at all for "this product's margin tolerates a different ACoS ceiling", which is the real reason two
+// mature, well-converting portfolios might need different goals. That's a judgment call only Alex can make, so
+// instead of guessing it, let him do it in Excel (where he already has margin data) and round-trip it back in —
+// export the current list with context columns, he fills ACoS Goal, re-upload matches by portfolio name.
+function exportPortfolioGoalTemplate(product){
+  const rows=classifyPortfolios(product);
+  const pst=stFor('optplace');
+  const aoa=[['Portfolio','Spend','Clicks','CVR %','Tier','ACoS Goal']];
+  rows.forEach(r=>{
+    const tierLabel = r.manualTier? TIER_LABELS[r.manualTier] : `Auto (${TIER_LABELS[r.autoTier]})`;
+    aoa.push([r.portfolioName, +r.spend.toFixed(2), r.clicks, +r.cvr.toFixed(2), tierLabel, pst.portfolioGoals[r.portfolioName]||'']);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'ACoS Goals');
+  XLSX.writeFile(wb, productFilePrefix(product)+'acos_goals_template.xlsx');
+}
+function importPortfolioGoalTemplate(file, onDone){
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const aoa=XLSX.utils.sheet_to_json(ws,{header:1});
+      const header=(aoa[0]||[]).map(h=>String(h||'').toLowerCase().trim());
+      const nameIdx=header.indexOf('portfolio');
+      const goalIdx=header.findIndex(h=>h.includes('acos goal'));
+      if(nameIdx<0 || goalIdx<0){ alert('Nu găsesc coloanele "Portfolio" și "ACoS Goal" în fișier — nu edita header-ul din șablon.'); return; }
+      const pst=stFor('optplace');
+      let applied=0;
+      aoa.slice(1).forEach(row=>{
+        const name=String(row[nameIdx]||'').trim(); const val=+row[goalIdx];
+        if(!name) return;
+        if(val>0) { pst.portfolioGoals[name]=val; applied++; }
+      });
+      alert(`Aplicat ${applied} goal-uri din fișier.`);
+      onDone();
+    }catch(err){ alert('Eroare la citirea fișierului: '+err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+}
 function renderPortfolioGoalPanel(product){
   const pst=stFor('optplace'); if(pst.portfolioGoals===undefined) pst.portfolioGoals={};
   const rows=classifyPortfolios(product);
@@ -2872,6 +2914,11 @@ function renderPortfolioGoalPanel(product){
       <div class="field" style="flex:0 0 auto;"><label>...primesc ACoS goal</label><input type="number" step="1" id="pg-badgoal" min="0" value="${badGoal}" style="width:80px;"> %</div>
       <button class="btn ghost" id="pg-autoclassify" style="margin-bottom:2px;">Auto-classify all portfolios</button>
       ${overrideCount?`<button class="btn ghost" id="pg-clearall" style="margin-bottom:2px;">Șterge toate overrides</button>`:''}
+    </div>
+    <div class="ctrls" style="margin-bottom:8px;align-items:flex-end;">
+      <button class="btn ghost" id="pg-export-template" style="margin-bottom:2px;">⬇ Descarcă șablon Excel</button>
+      <label class="btn ghost" style="margin-bottom:2px;cursor:pointer;">⬆ Încarcă șablon completat<input type="file" id="pg-import" accept=".xlsx,.xls" style="display:none;"></label>
+      <div class="hint" style="align-self:center;">Descarcă, completează coloana „ACoS Goal" în Excel (gol = rămâne pe goal-ul global), reîncarcă — portofoliile din fișier sunt potrivite după nume.</div>
     </div>
     <table class="tbl"><thead><tr><th class="l">Portfolio</th><th>Spend</th><th>Clicks</th><th>CVR</th><th class="l">Tier</th><th>ACoS Goal</th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td class="l">${esc(r.portfolioName)}</td><td>${fMoney(r.spend)}</td><td>${fInt(r.clicks)}</td><td>${fPct(r.cvr)}</td><td class="l">
@@ -2904,6 +2951,12 @@ function wirePortfolioGoalPanel(product, onChange){
     onChange();
   };
   const clearBtn=$('#pg-clearall'); if(clearBtn) clearBtn.onclick=()=>{ pst.portfolioGoals={}; pst.portfolioTier={}; onChange(); };
+  const expBtn=$('#pg-export-template'); if(expBtn) expBtn.onclick=()=>exportPortfolioGoalTemplate(product);
+  const impEl=$('#pg-import'); if(impEl) impEl.onchange=e=>{
+    const file=e.target.files[0]; if(!file) return;
+    importPortfolioGoalTemplate(file, onChange);
+    e.target.value='';
+  };
   document.querySelectorAll('[data-pg-tier]').forEach(el=>el.onchange=()=>{
     const pf=el.dataset.pgTier; const tier=el.value;
     if(!tier){ delete pst.portfolioTier[pf]; delete pst.portfolioGoals[pf]; }
