@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-28 10:56</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-28 18:49</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3837,8 +3837,10 @@ function computeRebalanceRows(product){
 function renderRebalance(){
   const {rows: allRows, st}=computeRebalanceRows(S.product);
   if(st.hideNoChange===undefined) st.hideNoChange=true;
+  if(st.excludePorts===undefined) st.excludePorts=[];
   let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
+  if(st.excludePorts.length) rows=rows.filter(r=>!st.excludePorts.includes(r.portfolioName));
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const sel=selFor('rebalance');
   if(!st.initialSelected){ allRows.forEach(r=>{ if(r.hasChange) sel.add(r._uid); }); st.initialSelected=true; }
@@ -3881,9 +3883,11 @@ function renderRebalance(){
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="rb-port">${portOptions(st.port)}</select></div>
+        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click pentru mai multe)</label><select id="rb-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
         <div class="field grow"><label>Campanie</label><input type="text" id="rb-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
       </div>
+      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="rb-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
       ${kpi('Campanii afectate',fInt(allRows.length))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
@@ -3904,6 +3908,8 @@ function renderRebalance(){
   $('#rb-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#rb-camp').oninput=debounce(()=>{st.camp=$('#rb-camp').value; upd();},220);
   $('#rb-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
+  const rbPortExcl=$('#rb-portexclude'); if(rbPortExcl) rbPortExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); upd(); };
+  const rbPortExclClear=$('#rb-portexclude-clear'); if(rbPortExclClear) rbPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
   $('#rb-export').onclick=()=>exportRebalance(S.product, rows.filter(r=>sel.has(r._uid)));
 }
 function exportRebalance(product, rows){
