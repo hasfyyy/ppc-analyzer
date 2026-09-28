@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-25 16:20</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-28 10:56</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -788,6 +788,7 @@ const TABS=[
   {id:'kwcheck',label:'Keyword Checker',ic:''},
   {id:'products',label:'Products',ic:''},
   {id:'cpcflag',label:'CPC Flag',ic:''},
+  {id:'rebalance',label:'Bid Rebalance',ic:''},
   {id:'optbids',label:'Bid Optimizer',ic:''},
   {id:'optplacements',label:'Placement Optimizer',ic:''},
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
@@ -797,7 +798,7 @@ const TABS=[
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
 // Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
 // correctly. Every other tab depends on a search-term report SD doesn't have.
-const OPT_TABS=new Set(['cpcflag','optbids','optplacements','optbudget','pausecamp']);
+const OPT_TABS=new Set(['cpcflag','rebalance','optbids','optplacements','optbudget','pausecamp']);
 // Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
 // SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
 // only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
@@ -834,7 +835,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -3768,6 +3769,164 @@ function exportPlacementOptimization(product, rows){
 /* ============================ CPC FLAG ============================ */
 // Analiza manuală: găsește targets/keywords enabled cu CPC peste pragul setat.
 // Vezi bid + performanță, poți selecta și aplica reducere procentuală în bulk.
+/* ============================ BID REBALANCE (manual) ============================ */
+// Lever manual: reduce bidul pe TOATE targets dintr-o campanie cu X%, apoi suplimentează placement-urile
+// alese (de obicei TOS/ROS) ca efectivul lor (bid × (1+%)) să rămână LA FEL ca înainte de cut. Placement-urile
+// NEbifate rămân la % vechi — efectivul lor scade automat odată cu bidul, ăsta e mecanismul prin care scazi
+// spend-ul specific pe un placement (ex: Product Pages) fără să-l tai direct.
+// Funcționează identic pe single-kw ȘI multi-kw — ancorat pe TARGET-UL DOMINANT al campaniei (cel cu cele mai
+// multe clicks, apoi spend) ca referință pentru calculul de compensare a placement-urilor; bidul nou se aplică
+// însă pe fiecare target din campanie cu propriul lui bid (nu doar pe dominant), procentul de reducere fiind
+// același pentru toate.
+function computeRebalanceRows(product){
+  const st=stFor('rebalance');
+  if(st.reducePct===undefined) st.reducePct=50;
+  if(st.protectTop===undefined) st.protectTop=true;
+  if(st.protectRest===undefined) st.protectRest=true;
+  if(st.protectPp===undefined) st.protectPp=false;
+  const enabledCamps=optimizableCampaignIds(product);
+  const targetsByCamp={};
+  DATA.targets.forEach(t=>{
+    if(t.product!==product || t.state!=='enabled' || t.bid<=0 || !enabledCamps.has(t.campaignId)) return;
+    (targetsByCamp[t.campaignId]=targetsByCamp[t.campaignId]||[]).push(t);
+  });
+  const plByCamp={};
+  DATA.placements.forEach(p=>{
+    if(p.product!==product || !enabledCamps.has(p.campaignId)) return;
+    const type=placeType(p.placement); if(!type || type==='business') return;
+    if(!plByCamp[p.campaignId]) plByCamp[p.campaignId]={};
+    if(!plByCamp[p.campaignId][type]) plByCamp[p.campaignId][type]={placeType:type, placementName:placeName(p.placement), rawPlacement:p.placement, percentage:p.percentage, impressions:0,clicks:0,spend:0,sales:0,orders:0};
+    const e=plByCamp[p.campaignId][type];
+    e.impressions+=p.impressions; e.clicks+=p.clicks; e.spend+=p.spend; e.sales+=p.sales; e.orders+=p.orders;
+  });
+  const protectMap={top:st.protectTop, rest:st.protectRest, pp:st.protectPp};
+  const rows=[];
+  Object.keys(targetsByCamp).forEach(cid=>{
+    const targets=targetsByCamp[cid];
+    // Target dominant = cel cu cele mai multe clicks (tie-break: spend) — traficul real, nu doar cel mai mare bid.
+    let dominant=targets[0];
+    targets.forEach(t=>{ if(t.clicks>dominant.clicks || (t.clicks===dominant.clicks && t.spend>dominant.spend)) dominant=t; });
+    const oldBid=dominant.bid;
+    const newBid=Math.max(0.02, +(oldBid*(1-st.reducePct/100)).toFixed(2));
+    const plMap=plByCamp[cid]||{};
+    const perPlace={};
+    ['top','rest','pp'].forEach(type=>{
+      const p=plMap[type]; const pct=p? p.percentage : 0;
+      let newPct=pct;
+      if(protectMap[type] && oldBid>0 && newBid>0){
+        const oldEff=oldBid*(1+pct/100);
+        newPct=Math.max(0, Math.min(900, Math.round((oldEff/newBid-1)*100)));
+      }
+      perPlace[type]=Object.assign({}, p||{percentage:0,clicks:0,spend:0,sales:0,orders:0,placementName:placeName(type==='top'?'Placement Top':type==='rest'?'Placement Rest Of Search':'Placement Product Page'),rawPlacement:type==='top'?'Placement Top':type==='rest'?'Placement Rest Of Search':'Placement Product Page'}, {percentage:pct, newPct, protected:!!protectMap[type], changed:newPct!==pct});
+    });
+    const agg_=agg(targets);
+    const d=derive(agg_);
+    rows.push({
+      _uid: cid, campaignId: cid,
+      campaignName: dominant.campaignName||DATA.campById[cid]?.name||cid,
+      portfolioName: dominant.portfolioName||'(No Portfolio)',
+      targetCount: targets.length, dominantText: dominant.text||'(ASIN/PT)',
+      oldBid, newBid, perPlace,
+      spend: d.spend, sales: d.sales, orders: d.orders, clicks: d.clicks, acos: d.acos,
+      targets, // pentru export — bid update pe FIECARE target, nu doar dominant
+      hasChange: st.reducePct>0,
+    });
+  });
+  return {rows, st};
+}
+function renderRebalance(){
+  const {rows: allRows, st}=computeRebalanceRows(S.product);
+  if(st.hideNoChange===undefined) st.hideNoChange=true;
+  let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
+  if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
+  if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  const sel=selFor('rebalance');
+  if(!st.initialSelected){ allRows.forEach(r=>{ if(r.hasChange) sel.add(r._uid); }); st.initialSelected=true; }
+  const visibleUids=new Set(rows.map(r=>r._uid));
+  [...sel].forEach(uid=>{ if(!visibleUids.has(uid)) sel.delete(uid); });
+  const bidCell=r=>`<span class="num-red">€${r.oldBid.toFixed(2)} → €${r.newBid.toFixed(2)}</span> <span class="muted">(-${st.reducePct}%)</span>`;
+  const placeCell=(r,type)=>{
+    const p=r.perPlace[type];
+    const cur=(p.percentage>0?'+':'')+p.percentage+'%';
+    if(!p.changed) return `<span class="muted">${cur}${p.protected?'':' (nesuplimentat)'}</span>`;
+    const nw=(p.newPct>0?'+':'')+p.newPct+'%';
+    return `<span class="num-green">${cur} → ${nw} ↑</span>`;
+  };
+  const cols=[
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
+    {key:'targetCount',label:'#Targets',type:'int'},
+    {key:'dominantText',label:'Target dominant',l:true,type:'text'},
+    {key:'clicks',label:'Clicks',type:'int'},
+    {key:'orders',label:'Orders',type:'int'},
+    {key:'spend',label:'Spend',type:'money'},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos)},
+    {key:'bid',label:'Bid (dominant)',type:'money',sortVal:r=>r.oldBid,cell:bidCell},
+    {key:'tos',label:'Top of Search',type:'num',sortVal:r=>r.perPlace.top.percentage,cell:r=>placeCell(r,'top')},
+    {key:'ros',label:'Rest of Search',type:'num',sortVal:r=>r.perPlace.rest.percentage,cell:r=>placeCell(r,'rest')},
+    {key:'pdp',label:'Product Pages',type:'num',sortVal:r=>r.perPlace.pp.percentage,cell:r=>placeCell(r,'pp')},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'rebalance',selectable:true,idKey:'_uid',sortDef:{key:'spend',dir:-1},onChange:renderRebalance});
+  const selCount=rows.filter(r=>sel.has(r._uid)).length;
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Bid Rebalance — reducere manuală bid + suplimentare placement</h3>
+      <div class="hint" style="margin-bottom:10px;">Reduce bidul pe TOATE targets din campanie cu X% (fiecare target cu propriul lui bid). Placement-urile bifate primesc automat un % mai mare ca efectivul lor (bid × (1+%)) să rămână LA FEL ca înainte — placement-urile nebifate rămân la % vechi, deci efectivul lor scade odată cu bidul (așa reduci spend specific pe un placement, ex: Product Pages).</div>
+      <div class="ctrls">
+        <div class="field"><label>Reduce bid cu</label><input type="number" id="rb-pct" min="0" max="95" value="${st.reducePct}" style="width:80px;"> %</div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-top" ${st.protectTop?'checked':''}> Suplimentează Top of Search</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-rest" ${st.protectRest?'checked':''}> Suplimentează Rest of Search</label>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-pp" ${st.protectPp?'checked':''}> Suplimentează Product Pages</label>
+      </div>
+      <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Portfolio</label><select id="rb-port">${portOptions(st.port)}</select></div>
+        <div class="field grow"><label>Campanie</label><input type="text" id="rb-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
+      </div>
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
+      ${kpi('Campanii afectate',fInt(allRows.length))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Rebalance (${rows.length})</h3><div class="spacer"></div>
+        <button class="btn grad" id="rb-export" ${selCount?'':'disabled'}>Export Rebalance Update (${selCount})</button>
+      </div>
+      <div id="rb-table">${tbl.html}</div>
+    </div>`;
+  tbl.wire($('#rb-table'));
+  const upd=()=>renderRebalance();
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('rb-pct','reducePct',v=>Math.max(0,Math.min(95,+v||0)));
+  $('#rb-top').onchange=e=>{st.protectTop=e.target.checked; upd();};
+  $('#rb-rest').onchange=e=>{st.protectRest=e.target.checked; upd();};
+  $('#rb-pp').onchange=e=>{st.protectPp=e.target.checked; upd();};
+  $('#rb-port').onchange=e=>{st.port=e.target.value; upd();};
+  $('#rb-camp').oninput=debounce(()=>{st.camp=$('#rb-camp').value; upd();},220);
+  $('#rb-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
+  $('#rb-export').onclick=()=>exportRebalance(S.product, rows.filter(r=>sel.has(r._uid)));
+}
+function exportRebalance(product, rows){
+  if(!rows.length){ alert('Nicio campanie selectată.'); return; }
+  const prod=productLabel(product);
+  const out=[];
+  const st=stFor('rebalance');
+  rows.forEach(r=>{
+    // Bid update pe FIECARE target din campanie, cu propriul lui bid redus cu același %.
+    r.targets.forEach(t=>{
+      const newBid=Math.max(0.02, +(t.bid*(1-st.reducePct/100)).toFixed(2));
+      const bidRow=Object.assign({'Product':prod,'Entity':t.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':t.campaignId,'Ad Group ID':t.adGroupId,'Bid':newBid}, t.kind==='keyword'?{'Keyword ID':t.id}:{'Product Targeting ID':t.id});
+      out.push(bulkRow(bidRow));
+    });
+    Object.values(r.perPlace).forEach(p=>{
+      if(!p.changed) return;
+      out.push(bulkRow({'Product':prod,'Entity':'Bidding Adjustment','Operation':'Update','Campaign ID':r.campaignId,'Placement':p.rawPlacement,'Percentage':p.newPct}));
+    });
+  });
+  if(!out.length){ alert('Nimic de exportat.'); return; }
+  writeBulk(out, productFilePrefix(product)+'bid_rebalance_bulk.xlsx', productSheetName(product));
+  alert(`Exportat ${out.length} update-uri (bid pe fiecare target + placement suplimentat) pentru ${rows.length} campanii.`);
+}
 function renderCpcFlag(){
   const st=stFor('cpcflag');
   if(st.maxCpc===undefined) st.maxCpc=1.00;
