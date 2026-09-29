@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 13:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 14:06</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2708,18 +2708,21 @@ function bidTierDefaults(bst){
   if(bst.zeroHi2===undefined) bst.zeroHi2=15; if(bst.zeroDec2===undefined) bst.zeroDec2=0.15;
   if(bst.zeroHi3===undefined) bst.zeroHi3=20; if(bst.zeroDec3===undefined) bst.zeroDec3=0.20;
 }
-// One portfolio's decrease ladder: an uploaded ACoS goal IS Tier 1, and Tier 2/3 keep the same gap above it
-// that the typed fields carry (clamped ≥0 so a mistyped Tier 2 below Tier 1 can't invert the ladder). No
-// uploaded goal → the typed Tier 1/2/3 exactly. Reads portfolioGoals directly, not acosGoalFor(): that one
-// falls back to the account-wide goal, which silently re-anchored every portfolio WITHOUT a template row onto
-// that single number instead of leaving it on the typed tiers.
+// One portfolio's decrease ladder: its effective ACoS goal (uploaded override, else the account-wide goal —
+// see acosGoalFor) IS Tier 1, and Tier 2/3 keep the same gap above it that the typed fields carry (clamped ≥0
+// so a mistyped Tier 2 below Tier 1 can't invert the ladder). Used to read portfolioGoals directly and skip
+// the account-wide fallback entirely (26 sep 2026 default: hi1=80%) — on an account with a 20% goal and no
+// per-portfolio overrides, that left every keyword between 30% and 80% ACoS (below the increase ceiling,
+// below the decrease floor) with no suggestion at all: half of one real account's single-kw placements with
+// real orders (Lunakai 60d, 29 sep 2026). Anchoring the default to the account goal closes that gap; a
+// portfolio can still loosen or tighten it with its own uploaded goal same as before.
 // A keyword cut lands below what it actually PAYS, not just below its bid (Alex, 25 sep 2026: bid $2.55, CPC
 // $2.00, −$0.20 → $1.80) — a bid far above its own CPC was never the real price. The LOWER of the two, because
 // placement % can push a keyword's CPC above its base bid, and anchoring on that CPC would then never cut at all.
 function cutBase(t, d){ return d.cpc>0 ? Math.min(t.bid, d.cpc) : t.bid; }
 function cutBaseLabel(t, d){ return d.cpc>0 && d.cpc<t.bid ? `CPC ${fMoney(d.cpc)}` : `bid ${fMoney(t.bid)}`; }
 function decTiersFor(portfolioName, bst){
-  const g=(stFor('optplace').portfolioGoals||{})[portfolioName||'(No Portfolio)'];
+  const g=acosGoalFor(portfolioName);
   if(!(g>0)) return bst;
   return {hi1:g, dec1:bst.dec1, hi2:g+Math.max(0,bst.hi2-bst.hi1), dec2:bst.dec2, hi3:g+Math.max(0,bst.hi3-bst.hi1), dec3:bst.dec3};
 }
@@ -2747,6 +2750,24 @@ function increaseDollarTierFor(acos, st){
   const tiers=[[st.incHi1,st.incDollar1],[st.incHi2,st.incDollar2],[st.incHi3,st.incDollar3]].sort((a,b)=>a[0]-b[0]);
   for(const [hi,dollar] of tiers){ if(acos<hi) return dollar; }
   return null;
+}
+// Increase's counterpart to decTiersFor — anchors the increase ceiling (incHi3, the loosest tier: "below this
+// ACoS, some bump") to the SAME effective goal, so decrease and increase meet at the goal instead of leaving a
+// dead zone between them (see decTiersFor). Capped at the typed incHi3 rather than following the goal all the
+// way up, unlike decTiersFor: a portfolio with a deliberately loose goal (a New/Low Data one classified at,
+// say, 140% — see classifyPortfolios) would otherwise scale the ceiling up to 140% too, and a target at 172.9%
+// ACoS qualified for a bid INCREASE off that (25 sep 2026) — a loose goal should buy protection from cuts, not
+// eligibility for a raise. min() lets a strict goal tighten the ceiling (closing the dead zone) but never lets
+// a loose one open it past its typed default.
+function incTiersFor(portfolioName, bst){
+  const g=acosGoalFor(portfolioName);
+  if(!(g>0)) return bst;
+  const hi3=Math.min(g, bst.incHi3);
+  return {
+    incHi3:hi3, incDollar3:bst.incDollar3,
+    incHi2:Math.max(0, hi3-Math.max(0,bst.incHi3-bst.incHi2)), incDollar2:bst.incDollar2,
+    incHi1:Math.max(0, hi3-Math.max(0,bst.incHi3-bst.incHi1)), incDollar1:bst.incDollar1
+  };
 }
 // ACoS is undefined at 0 orders (nothing to divide spend by), so a 0-order target can't go through the ACoS
 // tiers at all — it used to just fall through untouched. Graduated the same way, but keyed on CLICKS instead:
@@ -3048,6 +3069,7 @@ function singleKwCampaigns(product){
 function renderOptBids(){
   const st=stFor('optbids');
   bidTierDefaults(st);
+  const pst=goalTiers(); // shared account ACoS goal — same object as the Placement Optimizer tab reads
   if(st.minOrdersInc===undefined) st.minOrdersInc=1; if(st.minClicks===undefined) st.minClicks=10; if(st.minSpend===undefined) st.minSpend=0;
   // 0-order rules (zeroHi/zeroDec, defaults in bidTierDefaults) run on their OWN click thresholds, independent
   // of the Min Clicks/Min Spend gate above (that gate exists for the ACoS tiers, which need enough volume for
@@ -3122,12 +3144,12 @@ function renderOptBids(){
     const category=bidCategoryFor(t, brandTermsArr);
     const acosAdj=bidCategoryAdj(category, st);
     const effAcos=d.acos-acosAdj; // higher allowance (Exact) lowers the effective ACoS fed into the tiers
-    // DECREASE ladder: the portfolio's uploaded ACoS goal IS Tier 1 (see decTiersFor); no uploaded goal → the
-    // typed Tier 1/2/3 as-is. INCREASE thresholds (incHi1/2/3) stay flat for every portfolio — a loose goal
+    // DECREASE ladder: the portfolio's effective ACoS goal IS Tier 1 (see decTiersFor), account goal by
+    // default. INCREASE ceiling mirrors it but capped at the typed default (see incTiersFor) — a loose goal
     // earns protection from cuts, never eligibility for a raise (a 140% goal scaling the increase bar let a
     // 172.9%-ACoS target qualify, 25 sep 2026).
     const decTiers=decTiersFor(t.portfolioName, st);
-    const incTiers=st;
+    const incTiers=incTiersFor(t.portfolioName, st);
     // A single-kw campaign with placement data is steered entirely by computePlacementOptRows: its bid moves
     // ONLY through Step 1 (floorBidOverrides), everything else through its placements. The keyword tiers below
     // used to cut the same bid again on top — $1.72→$1.68 on MGG, whose cheapest placement was beating goal,
@@ -3272,6 +3294,10 @@ function renderOptBids(){
         <div class="field"><label>Branded: allowance (pp)</label><input type="number" id="ob-catbrand" value="${st.acosAdjBranded}" style="width:90px;"></div>
         <div class="field grow"><label>Brand terms (comma-separated)</label><input type="text" id="ob-brandterms" placeholder="e.g. mybrand, insiders" value="${esc(st.brandTerms||'')}" title="Matched against campaign name, portfolio name, AND the keyword/target text itself."></div>
       </div>
+      <div class="ctrls" style="margin-bottom:12px;">
+        <div class="field"><label>ACoS goal % (global)</label><input type="number" id="ob-acosgoal" min="1" value="${pst.acosGoal}" style="width:90px;"></div>
+        <div class="hint" style="align-self:center;" title="Single value, shared everywhere — decrease Tier 1 and the increase ceiling below both anchor to it by default (portfolio overrides in the table below still win), and so does the Placement Optimizer tab and the multi-keyword raise.">Ancorează Tier 1 de decrease și plafonul de increase de mai jos. Aceeași valoare e folosită și în Placement Optimizer.</div>
+      </div>
       ${renderPortfolioGoalPanel(S.product)}
       <div class="hint" style="margin-bottom:8px;" title="The worse the ACoS, the bigger the cut. Flat $, not % — keywords: the lower of bid and CPC, minus this amount (bid $2.55, CPC $2.00, -$0.20 → $1.80); placements: this placement's own CPC minus this amount becomes its target effective bid. Typing 10 is read as 10 cents ($0.10). A portfolio with an uploaded ACoS goal uses that goal as Tier 1 (Tier 2/3 keep the same gaps). The category allowance above shifts the ACoS fed into these tiers for keywords.">Graduated decrease, in $ — hover for details.</div>
       <div class="ctrls">
@@ -3358,6 +3384,7 @@ function renderOptBids(){
   // settings panel closed each time — track its open/closed state across re-renders instead of losing it.
   const settingsEl=$('#ob-settings'); if(settingsEl) settingsEl.ontoggle=()=>{ st.settingsOpen=settingsEl.open; };
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  $('#ob-acosgoal').oninput=debounce(()=>{ pst.acosGoal=+$('#ob-acosgoal').value||20; upd(); },300);
   bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
   bind('ob-brandterms','brandTerms',v=>v);
   // These fields used to be %, typed as 10/15/20 — read a whole number as cents so the old habit lands on
@@ -3629,7 +3656,7 @@ function computePlacementOptRows(product, filters){
           }
         } else if(p.cpc>0){
           const dec=decreaseTierFor(p.acos, tiers);
-          const inc= dec==null && k!=='pp' ? increaseDollarTierFor(p.acos, bst) : null;
+          const inc= dec==null && k!=='pp' ? increaseDollarTierFor(p.acos, incTiersFor(pf, bst)) : null;
           if(dec!=null){
             const target=Math.max(0.02, p.cpc-dec);
             if(target<oldEff){
@@ -3719,9 +3746,8 @@ function renderOptPlacements(){
     <div class="card pad">
       <h3 class="sectitle">Placement rules</h3>
       <div class="ctrls" style="margin-bottom:10px;">
-        <div class="field"><label>ACoS goal %</label><input type="number" id="op-acosgoal" min="1" value="${st.acosGoal}" style="width:90px;"></div>
         ${!st.singleOnly?`<div class="field"><label>Raise needs orders (multi-kw)</label><input type="number" id="op-raiseminord" min="1" value="${st.raiseMinOrders}" style="width:110px;" title="How many orders a placement must have before a MULTI-keyword campaign's % is raised. Higher than the single-keyword bar (1) because the figure is an average across every keyword sharing that placement — a good average can hide keywords that don't convert, and raising the shared % scales spend on all of them."></div>`:''}
-        <div class="hint" style="align-self:center;" title="Used where a placement's portfolio has no uploaded goal of its own, and for the multi-keyword raise.">Multi-kw raise: +${st.raiseStep}pp at or under <b>${st.acosGoal}%</b>.</div>
+        <div class="hint" style="align-self:center;" title="Editable in the Bid Optimizer tab — same value used everywhere (decrease/increase tiers here and there, multi-kw raise).">Multi-kw raise: +${st.raiseStep}pp at or under <b>${st.acosGoal}%</b> ACoS goal <span class="muted">(set în Bid Optimizer)</span>.</div>
       </div>
       <div class="hint" style="margin-bottom:10px;" title="Single-keyword: each placement gets a target effective bid from its OWN CPC (minus the decrease tier's $ when over Tier 1, plus the increase tier's $ when under an increase tier — never Product Pages), and only the gap that's left gets acted on, so a placement already there produces no suggestion. The shared bid only moves when the cheapest placement is itself bad. Multi-keyword: the multiplier is scaled so what its keywords pay there drops by about the tier's $, since their bids can differ many times over.">${st.singleOnly? `Multi-keyword campaigns get decreases only (raises/push are single-keyword — see checkbox below).` : `Raises need ${st.raiseMinOrders}+ orders on multi-keyword campaigns.`} Hover for details.</div>
       ${renderPortfolioGoalPanel(S.product)}
@@ -3754,7 +3780,6 @@ function renderOptPlacements(){
   tbl.wire($('#op-table'));
   const upd=()=>renderOptPlacements();
   wirePortfolioGoalPanel(S.product, upd);
-  $('#op-acosgoal').oninput=debounce(()=>{st.acosGoal=+$('#op-acosgoal').value||20; renderOptPlacements();},350);
   const raiseMinOrdEl=$('#op-raiseminord'); if(raiseMinOrdEl) raiseMinOrdEl.oninput=debounce(()=>{st.raiseMinOrders=+raiseMinOrdEl.value||1; renderOptPlacements();},350);
   const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('op-raisestep','raiseStep',v=>+v||1);
