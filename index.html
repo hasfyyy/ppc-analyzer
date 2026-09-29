@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 10:01</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 10:05</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3855,7 +3855,7 @@ function renderRebalance(){
     return `<span class="num-green">${cur} → ${nw} ↑</span>`;
   };
   const cols=[
-    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>`<span class="ng-root link" data-ruid="${esc(r._uid)}">▸ ${esc(r.campaignName)}</span>`},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text'},
     {key:'targetCount',label:'#Targets',type:'int'},
     {key:'dominantText',label:'Target dominant',l:true,type:'text'},
@@ -3900,6 +3900,25 @@ function renderRebalance(){
       <div id="rb-table">${tbl.html}</div>
     </div>`;
   tbl.wire($('#rb-table'));
+  // Click pe numele campaniei → arată LISTA COMPLETĂ de targets din spate, cu bid vechi → nou fiecare —
+  // dovadă vizuală directă că reducerea se aplică pe fiecare target, nu doar pe cel dominant afișat în rând.
+  const rowMap={}; rows.forEach(r=>rowMap[r._uid]=r);
+  $('#rb-table').querySelectorAll('[data-ruid]').forEach(span=>span.onclick=ev=>{
+    ev.stopPropagation();
+    const uid=span.dataset.ruid, tr=span.closest('tr'), nxt=tr.nextElementSibling;
+    if(nxt&&nxt.classList.contains('rb-detail')){ nxt.remove(); span.textContent='▸ '+rowMap[uid].campaignName; return; }
+    $('#rb-table').querySelectorAll('.rb-detail').forEach(d=>d.remove());
+    $('#rb-table').querySelectorAll('[data-ruid]').forEach(s=>s.textContent='▸ '+rowMap[s.dataset.ruid].campaignName);
+    span.textContent='▾ '+rowMap[uid].campaignName;
+    const entry=rowMap[uid], colspan=tr.children.length-1;
+    const list=[...entry.targets].sort((a,b)=>(b.clicks||0)-(a.clicks||0)).map(t=>{
+      const newBid=Math.max(0.02, +(t.bid*(1-st.reducePct/100)).toFixed(2));
+      return `<div style="display:flex;justify-content:space-between;gap:16px;padding:4px 0;border-bottom:1px solid #f0eef6;"><span>${esc(t.text||'(ASIN/PT)')} <span class="muted" style="font-size:11px;">${esc(t.kind==='keyword'?(t.matchType||''):'PT')}</span></span><span class="muted" style="white-space:nowrap;font-size:11.5px;">€${t.bid.toFixed(2)} → €${newBid.toFixed(2)} · ${fInt(t.clicks||0)} clk</span></div>`;
+    }).join('');
+    const detail=document.createElement('tr'); detail.className='rb-detail';
+    detail.innerHTML=`<td></td><td colspan="${colspan}" class="l" style="background:#fbfaff;padding:10px 14px;"><div style="font-weight:600;margin-bottom:6px;">${entry.targets.length} target(s) în această campanie — fiecare primește propriul bid update:</div>${list}</td>`;
+    tr.after(detail);
+  });
   const upd=()=>renderRebalance();
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
   bind('rb-pct','reducePct',v=>Math.max(0,Math.min(95,+v||0)));
