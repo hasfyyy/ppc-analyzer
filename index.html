@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 10:05</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 13:46</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3602,8 +3602,10 @@ function computePlacementOptRows(product, filters){
       const domT=dominantTargetByCamp.get(cid);
       if(!domT){ keys.forEach(k=>{ const p=pl[k]; if(!keepPush(p)){ p.action='none'; p.newPct=p.percentage; } }); return; }
       const oldBid=domT.bid;
+      // Eligibil ca anchor dacă are destule clicks (dovadă pe volum) SAU are măcar 1 comandă (dovadă directă —
+      // cu orders reale threshold-ul de clicks nu se mai aplică, la fel ca la decizia per-placement mai jos).
       let anchor=null;
-      keys.forEach(k=>{ const p=pl[k]; if(p.cpc>0 && p.clicks>=threshold && (!anchor || p.cpc<anchor.cpc)) anchor=p; });
+      keys.forEach(k=>{ const p=pl[k]; if(p.cpc>0 && (p.clicks>=threshold || p.orders>0) && (!anchor || p.cpc<anchor.cpc)) anchor=p; });
       let bid=oldBid;
       if(anchor && isBad(anchor)){
         const nb=Math.max(0.20, +(anchor.cpc*0.85).toFixed(2));
@@ -3616,11 +3618,15 @@ function computePlacementOptRows(product, filters){
         const keepPct= bid===oldBid ? p.percentage : pctFor(oldEff);
         let newPct=keepPct, action= keepPct!==p.percentage ? 'compensate' : 'none', floorNote=false;
         let why= action==='compensate' ? `păstrează bid-ul efectiv ${fMoney(oldEff)} la bidul nou ${fMoney(bid)}` : '';
-        if(p.clicks<threshold){
-          if(keepPush(p)){ newPct=Math.min(900, keepPct+st.pushStep); action='push'; why=p.why||`sub ${st.pushClicks} clicks — mai mult loc în licitații`; }
-        } else if(p.orders===0){
-          newPct=0; action= p.percentage>0 ? 'decrease' : 'none';
-          why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold})`;
+        // Threshold-ul de clicks contează DOAR pe ramura de 0 comenzi (nicio dovadă de conversie încă) —
+        // cu orders reale, ACoS-ul e dovadă suficientă indiferent de câte clicks are placement-ul.
+        if(p.orders===0){
+          if(p.clicks<threshold){
+            if(keepPush(p)){ newPct=Math.min(900, keepPct+st.pushStep); action='push'; why=p.why||`sub ${st.pushClicks} clicks — mai mult loc în licitații`; }
+          } else {
+            newPct=0; action= p.percentage>0 ? 'decrease' : 'none';
+            why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold})`;
+          }
         } else if(p.cpc>0){
           const dec=decreaseTierFor(p.acos, tiers);
           const inc= dec==null && k!=='pp' ? increaseDollarTierFor(p.acos, bst) : null;
