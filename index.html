@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-28 18:49</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 10:01</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3889,9 +3889,10 @@ function renderRebalance(){
       </div>
       ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="rb-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
     </div>
-    <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
-      ${kpi('Campanii afectate',fInt(allRows.length))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('Campanii afectate',fInt(allRows.length))}${kpi('Targets enabled (toate)',fInt(allRows.reduce((s,r)=>s+r.targetCount,0)))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
     </div>
+    <div class="hint" style="margin:6px 0 10px;">"Targets enabled (toate)" = suma tuturor keywords/PT enabled cu bid&gt;0 din campaniile afectate — fiecare va primi propriul bid update la export, nu doar target-ul dominant afișat în tabel.</div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Bid Rebalance (${rows.length})</h3><div class="spacer"></div>
         <button class="btn grad" id="rb-export" ${selCount?'':'disabled'}>Export Rebalance Update (${selCount})</button>
