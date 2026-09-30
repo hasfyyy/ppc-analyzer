@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-29 15:16</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-30 15:35</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3804,6 +3804,10 @@ function computeRebalanceRows(product){
   if(st.protectTop===undefined) st.protectTop=true;
   if(st.protectRest===undefined) st.protectRest=true;
   if(st.protectPp===undefined) st.protectPp=false;
+  // Gate: only campaigns actually over goal get touched — a blanket cut with no ACoS check moved bids on
+  // perfectly healthy campaigns too (Alex, 30 sep 2026). A campaign under the threshold gets NO row at all here
+  // (not just hidden by a filter) — no bid change, no placement change, same as if this tab never ran on it.
+  if(st.acosThreshold===undefined) st.acosThreshold=30;
   const enabledCamps=optimizableCampaignIds(product);
   const targetsByCamp={};
   DATA.targets.forEach(t=>{
@@ -3823,6 +3827,12 @@ function computeRebalanceRows(product){
   const rows=[];
   Object.keys(targetsByCamp).forEach(cid=>{
     const targets=targetsByCamp[cid];
+    const agg_=agg(targets);
+    const d=derive(agg_);
+    // Below the ACoS threshold → skip entirely, no row at all (not a healthy campaign's problem to fix).
+    // Infinity (spend with 0 sales) always counts as over threshold — there's no ACoS to compare, but spend
+    // with nothing to show for it is never "under goal".
+    if(!(d.acos===Infinity || d.acos>=st.acosThreshold)) return;
     // Target dominant = cel cu cele mai multe clicks (tie-break: spend) — traficul real, nu doar cel mai mare bid.
     let dominant=targets[0];
     targets.forEach(t=>{ if(t.clicks>dominant.clicks || (t.clicks===dominant.clicks && t.spend>dominant.spend)) dominant=t; });
@@ -3839,8 +3849,6 @@ function computeRebalanceRows(product){
       }
       perPlace[type]=Object.assign({}, p||{percentage:0,clicks:0,spend:0,sales:0,orders:0,placementName:placeName(type==='top'?'Placement Top':type==='rest'?'Placement Rest Of Search':'Placement Product Page'),rawPlacement:type==='top'?'Placement Top':type==='rest'?'Placement Rest Of Search':'Placement Product Page'}, {percentage:pct, newPct, protected:!!protectMap[type], changed:newPct!==pct});
     });
-    const agg_=agg(targets);
-    const d=derive(agg_);
     rows.push({
       _uid: cid, campaignId: cid,
       campaignName: dominant.campaignName||DATA.campById[cid]?.name||cid,
@@ -3894,8 +3902,9 @@ function renderRebalance(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Bid Rebalance — reducere manuală bid + suplimentare placement</h3>
-      <div class="hint" style="margin-bottom:10px;">Reduce bidul pe TOATE targets din campanie cu X% (fiecare target cu propriul lui bid). Placement-urile bifate primesc automat un % mai mare ca efectivul lor (bid × (1+%)) să rămână LA FEL ca înainte — placement-urile nebifate rămân la % vechi, deci efectivul lor scade odată cu bidul (așa reduci spend specific pe un placement, ex: Product Pages).</div>
+      <div class="hint" style="margin-bottom:10px;">Doar campaniile cu ACoS peste pragul de mai jos sunt atinse — restul rămân complet neschimbate (nici bid, nici placement). Pe cele afectate: reduce bidul pe TOATE targets din campanie cu X% (fiecare target cu propriul lui bid). Placement-urile bifate primesc automat exact cât % mai trebuie ca efectivul lor (bid × (1+%)) să ajungă LA FEL ca înainte — placement-urile nebifate rămân la % vechi, deci efectivul lor scade odată cu bidul (așa reduci spend specific pe un placement, ex: Product Pages).</div>
       <div class="ctrls">
+        <div class="field"><label>Doar ACoS peste</label><input type="number" id="rb-acosthreshold" min="0" value="${st.acosThreshold}" style="width:80px;"> %</div>
         <div class="field"><label>Reduce bid cu</label><input type="number" id="rb-pct" min="0" max="95" value="${st.reducePct}" style="width:80px;"> %</div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-top" ${st.protectTop?'checked':''}> Suplimentează Top of Search</label>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-rest" ${st.protectRest?'checked':''}> Suplimentează Rest of Search</label>
@@ -3941,6 +3950,7 @@ function renderRebalance(){
   });
   const upd=()=>renderRebalance();
   const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  bind('rb-acosthreshold','acosThreshold',v=>Math.max(0,+v||0));
   bind('rb-pct','reducePct',v=>Math.max(0,Math.min(95,+v||0)));
   $('#rb-top').onchange=e=>{st.protectTop=e.target.checked; upd();};
   $('#rb-rest').onchange=e=>{st.protectRest=e.target.checked; upd();};
