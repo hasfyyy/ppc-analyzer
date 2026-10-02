@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 10:29</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 10:33</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1024,7 +1024,30 @@ function renderNegatives(product){
     if(!byRowKey.has(k)) byRowKey.set(k, Object.assign({}, s, {impressions:0,clicks:0,spend:0,sales:0,orders:0,units:0}));
     const e=byRowKey.get(k); e.impressions+=s.impressions; e.clicks+=s.clicks; e.spend+=s.spend; e.sales+=s.sales; e.orders+=s.orders; e.units+=(s.units||0);
   });
-  let cand=[...byRowKey.values()].map(s=>{ const d=derive(agg([s])); return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm,s.adGroupId)}); })
+  // Amazon's Negative Exact (and Phrase) matching auto-includes close variants — plurals on the LAST word of
+  // the phrase mainly — and this can't be turned off (confirmed via Amazon's own docs, Alex 2 oct 2026: it
+  // negated "trampolines" off a negative exact on "trampoline" alone). A single-word bad performer can take
+  // down a multi-word good one too ("trampoline" vs "trampoline tent"'s last word), so this checks the whole
+  // term with just its last word swapped for a plural/singular variant — portfolio-wide, across every campaign
+  // this search term shows up in, not just the one row being considered.
+  function searchTermVariants(term){
+    const parts=String(term||'').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if(!parts.length) return [];
+    return wordVariants(parts[parts.length-1]).map(v=>[...parts.slice(0,-1), v].join(' '));
+  }
+  const termTotals=new Map();
+  src.forEach(s=>{
+    const pf=String(s.portfolioName||'(No Portfolio)');
+    const key=pf+'|'+s.searchTerm.trim().toLowerCase();
+    if(!termTotals.has(key)) termTotals.set(key,{term:s.searchTerm.trim(), orders:0, sales:0});
+    const e=termTotals.get(key); e.orders+=s.orders; e.sales+=s.sales;
+  });
+  let cand=[...byRowKey.values()].map(s=>{
+    const d=derive(agg([s]));
+    const pf=String(s.portfolioName||'(No Portfolio)');
+    const variant=searchTermVariants(s.searchTerm).map(v=>termTotals.get(pf+'|'+v)).find(v=>v && v.orders>0);
+    return Object.assign({}, s, d, {negated:isNegated(s.campaignId,s.searchTerm,s.adGroupId), variantWarning: variant? {term:variant.term, orders:variant.orders, sales:variant.sales} : null});
+  })
     .filter(r=>{
       if(r.clicks < st.clicks) return false;
       if(r.spend < st.minSpend) return false;
@@ -1074,6 +1097,7 @@ function renderNegatives(product){
     {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>{const v=r.portfolioName||'(No Portfolio)';return `<span style="display:inline-block;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
     {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>{const v=r.campaignName||'';return `<span style="display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(v)}">${esc(v)}</span>`;}},
     {key:'negated',label:'Already Negated',l:true,noSort:true,cell:r=>r.negated?'<span class="badge negd">Yes</span>':'—'},
+    {key:'variantWarning',label:'',l:true,noSort:true,cell:r=>r.variantWarning?`<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Amazon's negative exact/phrase matching automatically includes close variants (plurals) — this can't be turned off. Negating &quot;${esc(r.searchTerm)}&quot; will likely ALSO block &quot;${esc(r.variantWarning.term)}&quot;, which has ${fInt(r.variantWarning.orders)} order(s) and ${fMoney(r.variantWarning.sales)} in sales of its own.">⚠ "${esc(r.variantWarning.term)}" convertește</span>`:''},
     {key:'clicks',label:'Clicks',type:'int',fmtTotal:t=>fInt(t.clicks)},
     {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
@@ -1134,8 +1158,17 @@ function renderNegatives(product){
   // table, so this reaches the same sort the column-header menu offers without scrolling over to find it.
   $('#ng-sortby').onchange=e=>{ const sort=sortFor(tab); sort.key=e.target.value; upd(); };
   $('#ng-sortdir').onchange=e=>{ const sort=sortFor(tab); sort.dir=+e.target.value; upd(); };
-  $('#ng-dlall').onclick=()=>exportNegatives(product,cand);
-  $('#ng-dlsel').onclick=()=>exportNegatives(product,cand.filter(r=>sel.has(r._uid)));
+  // Amazon's negative exact (and phrase) matching auto-includes plurals and can't be turned off — negating
+  // "trampolines" here would very likely ALSO block "trampoline" if that's a real, separate, converting search
+  // term (Alex, 2 oct 2026, live example: "e main keyword asta"). An explicit yes before export, not silent.
+  const confirmVariants=rows=>{
+    const withWarning=rows.filter(r=>r.variantWarning);
+    if(!withWarning.length) return true;
+    const list=withWarning.slice(0,8).map(r=>`"${r.searchTerm}" → ar bloca și "${r.variantWarning.term}" (${fInt(r.variantWarning.orders)} comenzi)`).join('\n');
+    return confirm(`${withWarning.length} din termenii selectați au un plural/singular care convertește bine — Amazon le neagă pe AMÂNDOUĂ automat la Negative Exact, fără să poți dezactiva asta:\n\n${list}${withWarning.length>8?`\n…+${withWarning.length-8} more`:''}\n\nContinui oricum exportul?`);
+  };
+  $('#ng-dlall').onclick=()=>{ if(confirmVariants(cand)) exportNegatives(product,cand); };
+  $('#ng-dlsel').onclick=()=>{ const chosen=cand.filter(r=>sel.has(r._uid)); if(confirmVariants(chosen)) exportNegatives(product,chosen); };
 }
 
 /* ============================ N-GRAM ============================ */
@@ -2627,7 +2660,7 @@ function exportNgramNegatives(entries, matchType, excludeExact){
           if(isNegated(c.campaignId, e.root, agId)){ skippedNegated++; return; }
           const dk=c.campaignId+'|'+agId+'|'+String(e.root).toLowerCase();
           if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
-          out.push(bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'Keyword Text':e.root,'Match Type':matchType}));
+          out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':e.root,'Match Type':matchType}));
         });
         return;
       }
@@ -2694,7 +2727,7 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
           if(isNegated(c.campaignId, term, agId)){ skippedNegated++; return; }
           const dk=c.campaignId+'|'+agId+'|'+term.toLowerCase();
           if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
-          out.push(bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'Keyword Text':term,'Match Type':'Negative Phrase'}));
+          out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Phrase'}));
         });
         return;
       }
