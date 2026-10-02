@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:28</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -598,7 +598,13 @@ function buildSbvRows(cfg){
       const c={'Product':P,'Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Start Date':startDate,'State':'enabled','Brand Entity ID':String(cfg.brandEntityId||'').trim(),'Budget Type':'Daily','Budget':cfg.budget,'Bid Optimization':cfg.sbBidOpt?'true':'false'};
       if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
       out.push(sbRow(c));
-      [['sbTos','Top of Search'],['sbDetail','Detail Page'],['sbHome','Home'],['sbOther','Other']].forEach(([k,pl])=>{ if(+cfg[k]>0) out.push(sbRow({'Product':P,'Entity':'Bidding Adjustment by Placement','Operation':'Create','Campaign ID':cname,'Placement':pl,'Percentage':cfg[k]})); });
+      // With Bid Optimization off Amazon REQUIRES the placement rows, even at 0% — the first real upload bounced
+      // with "bidAdjustmentsByPlacement cannot be empty for campaign with bid optimization set to false" when
+      // the 0% rows were skipped (2 oct 2026). The live SBV campaign in the export carries all four at 0.0.
+      [['sbTos','Top of Search'],['sbDetail','Detail Page'],['sbHome','Home'],['sbOther','Other']].forEach(([k,pl])=>{
+        const pct=+cfg[k]||0;
+        if(!cfg.sbBidOpt || pct>0) out.push(sbRow({'Product':P,'Entity':'Bidding Adjustment by Placement','Operation':'Create','Campaign ID':cname,'Placement':pl,'Percentage':String(pct)}));
+      });
       out.push(sbRow({'Product':P,'Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled'}));
       out.push(sbRow({'Product':P,'Entity':'Video Ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Name':cname,'State':'enabled','Landing Page URL':`https://www.amazon.${tld}/dp/${asin}`,'Landing Page Type':'Detail Page','Consent To Translate':'False','Creative ASINs':asin,'Video Asset IDs':String(cfg.videoAssetId||'').trim()}));
       grp.forEach(kw=>out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})));
