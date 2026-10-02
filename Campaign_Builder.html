@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 13:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -190,10 +190,10 @@ function renderNav(){
 function renderTab(){ ({brandtable:renderBrandTable, create:renderCampaignCreate, singlekw:renderSingleKw}[S.tab])(); }
 
 /* ============================ Reference Bulk (optional — powers naming detection) ============================ */
-let REF={campaigns:[]}; // {campaignId, campaignName, portfolioName, product}
+let REF={campaigns:[], brandEntityId:'', tld:'', videoAssets:[]}; // campaigns: {campaignId, campaignName, portfolioName, product}
 function normH(h){ return String(h).toLowerCase().replace(/\(.*?informational.*?\)/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
 function parseReferenceBulk(wb){
-  REF.campaigns=[];
+  REF.campaigns=[]; REF.brandEntityId=''; REF.tld=''; REF.videoAssets=[];
   wb.SheetNames.forEach(sn=>{
     const ws=wb.Sheets[sn]; const json=XLSX.utils.sheet_to_json(ws,{defval:''});
     if(!json.length) return;
@@ -204,7 +204,21 @@ function parseReferenceBulk(wb){
     const cProduct=headers.find(h=>normH(h)==='product');
     const cCampId=headers.find(h=>normH(h)==='campaign id');
     const cPortName=headers.find(h=>normH(h)==='portfolio name');
+    // SBV tab defaults, read off whatever Sponsored Brands rows exist: the account's Brand Entity ID (one per
+    // brand), the marketplace from any landing-page URL (amazon.de / .com / …), and every video asset already
+    // used in an ad — so a new SBV campaign can reuse a known video instead of the ID being retyped by hand.
+    const cBrandEnt=headers.find(h=>normH(h)==='brand entity id');
+    const cLanding=headers.find(h=>normH(h)==='landing page url');
+    const cVideo=headers.find(h=>normH(h)==='video asset ids');
+    const cCreativeAsins=headers.find(h=>normH(h)==='creative asins');
+    const cAdName=headers.find(h=>normH(h)==='ad name');
     json.forEach(row=>{
+      if(cBrandEnt && !REF.brandEntityId && String(row[cBrandEnt]||'').trim()) REF.brandEntityId=String(row[cBrandEnt]).trim();
+      if(cLanding && !REF.tld){ const m=String(row[cLanding]||'').match(/amazon\.([a-z.]+?)\//i); if(m) REF.tld=m[1].toLowerCase(); }
+      if(cVideo && String(row[cVideo]||'').trim()){
+        const id=String(row[cVideo]).trim();
+        if(!REF.videoAssets.some(v=>v.id===id)) REF.videoAssets.push({id, asins:String(cCreativeAsins?row[cCreativeAsins]:'').trim(), adName:String(cAdName?row[cAdName]:'').trim(), campaignName:String(row[cCampName]||'').trim()});
+      }
       if(String(row[cEntity]||'').trim().toLowerCase()!=='campaign') return;
       const prod = cProduct? (/brand/i.test(row[cProduct])?'SB':/display/i.test(row[cProduct])?'SD':'SP') : (/brand/i.test(sn)?'SB':/display/i.test(sn)?'SD':'SP');
       REF.campaigns.push({campaignId:String(cCampId?row[cCampId]:'').trim(), campaignName:String(row[cCampName]||'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod});
@@ -545,12 +559,51 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
-function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2,negateOwn:false}; } return CFG; }
+function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2,negateOwn:false,brandEntityId:'',videoAssetId:'',landingAsin:'',tld:'',sbBidOpt:false,sbTos:'0',sbDetail:'0',sbHome:'0',sbOther:'0'}; } return CFG; }
+function rowHeaders(cfg){ return cfg.type==='sbv'? SB_HEADERS : BULK_HEADERS; }
+function isKwType(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='sbv'; }
+// Sponsored Brands Video — structure copied 1:1 from a live SBV campaign in a real export (Createk,
+// SBV_EXACT_TPS_B0GN93HNM6_20_MAY26_PB): Campaign → Bidding Adjustment by Placement → Ad Group → Video Ad →
+// Keyword → Negative Keyword, all on the "SB Multi Ad Group Campaigns" sheet. No Product ad rows (the product is
+// the Video Ad's Creative ASIN), no Bidding Strategy (SB has "Bid Optimization" true/false instead), Budget +
+// Budget Type instead of Daily Budget. The video itself can't travel in a bulk file — it has to be uploaded to
+// the Amazon Ads asset library first, and only its asset ID is referenced here.
+function buildSbvRows(cfg){
+  const out=[]; const matches=selectedMatches(cfg);
+  const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
+  const start=Math.max(1,parseInt(cfg.startNum||1)||1);
+  const numbered=per>0;
+  const existingNames=new Set(REF.campaigns.map(c=>c.campaignName));
+  const today=new Date(); const startDate=`${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  const asin=String(cfg.landingAsin||cfg.asin||'').trim().toUpperCase();
+  const tld=String(cfg.tld||REF.tld||'de').trim().replace(/^\.+/,'');
+  const P='Sponsored Brands';
+  matches.forEach(match=>{
+    kwGroups(cfg).forEach((grp,gi)=>{
+      const num=numbered? start+gi : null;
+      let cname=buildName(cfg,match,num);
+      if(numbered){ let n2=num; while(existingNames.has(cname)){ n2++; cname=buildName(cfg,match,n2); } }
+      else { let base=cname, v=1; while(existingNames.has(cname)){ v++; cname=base+'_'+v; } }
+      existingNames.add(cname);
+      const agname=cname;
+      const c={'Product':P,'Entity':'Campaign','Operation':'Create','Campaign ID':cname,'Campaign Name':cname,'Start Date':startDate,'State':'enabled','Brand Entity ID':String(cfg.brandEntityId||'').trim(),'Budget Type':'Daily','Budget':cfg.budget,'Bid Optimization':cfg.sbBidOpt?'true':'false'};
+      if(String(cfg.portfolioId||'').trim()) c['Portfolio ID']=cfg.portfolioId.trim();
+      out.push(sbRow(c));
+      [['sbTos','Top of Search'],['sbDetail','Detail Page'],['sbHome','Home'],['sbOther','Other']].forEach(([k,pl])=>{ if(+cfg[k]>0) out.push(sbRow({'Product':P,'Entity':'Bidding Adjustment by Placement','Operation':'Create','Campaign ID':cname,'Placement':pl,'Percentage':cfg[k]})); });
+      out.push(sbRow({'Product':P,'Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled'}));
+      out.push(sbRow({'Product':P,'Entity':'Video Ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Name':cname,'State':'enabled','Landing Page URL':`https://www.amazon.${tld}/dp/${asin}`,'Landing Page Type':'Detail Page','Consent To Translate':'False','Creative ASINs':asin,'Video Asset IDs':String(cfg.videoAssetId||'').trim()}));
+      grp.forEach(kw=>out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})));
+      // Entity spelled exactly as the SB Multi Ad Group export spells it ("Negative Keyword", capital K).
+      negList(cfg.negExact).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Exact'})));
+      negList(cfg.negPhrase).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Phrase'})));
+    });
+  });
+  return out;
+}
 const AUTO_GROUPS=[{key:'autoClose',expr:'close-match',label:'Close Match'},{key:'autoLoose',expr:'loose-match',label:'Loose Match'},{key:'autoSub',expr:'substitutes',label:'Substitutes'},{key:'autoComp',expr:'complements',label:'Complements'}];
 // "Branded campaigns" is the manual keyword builder with one twist: every keyword typed gets the brand name put in
 // front of it automatically ("vitamin b12" + brand "lunakai" -> targets "lunakai vitamin b12"), so the list is just
 // the product/generic words. Everything else (match types, naming, SKUs, bulk rows) is identical to manual.
-function isKwType(cfg){ return cfg.type==='manual' || cfg.type==='brand'; }
 function brandedKeyword(cfg, kw){
   const brand=String(cfg.brandName||'').trim(); const k=String(kw||'').trim();
   if(!brand || !k) return k;
@@ -562,7 +615,7 @@ function brandedKeyword(cfg, kw){
 // campaign-wide in practice. Product Targeting and SD campaigns don't get them: Amazon rejects a negative
 // keyword in an ad group that has product targeting ("Ad group cannot have both keyword(theme) and product
 // attribute"), and SD has no keyword negatives.
-function hasNegatives(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='auto'; }
+function hasNegatives(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='auto' || cfg.type==='sbv'; }
 function negList(text){ const seen=new Set(); return linesOf(text).filter(k=>{ const l=k.toLowerCase(); if(seen.has(l)) return false; seen.add(l); return true; }); }
 function negativeRowsFor(cfg, cname, agname, alreadyExact){
   const out=[]; const skip=alreadyExact||new Set();
@@ -596,7 +649,7 @@ function templateFor(cfg,match){
   if(!match||match==='AUTO') return null;
   const pfName=getPortfolioNameById(cfg.btAccount, cfg.portfolioId);
   if(!pfName) return null;
-  return detectNamingTemplate(pfName, match, cfg.type==='sd'?'SD':'SP', cfg.prefix);
+  return detectNamingTemplate(pfName, match, cfg.type==='sd'?'SD':cfg.type==='sbv'?'SB':'SP', cfg.prefix);
 }
 // If a naming template was found (an existing campaign with this prefix/match in this portfolio), copy its
 // suffix (with the month/year refreshed) instead of the manual fields — same principle as Harvesting.
@@ -646,6 +699,7 @@ function recomputeSkusFromChildren(cfg){
   cfg.skus=skus.join('\n');
 }
 function buildCampaignRows(cfg){
+  if(cfg.type==='sbv') return buildSbvRows(cfg);
   const out=[]; const matches=selectedMatches(cfg);
   const skus=linesOf(cfg.skus);
   const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
@@ -722,7 +776,12 @@ function builderIssues(cfg){
     const conflicts=negativeConflicts(cfg, kwGroups(cfg).flat());
     if(conflicts.length) iss.push('A negative would block your own target — '+conflicts[0]+(conflicts.length>1?` (+${conflicts.length-1} more)`:'')+'.');
   }
-  if(!linesOf(cfg.skus).length) iss.push('Select a portfolio (or add SKUs manually) — at least one SKU is required.');
+  if(cfg.type==='sbv'){
+    if(!String(cfg.brandEntityId||'').trim()) iss.push('Enter the Brand Entity ID (ENTITY…) — Amazon requires it on every Sponsored Brands campaign. Upload a Reference Bulk to fill it automatically.');
+    if(!String(cfg.videoAssetId||'').trim()) iss.push('Enter the Video Asset ID (amzn1.assetlibrary.asset1.…) — upload the video in Amazon Ads → Creative assets first, the bulk file can only reference it.');
+    const a=String(cfg.landingAsin||cfg.asin||'').trim();
+    if(!/^B0[A-Z0-9]{8}$/i.test(a)) iss.push('Landing/creative ASIN must be a 10-character ASIN (B0…) — this is the product the video ad sends shoppers to.');
+  } else if(!linesOf(cfg.skus).length) iss.push('Select a portfolio (or add SKUs manually) — at least one SKU is required.');
   return iss;
 }
 function namingBannerHtml(cfg){
@@ -756,6 +815,7 @@ function renderCampaignCreate(){
           <button data-t="auto" class="${cfg.type==='auto'?'active':''}">Auto targeting</button>
           <button data-t="sd" class="${cfg.type==='sd'?'active':''}">SD Competitor Targeting</button>
           <button data-t="brand" class="${cfg.type==='brand'?'active':''}">Branded campaigns</button>
+          <button data-t="sbv" class="${cfg.type==='sbv'?'active':''}">SBV (Brands Video)</button>
         </div>
       </div>
       <div class="ctrls" id="cc-source" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
@@ -809,7 +869,23 @@ function renderCampaignCreate(){
         <div class="field"><label>Agency suffix</label><input type="text" id="cc-agency" value="${esc(cfg.agency)}" style="width:100px;"></div>
         <div class="field"><label>Separator</label><input type="text" id="cc-sep" value="${esc(cfg.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
       </div>
-      <div class="ctrls" style="margin-top:12px;">
+      ${cfg.type==='sbv'? `<div class="ctrls" style="margin-top:12px;">
+        <div class="field"><label>Brand Entity ID</label><input type="text" id="cc-brandentity" value="${esc(cfg.brandEntityId||REF.brandEntityId||'')}" placeholder="ENTITY…" style="width:200px;"></div>
+        <div class="field grow"><label>Video Asset ID (from Amazon Ads → Creative assets)</label><input type="text" id="cc-videoasset" list="cc-videoasset-list" value="${esc(cfg.videoAssetId||'')}" placeholder="amzn1.assetlibrary.asset1.…:version_v1" style="width:100%;"><datalist id="cc-videoasset-list">${REF.videoAssets.map(v=>`<option value="${esc(v.id)}">${esc([v.asins,v.campaignName||v.adName].filter(Boolean).join(' — '))}</option>`).join('')}</datalist></div>
+        <div class="field"><label>Landing / creative ASIN</label><input type="text" id="cc-landingasin" value="${esc(cfg.landingAsin||cfg.asin||'')}" placeholder="B0H9MBP1TM" style="width:130px;"></div>
+        <div class="field"><label>Marketplace (amazon.?)</label><input type="text" id="cc-tld" value="${esc(cfg.tld||REF.tld||'de')}" placeholder="de" style="width:70px;"></div>
+      </div>
+      <div class="hint" style="margin:4px 0 8px;">The .mp4 itself can't go through a bulk file — upload it once in Amazon Ads (Creative assets), then paste its asset ID above. ${REF.videoAssets.length? `${REF.videoAssets.length} video(s) already used in this account are suggested in the dropdown.` : 'Upload a Reference Bulk to get the account\'s Brand Entity ID and existing videos filled in.'} Landing page = https://www.amazon.${esc(cfg.tld||REF.tld||'de')}/dp/${esc(cfg.landingAsin||cfg.asin||'…')}</div>
+      <div class="ctrls">
+        <div class="field"><label>Daily Budget (€)</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
+        <div class="field"><label>Keyword Bid (€)</label><input type="number" id="cc-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="cc-sbbidopt" ${cfg.sbBidOpt?'checked':''}> Bid Optimization (Amazon auto-adjusts bids)</label>
+        <div class="field"><label>Top of Search %</label><input type="number" id="cc-sbtos" value="${esc(cfg.sbTos)}" style="width:90px;"></div>
+        <div class="field"><label>Detail Page %</label><input type="number" id="cc-sbdetail" value="${esc(cfg.sbDetail)}" style="width:90px;"></div>
+        <div class="field"><label>Home %</label><input type="number" id="cc-sbhome" value="${esc(cfg.sbHome)}" style="width:90px;"></div>
+        <div class="field"><label>Other %</label><input type="number" id="cc-sbother" value="${esc(cfg.sbOther)}" style="width:90px;"></div>
+        <div class="field"><label>Portfolio ID (optional)</label><input type="text" id="cc-port" value="${esc(cfg.portfolioId)}" placeholder="numeric" style="width:140px;"></div>
+      </div>` : `<div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Daily Budget ($)</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
         <div class="field"><label>Default Bid ($)</label><input type="number" id="cc-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
         <div class="field"><label>Bidding Strategy</label><select id="cc-strat">${strat.map(x=>`<option ${cfg.strategy===x?'selected':''}>${x}</option>`).join('')}</select></div>
@@ -817,13 +893,13 @@ function renderCampaignCreate(){
         <div class="field"><label>Product Pages %</label><input type="number" id="cc-pp" value="${esc(cfg.pp)}" style="width:90px;"></div>
         <div class="field"><label>Rest of Search %</label><input type="number" id="cc-ros" value="${esc(cfg.ros)}" style="width:90px;"></div>
         <div class="field"><label>Portfolio ID (optional)</label><input type="text" id="cc-port" value="${esc(cfg.portfolioId)}" placeholder="numeric" style="width:140px;"></div>
-      </div>
+      </div>`}
       ${cfg.type==='brand'? `<div class="ctrls" style="margin-top:12px;">
         <div class="field"><label>Brand name (goes in front of every keyword)</label><input type="text" id="cc-brandname" value="${esc(cfg.brandName||'')}" placeholder="lunakai" style="width:200px;"></div>
         <div class="field grow" style="align-self:center;"><div class="hint">Type only the product/generic words below — each line is targeted as <b>${esc(String(cfg.brandName||'').trim()||'brand')} + keyword</b> (e.g. "vitamin b12" → "${esc(String(cfg.brandName||'').trim()||'lunakai')} vitamin b12"). A line that already contains the brand is left as typed.</div></div>
       </div>` : ''}
       <div class="ctrls" style="margin-top:12px;align-items:stretch;">
-        <div class="field grow"><label>SKUs to advertise (auto-filled from the portfolio above — still editable)</label><textarea class="kwbox" id="cc-skus" style="min-height:120px;" placeholder="SKU-001&#10;SKU-002">${esc(cfg.skus)}</textarea></div>
+        <div class="field grow" style="${cfg.type==='sbv'?'display:none;':''}"><label>SKUs to advertise (auto-filled from the portfolio above — still editable)</label><textarea class="kwbox" id="cc-skus" style="min-height:120px;" placeholder="SKU-001&#10;SKU-002">${esc(cfg.skus)}</textarea></div>
         <div class="field grow" id="cc-kw-field" style="${isKwType(cfg)?'':'display:none;'}"><label>${cfg.type==='brand'?'Keywords (one per line — brand name added automatically)':'Keywords (one per line)'}</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="${cfg.type==='brand'?'vitamin b12&#10;magnesium glycinate':'blue widget&#10;widget for desk'}">${esc(cfg.keywords)}</textarea></div>
         <div class="field grow" id="cc-pt-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'':'display:none;'}"><label>${cfg.type==='sd'?'Competitor ASINs to target (one per line)':'ASINs to target (one per line)'}</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
       </div>
@@ -852,7 +928,12 @@ function renderCampaignCreate(){
   const bindText=(id,key)=>{ const e=$('#'+id); e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
   bindText('cc-prefix','prefix'); bindText('cc-tip','tip'); bindText('cc-brand','brand'); bindText('cc-asin','asin');
   bindText('cc-agent','agent'); bindText('cc-budget','budget');
-  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-sep','separator'); bindText('cc-bid','bid'); bindText('cc-tos','tos'); bindText('cc-pp','pp'); bindText('cc-ros','ros');
+  bindText('cc-my','monthyear'); bindText('cc-agency','agency'); bindText('cc-sep','separator'); bindText('cc-bid','bid');
+  const bindOpt=(id,key)=>{ const e=$('#'+id); if(e) e.oninput=()=>{ cfg[key]=e.value; upd(); }; };
+  bindOpt('cc-tos','tos'); bindOpt('cc-pp','pp'); bindOpt('cc-ros','ros');
+  bindOpt('cc-brandentity','brandEntityId'); bindOpt('cc-videoasset','videoAssetId'); bindOpt('cc-landingasin','landingAsin'); bindOpt('cc-tld','tld');
+  bindOpt('cc-sbtos','sbTos'); bindOpt('cc-sbdetail','sbDetail'); bindOpt('cc-sbhome','sbHome'); bindOpt('cc-sbother','sbOther');
+  const sbBidOptEl=$('#cc-sbbidopt'); if(sbBidOptEl) sbBidOptEl.onchange=()=>{ cfg.sbBidOpt=sbBidOptEl.checked; updateBuilderOutputs(); };
   bindText('cc-port','portfolioId'); bindText('cc-skus','skus'); bindText('cc-kw','keywords');
   bindText('cc-per','perCampaign');
   const brandNameEl=$('#cc-brandname'); if(brandNameEl) brandNameEl.oninput=()=>{ cfg.brandName=brandNameEl.value; upd(); };
@@ -861,7 +942,7 @@ function renderCampaignCreate(){
   const ptAsinsEl=$('#cc-pt-asins'); if(ptAsinsEl) ptAsinsEl.oninput=()=>{ cfg.targetAsins=ptAsinsEl.value; upd(); };
   const ptExpEl=$('#cc-pt-expanded'); if(ptExpEl) ptExpEl.onchange=()=>{ cfg.ptExpanded=ptExpEl.checked; updateBuilderOutputs(); };
   $('#cc-start').oninput=()=>{ cfg.startNum=$('#cc-start').value; cfg.startNumTouched=true; upd(); };
-  $('#cc-strat').onchange=e=>{ cfg.strategy=e.target.value; };
+  const stratEl=$('#cc-strat'); if(stratEl) stratEl.onchange=e=>{ cfg.strategy=e.target.value; };
   $('#cc-acc').onchange=e=>{
     cfg.btAccount=e.target.value; cfg.portfolioId=''; cfg.childSel={}; cfg.skus='';
     renderCampaignCreate();
@@ -921,6 +1002,8 @@ function renderCampaignCreate(){
     // Nudge the prefix to this account's own "SDPT" (SD Product Targeting) convention when switching into
     // the SD tab, same idea as any other default — only if the user hasn't already typed something else.
     if(b.dataset.t==='sd' && cfg.prefix==='BSQ') cfg.prefix='SDPT';
+    // Same nudge for SBV (the account's own convention: SBV_EXACT_TPS_B0GN93HNM6_20_MAY26_PB has no Tip segment).
+    if(b.dataset.t==='sbv' && (cfg.prefix==='BSQ'||cfg.prefix==='SDPT')){ cfg.prefix='SBV'; if(cfg.tip==='BRND') cfg.tip=''; }
     cfg.type=b.dataset.t; renderCampaignCreate();
   });
   $('#cc-export').onclick=exportCreatedCampaigns;
@@ -944,15 +1027,18 @@ function updateBuilderOutputs(){
   const targetSummary = cfg.type==='auto'? ` · ${nCamp*nGroups} auto targeting row(s) (${nGroups} group(s)/campaign)`
     : (cfg.type==='pt'||cfg.type==='sd')? ` · ${nPt} ${cfg.type==='sd'?'contextual targeting':'product targeting'} row(s)`
     : ` · ${nKw} keyword(s)`;
-  $('#cc-summary').textContent = `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${targetSummary}`;
+  $('#cc-summary').textContent = cfg.type==='sbv'
+    ? `Will create: ${nCamp} SBV campaign(s) · ${nCamp} ad group(s) · ${nCamp} video ad(s)${targetSummary} — sheet "${SB_SHEET}"`
+    : `Will create: ${nCamp} campaign(s) · ${nCamp} ad group(s) · ${nAds} product ad(s)${targetSummary}`;
   const iss=builderIssues(cfg);
   $('#cc-issues').innerHTML = iss.length? `<span style="color:#dc2626;">${esc(iss[0])}</span>`:'<span style="color:#15803d;">Ready to export</span>';
   const exp=$('#cc-export'); if(exp) exp.disabled = iss.length>0;
   const rows=buildCampaignRows(cfg);
-  const H=BULK_HEADERS, ix=n=>H.indexOf(n);
-  const nNeg=rows.filter(r=>r[ix('Entity')]==='Negative keyword').length;
+  const H=rowHeaders(cfg), ix=n=>H.indexOf(n);
+  const nNeg=rows.filter(r=>/^negative keyword$/i.test(r[ix('Entity')])).length;
   if(nNeg) $('#cc-summary').textContent+=` · ${nNeg} negative keyword row(s)`;
-  const pr=rows.map(r=>({entity:r[ix('Entity')],campaign:r[ix('Campaign Name')]||r[ix('Campaign ID')],ag:r[ix('Ad Group ID')],detail:r[ix('Keyword Text')]||r[ix('SKU')]||r[ix('Placement')]||r[ix('Product Targeting Expression')]||r[ix('Targeting Expression')]||'',match:r[ix('Match Type')]||'',bid:r[ix('Bid')]||r[ix('Ad Group Default Bid')]||r[ix('Daily Budget')]||r[ix('Budget')]||r[ix('Percentage')]||''}));
+  const g=(r,n)=>{ const i=ix(n); return i>=0? r[i] : ''; };
+  const pr=rows.map(r=>({entity:g(r,'Entity'),campaign:g(r,'Campaign Name')||g(r,'Campaign ID'),ag:g(r,'Ad Group ID'),detail:g(r,'Keyword Text')||g(r,'SKU')||g(r,'Placement')||g(r,'Product Targeting Expression')||g(r,'Targeting Expression')||g(r,'Video Asset IDs')||'',match:g(r,'Match Type')||'',bid:g(r,'Bid')||g(r,'Ad Group Default Bid')||g(r,'Daily Budget')||g(r,'Budget')||g(r,'Percentage')||''}));
   let h='<div class="tablewrap"><table><thead><tr><th class="l">Entity</th><th class="l">Campaign</th><th class="l">Ad Group</th><th class="l">Keyword / SKU / Placement</th><th class="l">Match</th><th>Bid / Budget</th></tr></thead><tbody>';
   pr.slice(0,300).forEach(r=>{ h+=`<tr><td class="l"><b>${esc(r.entity)}</b></td><td class="l">${esc(r.campaign)}</td><td class="l">${esc(r.ag)}</td><td class="l">${esc(r.detail)}</td><td class="l">${esc(r.match)}</td><td>${esc(r.bid)}</td></tr>`; });
   if(!pr.length) h+='<tr><td colspan="6" class="l" style="padding:22px;color:#9aa3af;text-align:center;">Fill in the setup above to see the rows that will be generated.</td></tr>';
@@ -1186,14 +1272,19 @@ function exportSkwCampaigns(){
 
 /* ============================ exports ============================ */
 const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","Tactic","Cost Type","State","Daily Budget","Budget Type","Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression","Targeting Expression"];
+// Sponsored Brands lives in its own sheet ("SB Multi Ad Group Campaigns") with its own columns — copied verbatim
+// from a real Amazon export (Createk, 2 oct 2026), minus the read-only "(Informational only)" and metric columns.
+const SB_HEADERS=["Product","Entity","Operation","Campaign ID","Portfolio ID","Ad Group ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Ad Name","Start Date","End Date","State","Brand Entity ID","Budget Type","Budget","Bid Optimization","Product Location","Bid","Placement","Percentage","Keyword Text","Match Type","Native Language Keyword","Native Language Locale","Product Targeting Expression","Landing Page URL","Landing Page ASINs","Landing Page Type","Brand Name","Consent To Translate","Brand Logo Asset ID","Brand Logo Crop","Custom Images","Creative Headline","Creative ASINs","Video Asset IDs","Subpages","Product Exclusions","Ad Title","Sites"];
+const SB_SHEET='SB Multi Ad Group Campaigns';
 function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
-function writeBulk(rows,filename,sheet){ const aoa=[BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
+function sbRow(f){ return SB_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
+function writeBulk(rows,filename,sheet,headers){ const aoa=[headers||BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
 function exportCreatedCampaigns(){
   const cfg=ensureBuilderInit(); const iss=builderIssues(cfg);
   if(iss.length){ alert('Please fix before export:\n\n• '+iss.join('\n• ')); return; }
   const rows=buildCampaignRows(cfg);
   const fn=(buildName(cfg,selectedMatches(cfg)[0])||'campaigns').replace(/[^a-z0-9_]+/gi,'_').slice(0,50);
-  writeBulk(rows, fn+'_bulk.xlsx', cfg.type==='sd'?'Sponsored Display Campaigns':'Sponsored Products Campaigns');
+  writeBulk(rows, fn+'_bulk.xlsx', cfg.type==='sd'?'Sponsored Display Campaigns':cfg.type==='sbv'?SB_SHEET:'Sponsored Products Campaigns', rowHeaders(cfg));
 }
 
 /* ============================ init ============================ */
