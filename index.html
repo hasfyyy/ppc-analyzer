@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 14:28</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 18:20</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1684,6 +1684,10 @@ function renderPauseCampaigns(){
           <option value="High ACoS" ${st.reasonFilter==='High ACoS'?'selected':''}>Has Sales / High ACoS (${allRows.filter(r=>r.reason==='High ACoS').length})</option>
         </select></div>
       </div>
+      <div class="ctrls" style="margin-top:10px;">
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="pc-budget1" ${st.budget1!==false?'checked':''}> Pune bugetul la 1 pe campaniile puse pe pauză</label>
+        <div class="hint" style="align-self:center;">Exportul scrie și ${S.product==='SP'?'Daily Budget':'Budget'} = 1 pe fiecare rând de pauză — o campanie reactivată din greșeală nu mai cheltuie bugetul vechi.</div>
+      </div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('Underperforming Campaigns',fInt(rows.length))}${kpi('Wasted Spend',fMoney(rows.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0)),'red')}${kpi('Total Spend',fMoney(totals.spend))}${kpi('Selected to Pause',fInt(rows.filter(r=>sel.has(r._uid)).length),'pink')}
@@ -1704,15 +1708,25 @@ function renderPauseCampaigns(){
   $('#pc-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
   $('#pc-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#pc-camp').oninput=debounce(()=>{st.camp=$('#pc-camp').value; upd();},220);
-  $('#pc-dlall').onclick=()=>exportCampaignsPause(S.product,rows);
-  $('#pc-pause').onclick=()=>exportCampaignsPause(S.product,rows.filter(r=>sel.has(r._uid)));
+  $('#pc-budget1').onchange=e=>{ st.budget1=e.target.checked; };
+  $('#pc-dlall').onclick=()=>exportCampaignsPause(S.product,rows,st.budget1!==false);
+  $('#pc-pause').onclick=()=>exportCampaignsPause(S.product,rows.filter(r=>sel.has(r._uid)),st.budget1!==false);
 }
-function exportCampaignsPause(product,rows){
+// Pausing also drops the budget to $1 (Alex's convention — a paused campaign left at its old budget spends
+// the full amount the moment someone re-enables it by mistake; $1 is the safety net). SP keeps its budget in
+// "Daily Budget"; SB and SD use "Budget" (+ Budget Type) — same column split the bulk export itself uses.
+function exportCampaignsPause(product,rows,setBudget1){
   if(!rows.length){ alert('No campaigns selected.'); return; }
   const prod=productLabel(product);
-  const out=rows.map(r=>bulkRow(Object.assign({'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'State':'paused'}, r.portfolioId?{'Portfolio ID':r.portfolioId}:{})));
+  const budgetCol = product==='SP' ? 'Daily Budget' : 'Budget';
+  const out=rows.map(r=>{
+    const f={'Product':prod,'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'State':'paused'};
+    if(r.portfolioId) f['Portfolio ID']=r.portfolioId;
+    if(setBudget1){ f[budgetCol]='1'; if(product!=='SP') f['Budget Type']='Daily'; }
+    return bulkRow(f);
+  });
   writeBulk(out, productFilePrefix(product)+'campaigns_pause_bulk.xlsx', productSheetName(product));
-  alert(`Exported ${out.length} campaign pause update(s).`);
+  alert(`Exported ${out.length} campaign pause update(s)${setBudget1?` — ${budgetCol} set to 1 on each`:''}.`);
 }
 
 /* ============================ HARVESTING ============================ */
@@ -2729,7 +2743,7 @@ function exportProductsEnable(enableRows, product){
 }
 
 /* ============================ exports ============================ */
-const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression","Targeting Expression"];
+const BULK_HEADERS=["Product","Entity","Operation","Campaign ID","Ad Group ID","Portfolio ID","Ad ID","Keyword ID","Product Targeting ID","Targeting ID","Campaign Name","Ad Group Name","Start Date","End Date","Targeting Type","State","Daily Budget","Budget Type","Budget","SKU","Ad Group Default Bid","Bid","Keyword Text","Native Language Keyword","Native Language Locale","Match Type","Bidding Strategy","Placement","Percentage","Product Targeting Expression","Targeting Expression"];
 function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
 function writeBulk(rows,filename,sheet){ const aoa=[BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
 function exportCSV(columns,rows,name){
