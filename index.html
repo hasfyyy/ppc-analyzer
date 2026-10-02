@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-09-30 15:35</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 09:44</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1166,6 +1166,7 @@ const STOP=new Set([
 function wordsOf(s){ return String(s||'').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); }
 function renderNgram(){
   const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2;
+  if(st.brandNegTerms===undefined) st.brandNegTerms=''; if(st.brandNegExcludeExact===undefined) st.brandNegExcludeExact=true;
   // sidebar + product filter
   let src=stByToggle().filter(passesSidebar);
   const map=new Map();
@@ -1217,6 +1218,15 @@ function renderNgram(){
     <div class="sidebar">${sidebarHtml()}</div>
     <div class="content">
       <div class="kpis">${kpiRowFromAgg(agg(src))}</div>
+      <div class="card pad">
+        <h3 class="sectitle">Brand / Misspelling Negation</h3>
+        <div class="hint" style="margin:8px 0;">Negă brandul propriu (și greșeli de scriere) ca Negative Phrase, în toate campaniile Auto/Broad/Phrase/PT enabled, din TOATE portofoliile — nu doar cel filtrat mai jos. Scopul: o căutare de brand nu rămâne izolată pe o campanie Branded dedicată dacă și campaniile Discovery o pot prinde la fel de bine, ceea ce le umflă artificial ACoS-ul (brandul convertește mereu mai bine decât genericul).</div>
+        <div class="ctrls">
+          <div class="field grow"><label>Brand terms + misspellings (comma-separated)</label><input type="text" id="ng-brandterms" placeholder="e.g. mybrand, mibrand, my-brand" value="${esc(st.brandNegTerms||'')}"></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ng-brand-exexcat" ${st.brandNegExcludeExact!==false?'checked':''}> Exclude Exact campaigns</label>
+          <button class="btn grad-red" id="ng-brand-export" style="align-self:end;">Negate Brand (toate portofoliile)</button>
+        </div>
+      </div>
       <div class="card pad">
         <div class="ctrls">
           <div class="field"><label>Min Impressions</label><input type="number" id="ng-mi" value="${mi}"></div>
@@ -1272,6 +1282,13 @@ function renderNgram(){
   $('#ng-csv').onclick=()=>exportCSV(cols,rows,'ngram');
   $('#ng-negtype').onchange=e=>{ st.negtype=e.target.value; };
   $('#ng-exexcamp').onchange=e=>{ st.exExactCamp=e.target.checked; };
+  $('#ng-brandterms').oninput=debounce(()=>{ st.brandNegTerms=$('#ng-brandterms').value; },300);
+  $('#ng-brand-exexcat').onchange=e=>{ st.brandNegExcludeExact=e.target.checked; };
+  $('#ng-brand-export').onclick=()=>{
+    const terms=(st.brandNegTerms||'').split(',').map(s=>s.trim()).filter(Boolean);
+    if(!terms.length){ alert('Scrie cel puțin un brand term sau misspelling, separate prin virgulă.'); return; }
+    exportBrandNegatives(terms, st.brandNegExcludeExact!==false);
+  };
   $('#ng-neg').onclick=()=>{
     const chosen = sel.size? rows.filter(r=>sel.has(r._uid)) : rows;
     if(!chosen.length){ alert('No n-grams to export.'); return; }
@@ -2518,6 +2535,7 @@ function exportCSV(columns,rows,name){
 }
 function isExactCampaign(name){ return /(^|[^a-z])exact([^a-z]|$)/i.test(String(name||'')); }
 function isBroadOrPhraseCampaignName(name){ return /(^|[^a-z])(broad|phrase)([^a-z]|$)/i.test(String(name||'')); }
+function isPatCampaignName(name){ return /(^|[^a-z])(pat|pt)([^a-z]|$)/i.test(String(name||'')); }
 // Negate a root across every Broad/Phrase/Auto campaign in the SAME portfolio as where it was found — not
 // just the specific ad group(s) it happened to already show up in. A bad root discovered via one Auto
 // campaign's search terms is just as likely to get triggered again by any other Broad/Phrase/Auto campaign
@@ -2559,6 +2577,41 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no enabled Broad/Phrase/Auto campaign found in the relevant portfolio(s). Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
   writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
   alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio — not just where each root's search terms happened to already appear.${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+}
+// Brand/misspelling negation — a different problem from the wasted-spend n-grams above, so it's a separate
+// flow: keep a brand search isolated in its own dedicated Branded campaign, not scattered across Discovery
+// (Auto/Broad/Phrase/PT) campaigns too, where it would skew THEIR performance data with artificially good
+// brand-term ACoS (Alex, 2 oct 2026: "noi vrem sa negam... ca sa nu izolam brand de generic"). Account-wide —
+// every portfolio, not just the one currently filtered — since a brand term can surface in any of them.
+// "PT" campaign detection is both by name (isPatCampaignName) AND structural (has an enabled ASIN/category
+// target) — naming conventions aren't always followed, but a campaign that actually targets ASINs/categories
+// instead of keywords IS a PT campaign regardless of what it's called (Alex, 2 oct 2026: "mai usor").
+function exportBrandNegatives(brandTermsArr, excludeExact){
+  const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
+  const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const singleKw=singleKwCampaigns(S.product);
+  const campHasPtTarget=new Set();
+  DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===S.product) campHasPtTarget.add(t.campaignId); });
+  const eligible=DATA.campaigns.filter(c=>{
+    const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
+    if(c.product!==S.product || c.state!=='enabled') return false;
+    if(excludeExact && isExactCampaign(c.campaignName)) return false;
+    // Same reasoning as exportNgramNegatives: a single-kw manual campaign's one keyword IS the point, don't
+    // risk blocking it via a brand/misspelling term that happens to overlap it.
+    if(!isAuto && singleKw.has(c.campaignId)) return false;
+    return isAuto || isBroadOrPhraseCampaignName(c.campaignName) || isPatCampaignName(c.campaignName) || campHasPtTarget.has(c.campaignId);
+  });
+  brandTermsArr.forEach(term=>{
+    eligible.forEach(c=>{
+      if(isNegatedCampaignWide(c.campaignId, term)){ skippedNegated++; return; }
+      const dk=c.campaignId+'|'+term.toLowerCase();
+      if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
+      out.push(bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Phrase'}));
+    });
+  });
+  if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no eligible Auto/Broad/Phrase/PT campaign found, or no brand terms typed.'); return; }
+  writeBulk(out, 'brand_negatives_phrase.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} Negative Phrase row(s) across ${campsAll.size} campaign(s), every portfolio${excludeExact?' (Exact campaigns excluded)':''}, for ${brandTermsArr.length} brand term(s)/misspelling(s).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 // Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
