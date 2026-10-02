@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 09:52</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 10:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2602,10 +2602,23 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
   const exactKwCamps=campaignsWithEnabledExactKw(S.product);
   const campHasPtTarget=new Set();
   DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===S.product) campHasPtTarget.add(t.campaignId); });
+  // The dedicated Branded campaign itself — the one this whole feature exists to PROTECT — targets the exact
+  // brand terms being negated here, as a keyword or PT expression (e.g. "lunakai", "lunakai vitamins"). Detected
+  // structurally (the keyword/target text contains the term), not by name — same reasoning as Exact above:
+  // exporting a negative INTO the campaign that's supposed to own this traffic would block its own targeting
+  // (Alex, 2 oct 2026: "care contine kws de brand inauntru").
+  const termsLower=brandTermsArr.map(t=>t.toLowerCase()).filter(Boolean);
+  const brandKwCamps=new Set();
+  DATA.targets.forEach(t=>{
+    if(t.product!==S.product || t.state!=='enabled') return;
+    const text=String(t.text||'').toLowerCase();
+    if(termsLower.some(term=>term && text.includes(term))) brandKwCamps.add(t.campaignId);
+  });
   const eligible=DATA.campaigns.filter(c=>{
     const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
     if(c.product!==S.product || c.state!=='enabled') return false;
     if(excludeExact && (isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId))) return false;
+    if(brandKwCamps.has(c.campaignId)) return false;
     // Same reasoning as exportNgramNegatives: a single-kw manual campaign's one keyword IS the point, don't
     // risk blocking it via a brand/misspelling term that happens to overlap it.
     if(!isAuto && singleKw.has(c.campaignId)) return false;
@@ -2621,7 +2634,7 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
   });
   if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no eligible Auto/Broad/Phrase/PT campaign found, or no brand terms typed.'); return; }
   writeBulk(out, 'brand_negatives_phrase.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} Negative Phrase row(s) across ${campsAll.size} campaign(s), every portfolio${excludeExact?' (Exact campaigns excluded)':''}, for ${brandTermsArr.length} brand term(s)/misspelling(s).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+  alert(`Exported ${out.length} Negative Phrase row(s) across ${campsAll.size} campaign(s), every portfolio${excludeExact?' (Exact campaigns excluded)':''}, for ${brandTermsArr.length} brand term(s)/misspelling(s). ${brandKwCamps.size} campaign(s) targeting the brand itself were protected (skipped entirely).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 // Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
