@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 09:44</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 09:52</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1223,7 +1223,7 @@ function renderNgram(){
         <div class="hint" style="margin:8px 0;">Negă brandul propriu (și greșeli de scriere) ca Negative Phrase, în toate campaniile Auto/Broad/Phrase/PT enabled, din TOATE portofoliile — nu doar cel filtrat mai jos. Scopul: o căutare de brand nu rămâne izolată pe o campanie Branded dedicată dacă și campaniile Discovery o pot prinde la fel de bine, ceea ce le umflă artificial ACoS-ul (brandul convertește mereu mai bine decât genericul).</div>
         <div class="ctrls">
           <div class="field grow"><label>Brand terms + misspellings (comma-separated)</label><input type="text" id="ng-brandterms" placeholder="e.g. mybrand, mibrand, my-brand" value="${esc(st.brandNegTerms||'')}"></div>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ng-brand-exexcat" ${st.brandNegExcludeExact!==false?'checked':''}> Exclude Exact campaigns</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;align-self:end;padding-bottom:8px;" title="Detectat după nume ȘI structural (campania are un keyword Exact enabled înăuntru) — nu doar după convenția de denumire."><input type="checkbox" id="ng-brand-exexcat" ${st.brandNegExcludeExact!==false?'checked':''}> Exclude Exact campaigns</label>
           <button class="btn grad-red" id="ng-brand-export" style="align-self:end;">Negate Brand (toate portofoliile)</button>
         </div>
       </div>
@@ -1237,7 +1237,7 @@ function renderNgram(){
           <div class="field grow"><label>Search n-gram</label><input type="text" id="ng-text" placeholder="Filter by text…" value="${esc(st.text||'')}"></div>
           <button class="btn ghost" id="ng-csv">Export CSV</button>
           <select id="ng-negtype" style="border:1px solid var(--border);border-radius:8px;padding:8px 9px;font-size:12.5px;background:#fff;">${['Negative Phrase','Negative Exact'].map(x=>`<option ${(st.negtype||'Negative Phrase')===x?'selected':''}>${x}</option>`).join('')}</select>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;" title="Exports as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio as this root — not just the ad group(s) it was actually found in."><input type="checkbox" id="ng-exexcamp" ${st.exExactCamp!==false?'checked':''}> Exclude Exact campaigns</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;" title="Exports as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio as this root — not just the ad group(s) it was actually found in. Exact is detected by name AND structurally (an enabled Exact keyword inside), not just naming convention."><input type="checkbox" id="ng-exexcamp" ${st.exExactCamp!==false?'checked':''}> Exclude Exact campaigns</label>
           <button class="btn grad-red" id="ng-neg">Export Negatives${sel.size?` (${sel.size})`:''}</button>
           <button class="btn ghost" id="ng-copy" title="Copies the selected root(s) as a plain list, one per line — paste directly into Amazon's own 'Add negative keywords' box for whichever campaign(s) you pick yourself, instead of the automatic bulk export above.">Copy selected${sel.size?` (${sel.size})`:''}</button>
         </div>
@@ -2536,6 +2536,14 @@ function exportCSV(columns,rows,name){
 function isExactCampaign(name){ return /(^|[^a-z])exact([^a-z]|$)/i.test(String(name||'')); }
 function isBroadOrPhraseCampaignName(name){ return /(^|[^a-z])(broad|phrase)([^a-z]|$)/i.test(String(name||'')); }
 function isPatCampaignName(name){ return /(^|[^a-z])(pat|pt)([^a-z]|$)/i.test(String(name||'')); }
+// Same gap as PT detection below — naming conventions aren't always followed, so "is this an Exact campaign"
+// can't rely on the name alone. A campaign that actually has an enabled Exact-match keyword inside IS an
+// Exact campaign regardless of what it's called (Alex, 2 oct 2026: "orice are kws exact inauntru").
+function campaignsWithEnabledExactKw(product){
+  const set=new Set();
+  DATA.targets.forEach(t=>{ if(t.kind==='keyword' && t.matchType==='exact' && t.state==='enabled' && t.product===product) set.add(t.campaignId); });
+  return set;
+}
 // Negate a root across every Broad/Phrase/Auto campaign in the SAME portfolio as where it was found — not
 // just the specific ad group(s) it happened to already show up in. A bad root discovered via one Auto
 // campaign's search terms is just as likely to get triggered again by any other Broad/Phrase/Auto campaign
@@ -2546,13 +2554,14 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
   const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
   const singleKw=singleKwCampaigns(S.product);
+  const exactKwCamps=campaignsWithEnabledExactKw(S.product);
   const eligibleByPortfolio=new Map();
   function eligibleCampaignsFor(pf){
     if(eligibleByPortfolio.has(pf)) return eligibleByPortfolio.get(pf);
     const list=DATA.campaigns.filter(c=>{
       const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
       if(c.product!==S.product || c.state!=='enabled' || (c.portfolioName||'(No Portfolio)')!==pf) return false;
-      if(excludeExact && isExactCampaign(c.campaignName)) return false;
+      if(excludeExact && (isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId))) return false;
       // Single-keyword exclusion only makes sense for MANUAL campaigns (the SUP_/SK_ convention) — an Auto
       // campaign with just one of its four targeting expressions still enabled isn't "single-keyword" in
       // that sense, it's still a normal Auto campaign and should stay eligible.
@@ -2590,12 +2599,13 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
   const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
   const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
   const singleKw=singleKwCampaigns(S.product);
+  const exactKwCamps=campaignsWithEnabledExactKw(S.product);
   const campHasPtTarget=new Set();
   DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===S.product) campHasPtTarget.add(t.campaignId); });
   const eligible=DATA.campaigns.filter(c=>{
     const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
     if(c.product!==S.product || c.state!=='enabled') return false;
-    if(excludeExact && isExactCampaign(c.campaignName)) return false;
+    if(excludeExact && (isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId))) return false;
     // Same reasoning as exportNgramNegatives: a single-kw manual campaign's one keyword IS the point, don't
     // risk blocking it via a brand/misspelling term that happens to overlap it.
     if(!isAuto && singleKw.has(c.campaignId)) return false;
