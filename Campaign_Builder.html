@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:20</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -568,7 +568,16 @@ function isKwType(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.
 // the Video Ad's Creative ASIN), no Bidding Strategy (SB has "Bid Optimization" true/false instead), Budget +
 // Budget Type instead of Daily Budget. The video itself can't travel in a bulk file — it has to be uploaded to
 // the Amazon Ads asset library first, and only its asset ID is referenced here.
+// The Reference Bulk's Brand Entity ID / marketplace are DEFAULTS for the SBV fields, not just placeholders: the
+// input showed them while validation and the exported row still read the (empty) typed value — "Enter the Brand
+// Entity ID" with the ID sitting right there in the box (Alex, 2 oct 2026). Copy them into cfg once they're known.
+function syncSbvDefaults(cfg){
+  if(!String(cfg.brandEntityId||'').trim() && REF.brandEntityId) cfg.brandEntityId=REF.brandEntityId;
+  if(!String(cfg.tld||'').trim() && REF.tld) cfg.tld=REF.tld;
+  if(!String(cfg.landingAsin||'').trim() && String(cfg.asin||'').trim()) cfg.landingAsin=String(cfg.asin).trim().toUpperCase();
+}
 function buildSbvRows(cfg){
+  syncSbvDefaults(cfg);
   const out=[]; const matches=selectedMatches(cfg);
   const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
   const start=Math.max(1,parseInt(cfg.startNum||1)||1);
@@ -777,6 +786,7 @@ function builderIssues(cfg){
     if(conflicts.length) iss.push('A negative would block your own target — '+conflicts[0]+(conflicts.length>1?` (+${conflicts.length-1} more)`:'')+'.');
   }
   if(cfg.type==='sbv'){
+    syncSbvDefaults(cfg);
     if(!String(cfg.brandEntityId||'').trim()) iss.push('Enter the Brand Entity ID (ENTITY…) — Amazon requires it on every Sponsored Brands campaign. Upload a Reference Bulk to fill it automatically.');
     if(!String(cfg.videoAssetId||'').trim()) iss.push('Enter the Video Asset ID (amzn1.assetlibrary.asset1.…) — upload the video in Amazon Ads → Creative assets first, the bulk file can only reference it.');
     const a=String(cfg.landingAsin||cfg.asin||'').trim();
@@ -798,6 +808,7 @@ function namingBannerHtml(cfg){
 }
 function renderCampaignCreate(){
   const cfg=ensureBuilderInit();
+  if(cfg.type==='sbv') syncSbvDefaults(cfg);
   const strat=['Dynamic bids - down only','Dynamic bids - up and down','Fixed bids'];
   const primaryTemplate = cfg.type!=='auto' ? templateFor(cfg, selectedMatches(cfg)[0]) : null;
   if(primaryTemplate && !cfg.startNumTouched) cfg.startNum=String(primaryTemplate.num+1);
