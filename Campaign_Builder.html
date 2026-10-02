@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:20</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-02 14:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -834,7 +834,7 @@ function renderCampaignCreate(){
         <div class="field grow"><label>Portfolio — sets parent ASIN, Portfolio ID &amp; lists its SKUs below</label><select id="cc-pf">${btPortfolioOptions(cfg.btAccount,cfg.portfolioId)}</select></div>
         ${Object.keys(BT.accounts).length? '' : '<div class="hint">No saved data yet — add products in the <b>Brand Table</b> tab, or fill the fields below manually.</div>'}
       </div>
-      ${children.length? `<div style="margin-bottom:14px;">
+      ${cfg.type==='sbv'? `<div class="hint" style="margin-bottom:14px;">SBV advertises by <b>ASIN</b>, not SKU — the product is the Landing / creative ASIN below (${esc(cfg.landingAsin||cfg.asin||'pick a portfolio')}). SKU selection doesn't apply here.</div>` : children.length? `<div style="margin-bottom:14px;">
         <label style="font-size:11px;color:var(--muted2);font-weight:500;">Products in this portfolio — uncheck any you don't want advertised</label>
         <div class="flist" id="cc-children">${childrenHtml}</div>
         <div class="ctrls" style="margin-top:8px;">
@@ -842,7 +842,7 @@ function renderCampaignCreate(){
           <div class="field grow" style="align-self:center;"><div class="hint">Ranks by Sales from your last imported bulk (Brand Table → Import) and keeps only the top performer(s) per checked product — useful when testing several SKU variations and narrowing down to the winner(s).</div></div>
         </div>
       </div>` : (cfg.portfolioId? '<div class="hint" style="margin-bottom:14px;">No products found for this portfolio in the Brand Table — add them there, or type SKUs manually below.</div>' : '')}
-      ${cfg.portfolioId? `<div style="margin-bottom:14px;">
+      ${cfg.portfolioId && cfg.type!=='sbv'? `<div style="margin-bottom:14px;">
         <div class="field grow"><label>Extra SKUs (not auto-detected — one per line)</label><input type="text" id="cc-extrasku" placeholder="e.g. HEALTH-GUMMY-COLLA-60-2020" style="width:100%;"></div>
         <div class="hint">A product only shows above if it has a live, dedicated campaign somewhere in the account — one only advertised via a catchall, or whose only dedicated campaign is paused, won't be detected even if it's the real top seller. Type its SKU here and press Enter to add it regardless. Current extras: ${linesOf(cfg.extraSkus).length? esc(linesOf(cfg.extraSkus).join(', ')) : '<span class="muted">none</span>'}${linesOf(cfg.extraSkus).length? ` <a href="#" id="cc-extrasku-clear" style="color:#dc2626;">clear</a>` : ''}</div>
       </div>` : ''}
