@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 10:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 10:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2544,6 +2544,19 @@ function campaignsWithEnabledExactKw(product){
   DATA.targets.forEach(t=>{ if(t.kind==='keyword' && t.matchType==='exact' && t.state==='enabled' && t.product===product) set.add(t.campaignId); });
   return set;
 }
+// Sponsored Brands has no campaign-wide negative entity — Amazon's bulk validator rejects "Campaign Negative
+// Keyword" there outright ("Invalid entity", Alex's real upload, 2 oct 2026). SB only has the ad-group-scoped
+// "Negative Keyword", so "block it everywhere in the campaign" has to mean one row per enabled ad group
+// instead of one campaign-wide row.
+function campaignAdGroupsFor(product){
+  const map=new Map();
+  DATA.targets.forEach(t=>{
+    if(t.product!==product || t.state!=='enabled' || !t.adGroupId) return;
+    if(!map.has(t.campaignId)) map.set(t.campaignId, new Set());
+    map.get(t.campaignId).add(t.adGroupId);
+  });
+  return map;
+}
 // Negate a root across every Broad/Phrase/Auto campaign in the SAME portfolio as where it was found — not
 // just the specific ad group(s) it happened to already show up in. A bad root discovered via one Auto
 // campaign's search terms is just as likely to get triggered again by any other Broad/Phrase/Auto campaign
@@ -2552,9 +2565,11 @@ function campaignsWithEnabledExactKw(product){
 // Keyword" entity, since the whole point here is NOT to restrict it to one ad group.
 function exportNgramNegatives(entries, matchType, excludeExact){
   const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
-  const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const isSB = S.product==='SB';
+  const prod = isSB?'Sponsored Brands':'Sponsored Products';
   const singleKw=singleKwCampaigns(S.product);
   const exactKwCamps=campaignsWithEnabledExactKw(S.product);
+  const adGroupsByCamp = isSB ? campaignAdGroupsFor(S.product) : null;
   const eligibleByPortfolio=new Map();
   function eligibleCampaignsFor(pf){
     if(eligibleByPortfolio.has(pf)) return eligibleByPortfolio.get(pf);
@@ -2574,6 +2589,16 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   entries.forEach(e=>{
     const pf=e.portfolioName||'(No Portfolio)';
     eligibleCampaignsFor(pf).forEach(c=>{
+      if(isSB){
+        const ags=[...(adGroupsByCamp.get(c.campaignId)||[])];
+        ags.forEach(agId=>{
+          if(isNegated(c.campaignId, e.root, agId)){ skippedNegated++; return; }
+          const dk=c.campaignId+'|'+agId+'|'+String(e.root).toLowerCase();
+          if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
+          out.push(bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'Keyword Text':e.root,'Match Type':matchType}));
+        });
+        return;
+      }
       // Already negated (as any match type) in this campaign — re-adding it is exactly what Amazon's bulk
       // importer rejects as "Invalid User Input" (duplicate negative), so skip it here instead of exporting
       // a row that's guaranteed to bounce.
@@ -2584,8 +2609,11 @@ function exportNgramNegatives(entries, matchType, excludeExact){
     });
   });
   if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no enabled Broad/Phrase/Auto campaign found in the relevant portfolio(s). Uncheck "Exclude Exact campaigns" if you really want to negate there too.'); return; }
-  writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s). Negated as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio — not just where each root's search terms happened to already appear.${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+  writeBulk(out, 'ngram_negatives_'+(matchType.toLowerCase().indexOf('phrase')!==-1?'phrase':'exact')+'.xlsx', isSB?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  const scopeNote = isSB
+    ? ' Sponsored Brands has no campaign-wide negative, so this is one Negative Keyword row per enabled ad group in each campaign instead.'
+    : ' Negated as a Campaign Negative Keyword in every enabled Broad/Phrase/Auto campaign in the same portfolio — not just where each root\'s search terms happened to already appear.';
+  alert(`Exported ${out.length} ${matchType} row(s) across ${campsAll.size} campaign(s)${excludeExact?' (Exact campaigns excluded)':''}, from ${entries.length} n-gram(s).${scopeNote}${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 // Brand/misspelling negation — a different problem from the wasted-spend n-grams above, so it's a separate
 // flow: keep a brand search isolated in its own dedicated Branded campaign, not scattered across Discovery
@@ -2597,9 +2625,11 @@ function exportNgramNegatives(entries, matchType, excludeExact){
 // instead of keywords IS a PT campaign regardless of what it's called (Alex, 2 oct 2026: "mai usor").
 function exportBrandNegatives(brandTermsArr, excludeExact){
   const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
-  const prod = S.product==='SB'?'Sponsored Brands':'Sponsored Products';
+  const isSB = S.product==='SB';
+  const prod = isSB?'Sponsored Brands':'Sponsored Products';
   const singleKw=singleKwCampaigns(S.product);
   const exactKwCamps=campaignsWithEnabledExactKw(S.product);
+  const adGroupsByCamp = isSB ? campaignAdGroupsFor(S.product) : null;
   const campHasPtTarget=new Set();
   DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===S.product) campHasPtTarget.add(t.campaignId); });
   // The dedicated Branded campaign itself — the one this whole feature exists to PROTECT — targets the exact
@@ -2626,6 +2656,16 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
   });
   brandTermsArr.forEach(term=>{
     eligible.forEach(c=>{
+      if(isSB){
+        const ags=[...(adGroupsByCamp.get(c.campaignId)||[])];
+        ags.forEach(agId=>{
+          if(isNegated(c.campaignId, term, agId)){ skippedNegated++; return; }
+          const dk=c.campaignId+'|'+agId+'|'+term.toLowerCase();
+          if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
+          out.push(bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'Keyword Text':term,'Match Type':'Negative Phrase'}));
+        });
+        return;
+      }
       if(isNegatedCampaignWide(c.campaignId, term)){ skippedNegated++; return; }
       const dk=c.campaignId+'|'+term.toLowerCase();
       if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
@@ -2633,8 +2673,8 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
     });
   });
   if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no eligible Auto/Broad/Phrase/PT campaign found, or no brand terms typed.'); return; }
-  writeBulk(out, 'brand_negatives_phrase.xlsx', S.product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} Negative Phrase row(s) across ${campsAll.size} campaign(s), every portfolio${excludeExact?' (Exact campaigns excluded)':''}, for ${brandTermsArr.length} brand term(s)/misspelling(s). ${brandKwCamps.size} campaign(s) targeting the brand itself were protected (skipped entirely).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+  writeBulk(out, 'brand_negatives_phrase.xlsx', isSB?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  alert(`Exported ${out.length} Negative Phrase row(s) across ${campsAll.size} campaign(s), every portfolio${excludeExact?' (Exact campaigns excluded)':''}, for ${brandTermsArr.length} brand term(s)/misspelling(s).${isSB?' Sponsored Brands has no campaign-wide negative, so this is one Negative Keyword row per enabled ad group.':''} ${brandKwCamps.size} campaign(s) targeting the brand itself were protected (skipped entirely).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 // Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
