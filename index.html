@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-05 19:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-05 20:10</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -466,6 +466,20 @@ function parseWorkbook(wb){
       deduped.push(t);
     });
     DATA.targets=deduped;
+  }
+  // A campaign's own bulk row can undercount it, in either direction — checked against Amazon's API on
+  // Cooler Kitchen CA (5 oct 2026). 10 campaigns: the Campaign row equals the sum of its placement rows and
+  // misses the traffic Amazon attributes to no placement (SUP_EXACT "ice cream maker kids": row 5 clicks /
+  // $2.02, real total 99 / $16.07 = its ad groups). 14 others: ad groups missing from the bulk (archived),
+  // so the Campaign row is the real total. The larger of the two, by spend, matched the API every time.
+  {
+    const agSum={}, seenAg=new Set();
+    DATA.adGroups.forEach(a=>{
+      const id=a.product+'|'+a.adGroupId; if(!a.adGroupId || seenAg.has(id)) return; seenAg.add(id);
+      const s=agSum[a.product+'|'+a.campaignId]||(agSum[a.product+'|'+a.campaignId]={impressions:0,clicks:0,spend:0,sales:0,orders:0,units:0});
+      s.impressions+=a.impressions; s.clicks+=a.clicks; s.spend+=a.spend; s.sales+=a.sales; s.orders+=a.orders; s.units+=a.units;
+    });
+    DATA.campaigns.forEach(c=>{ const s=agSum[c.product+'|'+c.campaignId]; if(s && s.spend>c.spend+0.005) Object.assign(c, s, {totalsFromAdGroups:true}); });
   }
   DATA.targets.forEach(t=>{ const cm=DATA.campById[t.campaignId]; if(cm){ t.campaignName=cm.name; t.portfolioName=cm.portfolio; } });
   DATA.productAds.forEach(p=>{ const cm=DATA.campById[p.campaignId]; if(cm){ p.campaignName=cm.name; p.portfolioName=cm.portfolio; } });
