@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-02 18:20</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-05 19:46</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2969,7 +2969,21 @@ function renderDuplicates(){
     g.list.forEach(t=>t._uid='dup'+t.campaignId+'|'+t.adGroupId+'|'+t.id);
   });
   groups = groups.filter(g=>g.totals.spend>=st.minSpend);
-  groups.sort((a,b)=>b.totals.spend-a.totals.spend);
+  // Sortable by any metric: groups by their COMBINED value (bid: the highest copy's), the copies inside a group
+  // by their own — so "Spend ↓" puts the costliest duplicate first and its costliest copy at the top of it.
+  if(st.sortKey===undefined){ st.sortKey='spend'; st.sortDir=-1; }
+  const DUP_COLS=[{key:'clicks',label:'Clicks',fmt:fInt},{key:'spend',label:'Spend',fmt:fMoney},{key:'sales',label:'Sales',fmt:fMoney},
+    {key:'orders',label:'Orders',fmt:fInt},{key:'acos',label:'ACoS',fmt:fAcos},{key:'cpc',label:'CPC',fmt:fMoney},{key:'bid',label:'Bid',fmt:fMoney}];
+  const sortCol=DUP_COLS.find(c=>c.key===st.sortKey)||DUP_COLS[1];
+  // null = no data (CPC with 0 clicks, ACoS with 0 spend) — always sorts last, in either direction, so "CPC ↑"
+  // shows the cheapest real CPC first instead of a pile of $0.00 copies that never got a click.
+  const metricOf=(m,clicks,spend,bid)=> sortCol.key==='cpc' ? (clicks>0? m.cpc : null) : sortCol.key==='acos' ? (spend>0? m.acos : null) : sortCol.key==='bid' ? bid : m[sortCol.key];
+  const rowVal=t=>metricOf(t, t.clicks, t.spend, t.bid);
+  const groupVal=g=>metricOf(Object.assign({}, g.totals, derive(g.totals)), g.totals.clicks, g.totals.spend, Math.max(...g.list.map(t=>t.bid)));
+  const cmp=(a,b)=> a===null||b===null ? (a===b?0:(a===null?1:-1)) : a===b ? 0 : (a<b?-1:1)*st.sortDir;
+  groups.sort((a,b)=>b.totals.spend-a.totals.spend); // tie-break for the stable sort below
+  groups.sort((a,b)=>cmp(groupVal(a),groupVal(b)));
+  groups.forEach(g=>{ g.list.sort((a,b)=>b.spend-a.spend); g.list.sort((a,b)=>cmp(rowVal(a),rowVal(b))); });
   const sel=selFor('duplicates');
   const rowsFlat = groups.flatMap(g=>g.list);
   $('#app').innerHTML=`
@@ -2990,14 +3004,17 @@ function renderDuplicates(){
         <button class="btn grad" id="dup-pause" ${rowsFlat.some(r=>sel.has(r._uid))?'':'disabled'}>Export Pause (${rowsFlat.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       ${groups.length? `<div class="tablewrap"><table>
-        <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th><th>Clicks</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Bid</th></tr></thead>
-        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="9"><b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}</td></tr>`+
+        <thead><tr><th class="l"></th><th class="l">Target</th><th class="l">Campaign</th>${DUP_COLS.map(c=>{
+          const active=st.sortKey===c.key;
+          return `<th class="sortable ${active?'th-active':''}" data-dupsort="${c.key}">${c.label} <span class="sort-ind">${active?(st.sortDir<0?'↓':'↑'):'↕'}</span></th>`;
+        }).join('')}</tr></thead>
+        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="10"><b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}${sortCol.key==='spend'?'':` &nbsp;·&nbsp; ${sortCol.label} ${sortCol.key==='bid'?'max':'combinat'} ${groupVal(g)===null?'—':sortCol.fmt(groupVal(g))}`}</td></tr>`+
           g.list.map(t=>`<tr>
             <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'title="Best performer — usually keep this one, but selectable if you want to pause it instead"':''}></td>
             <td class="l">${t===g.best?'<span class="badge tg">KEEP (best)</span>':''}</td>
             <td class="l">${esc(t.campaignName||t.campaignId)}</td>
             <td>${fInt(t.clicks)}</td><td>${fMoney(t.spend)}</td><td>${fMoney(t.sales)}</td><td>${fInt(t.orders)}</td>
-            <td class="${acosClass(t.acos)}">${fAcos(t.acos)}</td><td>${fMoney(t.bid)}</td>
+            <td class="${acosClass(t.acos)}">${fAcos(t.acos)}</td><td>${t.clicks>0?fMoney(t.cpc):'<span class="muted">—</span>'}</td><td>${fMoney(t.bid)}</td>
           </tr>`).join('')
         ).join('')}</tbody>
       </table></div>` : '<div class="empty"><div class="ic"></div><p>No target is currently running in 2+ enabled campaigns at once — nothing to consolidate.</p></div>'}
@@ -3005,6 +3022,11 @@ function renderDuplicates(){
   $('#dup-port').onchange=e=>{st.port=e.target.value; renderDuplicates();};
   $('#dup-term').oninput=debounce(()=>{st.term=$('#dup-term').value; renderDuplicates();},220);
   $('#dup-ms').oninput=debounce(()=>{st.minSpend=+$('#dup-ms').value||0; renderDuplicates();},250);
+  document.querySelectorAll('[data-dupsort]').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.dupsort;
+    if(st.sortKey===k) st.sortDir*=-1; else { st.sortKey=k; st.sortDir=-1; }
+    renderDuplicates();
+  });
   document.querySelectorAll('#app input[data-id]').forEach(cb=>{ if(cb.disabled) return; cb.onchange=()=>{ cb.checked? sel.add(cb.dataset.id): sel.delete(cb.dataset.id); renderDuplicates(); }; });
   $('#dup-pause').onclick=()=>{
     const chosen=rowsFlat.filter(t=>sel.has(t._uid));
