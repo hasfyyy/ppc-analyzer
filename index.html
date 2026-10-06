@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 13:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 13:21</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3227,7 +3227,8 @@ function renderDuplicates(){
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">${S.product} Duplicate targets (${groups.length})</h3><div class="spacer"></div>
-        <span class="countnote">Selected to pause: ${rowsFlat.filter(r=>sel.has(r._uid)).length}</span>
+        <span class="countnote" style="margin-right:10px;">Selected to pause: ${rowsFlat.filter(r=>sel.has(r._uid)).length}</span>
+        <button class="btn ghost" id="dup-selall" title="Bifează toate copiile din toate grupurile, lăsând nebifat KEEP (best) din fiecare — apoi debifezi doar ce vrei să mai rămână. Apasă din nou pentru a debifa tot.">${rowsFlat.filter(t=>!groups.some(g=>g.best===t)).every(t=>sel.has(t._uid)) && rowsFlat.length? 'Deselect all' : 'Select all (păstrează KEEP)'}</button>
         <button class="btn grad" id="dup-pause" ${rowsFlat.some(r=>sel.has(r._uid))?'':'disabled'}>Export Pause (${rowsFlat.filter(r=>sel.has(r._uid)).length})</button>
       </div>
       ${groups.length? `<div class="tablewrap"><table>
@@ -3235,7 +3236,7 @@ function renderDuplicates(){
           const active=st.sortKey===c.key;
           return `<th class="sortable ${active?'th-active':''}" data-dupsort="${c.key}">${c.label} <span class="sort-ind">${active?(st.sortDir<0?'↓':'↑'):'↕'}</span></th>`;
         }).join('')}</tr></thead>
-        <tbody>${groups.map(g=>`<tr class="grouphead"><td class="l" colspan="10"><b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}${sortCol.key==='spend'?'':` &nbsp;·&nbsp; ${sortCol.label} ${sortCol.key==='bid'?'max':'combinat'} ${groupVal(g)===null?'—':sortCol.fmt(groupVal(g))}`}</td></tr>`+
+        <tbody>${groups.map((g,gi)=>`<tr class="grouphead"><td class="l" colspan="10"><input type="checkbox" data-dupgroup="${gi}" title="Bifează / debifează toate copiile din acest grup (fără KEEP best)" ${g.list.filter(t=>t!==g.best).every(t=>sel.has(t._uid)) && g.list.length>1?'checked':''} style="margin-right:8px;vertical-align:middle;"><b>${esc(g.list[0].text)}</b> ${g.list[0].kind==='keyword'?`(${esc(g.list[0].matchType)})`:'(Product Targeting)'} &nbsp;·&nbsp; <span class="muted">${esc(g.list[0].portfolioName||'(No Portfolio)')}</span> &nbsp;·&nbsp; ${g.campCount} campanii &nbsp;·&nbsp; spend combinat ${fMoney(g.totals.spend)}${sortCol.key==='spend'?'':` &nbsp;·&nbsp; ${sortCol.label} ${sortCol.key==='bid'?'max':'combinat'} ${groupVal(g)===null?'—':sortCol.fmt(groupVal(g))}`}</td></tr>`+
           g.list.map(t=>`<tr>
             <td class="l"><input type="checkbox" data-id="${esc(t._uid)}" ${sel.has(t._uid)?'checked':''} ${t===g.best?'title="Best performer — usually keep this one, but selectable if you want to pause it instead"':''}></td>
             <td class="l">${t===g.best?'<span class="badge tg">KEEP (best)</span>':''}</td>
@@ -3255,6 +3256,19 @@ function renderDuplicates(){
     renderDuplicates();
   });
   document.querySelectorAll('#app input[data-id]').forEach(cb=>{ if(cb.disabled) return; cb.onchange=()=>{ cb.checked? sel.add(cb.dataset.id): sel.delete(cb.dataset.id); renderDuplicates(); }; });
+  // Bulk selection: everything except each group's KEEP (best). Unchecking the few you want to keep is far
+  // quicker than ticking 250 copies one by one (Alex, 6 oct 2026). The best row is never touched either way.
+  const nonBest=rowsFlat.filter(t=>!groups.some(g=>g.best===t));
+  const selAllBtn=$('#dup-selall'); if(selAllBtn) selAllBtn.onclick=()=>{
+    const all=nonBest.length && nonBest.every(t=>sel.has(t._uid));
+    if(all) rowsFlat.forEach(t=>sel.delete(t._uid)); else nonBest.forEach(t=>sel.add(t._uid));
+    renderDuplicates();
+  };
+  document.querySelectorAll('#app input[data-dupgroup]').forEach(cb=>cb.onchange=()=>{
+    const g=groups[+cb.dataset.dupgroup]; if(!g) return;
+    g.list.forEach(t=>{ if(t===g.best) return; cb.checked? sel.add(t._uid) : sel.delete(t._uid); });
+    renderDuplicates();
+  });
   $('#dup-pause').onclick=()=>{
     const chosen=rowsFlat.filter(t=>sel.has(t._uid));
     exportTargetsPause(S.product, chosen);
