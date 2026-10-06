@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:55</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1536,7 +1536,7 @@ function renderIsolation(){
 function computeWasteRows(product){
   const st=stFor('waste');
   if(st.minClicks===undefined) st.minClicks=10;
-  if(st.maxClicks===undefined) st.maxClicks=0;
+  st.maxClicks=0; // upper clicks cap removed from the UI (6 oct 2026) — one threshold is all that's needed
   if(st.acosThr===undefined) st.acosThr=Math.round(goalTiers().acosGoal||30);
   if(st.maxOrders===undefined) st.maxOrders=0;
   if(st.overMode===undefined) st.overMode='excess';
@@ -1584,8 +1584,7 @@ function renderWaste(){
   // that matter buried the few that matter (Alex, 6 oct 2026). Totals still cover every group.
   const rows = st.showZeroGroups ? allRows : allRows.filter(r=>r.waste>0);
   const waste=wasteZero+wasteOver;
-  const clicksWarn = (+st.maxClicks>0 && +st.maxClicks<+st.minClicks) ? `Max Clicks (${st.maxClicks}) este sub Min Clicks (${st.minClicks}) — niciun target nu poate trece. Pune Max pe 0 pentru "fără limită".`
-    : (+st.maxClicks>0 && +st.maxClicks===+st.minClicks) ? `Min și Max Clicks sunt egale (${st.minClicks}) — se numără doar targeturile cu exact ${st.minClicks} clicks. Pentru "≥ ${st.minClicks}" pune Max pe 0.` : '';
+  const clicksWarn='';
   const pct=v=>totalSpend? (v/totalSpend*100).toFixed(1)+'%' : '—';
   const groupLabel = st.groupBy==='campaign' ? 'Campaign' : 'Portfolio';
   const cols=[
@@ -1623,7 +1622,6 @@ function renderWaste(){
       <div class="ctrls">
         <div class="field"><label>Sursa</label><select id="ws-source"><option value="targets" ${st.source==='targets'?'selected':''}>Targets (keywords + PT)</option><option value="searchterms" ${st.source==='searchterms'?'selected':''}>Search terms</option></select></div>
         <div class="field"><label>Min Clicks ≥</label><input type="number" id="ws-minclicks" min="0" value="${st.minClicks}" style="width:90px;"></div>
-        <div class="field"><label>Max Clicks ≤ (0 = fără)</label><input type="number" id="ws-maxclicks" min="0" value="${st.maxClicks}" style="width:110px;"></div>
         <div class="field"><label>ACoS peste %</label><input type="number" id="ws-acos" min="0" value="${st.acosThr}" style="width:90px;"></div>
         <div class="field"><label>Max Orders (0 = fără)</label><input type="number" id="ws-maxorders" min="0" value="${st.maxOrders}" style="width:110px;" title="Un target cu multe comenzi dar ACoS mare e volum dovedit — îl poți scoate din waste punând un plafon de comenzi."></div>
         <div class="field"><label>Over-ACoS waste =</label><select id="ws-overmode"><option value="excess" ${st.overMode==='excess'?'selected':''}>doar excesul peste prag</option><option value="full" ${st.overMode==='full'?'selected':''}>tot spend-ul</option></select></div>
@@ -1657,7 +1655,6 @@ function renderWaste(){
   const upd=()=>renderWaste();
   $('#ws-source').onchange=e=>{ st.source=e.target.value; upd(); };
   $('#ws-minclicks').oninput=debounce(()=>{ st.minClicks=+$('#ws-minclicks').value||0; upd(); },300);
-  $('#ws-maxclicks').oninput=debounce(()=>{ st.maxClicks=+$('#ws-maxclicks').value||0; upd(); },300);
   $('#ws-acos').oninput=debounce(()=>{ st.acosThr=+$('#ws-acos').value||0; upd(); },300);
   $('#ws-maxorders').oninput=debounce(()=>{ st.maxOrders=+$('#ws-maxorders').value||0; upd(); },300);
   $('#ws-overmode').onchange=e=>{ st.overMode=e.target.value; upd(); };
