@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 13:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1554,9 +1554,11 @@ function computeWasteRows(product){
   const items=src.map(r=>{
     const d=derive(agg([r]));
     let bucket=null, waste=0;
+    // Two independent rules (Alex, 6 oct 2026): the clicks threshold only decides when "0 orders" is proof of
+    // waste; a target that sells is judged on its ACoS alone — it already has the orders to make the ratio real.
     const clicksOk = d.clicks>=minC && (maxC<=0 || d.clicks<=maxC);
     if(clicksOk && d.orders===0 && d.spend>0){ bucket='zero'; waste=d.spend; }
-    else if(clicksOk && d.orders>0 && (maxO<=0 || d.orders<=maxO) && thr>0 && d.acos>thr){
+    else if(d.orders>0 && (maxO<=0 || d.orders<=maxO) && thr>0 && d.acos>thr){
       bucket='over'; waste = st.overMode==='full' ? d.spend : Math.max(0, d.spend - d.sales*thr/100);
     }
     const label = st.source==='searchterms' ? r.searchTerm : (r.text||'(ASIN/PT)');
@@ -1623,11 +1625,11 @@ function renderWaste(){
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Wasted Spend — ${S.product}</h3>
-      <div class="hint" style="margin-bottom:10px;"><b>0 sales</b>: target cu ≥ Min Clicks și nicio comandă — tot spend-ul e waste. <b>Over ACoS</b>: target care vinde, dar peste pragul de ACoS — implicit contează doar <i>excesul</i> (spend − sales × prag), adică ce a cheltuit peste ce justifică vânzările lui la pragul ales; poți comuta pe "tot spend-ul". Pragul de clicks se aplică la ambele.</div>
+      <div class="hint" style="margin-bottom:10px;">Două reguli independente. <b>0 sales</b>: target cu ≥ Min Clicks și nicio comandă — tot spend-ul e waste. <b>Over ACoS</b>: target care vinde, dar cu ACoS peste prag (indiferent de clicks) — implicit contează doar <i>excesul</i> (spend − sales × prag), adică ce a cheltuit peste ce justifică vânzările lui la pragul ales; poți comuta pe "tot spend-ul".</div>
       <div class="ctrls">
         <div class="field"><label>Sursa</label><select id="ws-source"><option value="targets" ${st.source==='targets'?'selected':''}>Targets (keywords + PT)</option><option value="searchterms" ${st.source==='searchterms'?'selected':''}>Search terms</option></select></div>
-        <div class="field"><label>Min Clicks ≥</label><input type="number" id="ws-minclicks" min="0" value="${st.minClicks}" style="width:90px;"></div>
-        <div class="field"><label>ACoS peste %</label><input type="number" id="ws-acos" min="0" value="${st.acosThr}" style="width:90px;"></div>
+        <div class="field"><label>0 comenzi și Clicks ≥</label><input type="number" id="ws-minclicks" min="0" value="${st.minClicks}" style="width:90px;"></div>
+        <div class="field"><label>sau ACoS peste %</label><input type="number" id="ws-acos" min="0" value="${st.acosThr}" style="width:90px;"></div>
         <div class="field"><label>Max Orders (0 = fără)</label><input type="number" id="ws-maxorders" min="0" value="${st.maxOrders}" style="width:110px;" title="Un target cu multe comenzi dar ACoS mare e volum dovedit — îl poți scoate din waste punând un plafon de comenzi."></div>
         <div class="field"><label>Over-ACoS waste =</label><select id="ws-overmode"><option value="excess" ${st.overMode==='excess'?'selected':''}>doar excesul peste prag</option><option value="full" ${st.overMode==='full'?'selected':''}>tot spend-ul</option></select></div>
         <div class="field"><label>Grupează pe</label><select id="ws-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portfolio</option><option value="campaign" ${st.groupBy==='campaign'?'selected':''}>Campaign</option></select></div>
