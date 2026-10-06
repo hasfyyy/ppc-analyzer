@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-05 20:10</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:34</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -794,6 +794,7 @@ const TABS=[
   {id:'negatives-sb',label:'Negatives – SB',ic:''},
   {id:'ngram',label:'Negative Phrase',ic:''},
   {id:'isolation',label:'Isolation',ic:''},
+  {id:'waste',label:'Wasted Spend',ic:''},
   {id:'targets',label:'Targets SP',ic:''},
   {id:'targets-sb',label:'Targets SB',ic:''},
   {id:'targets-sd',label:'Targets SD',ic:''},
@@ -850,7 +851,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, isolation:renderIsolation, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, isolation:renderIsolation, waste:renderWaste, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1523,6 +1524,140 @@ function renderIsolation(){
     }
     exportIsolationNegatives(chosen.map(r=>r.term), S.product);
   };
+}
+/* ============================ WASTED SPEND ============================ */
+// Account-level "how much of the spend was waste" under thresholds Alex sets (6 oct 2026). Two buckets, kept
+// separate because they mean different things:
+//  - 0 sales: a target with enough clicks and no order — the whole spend is waste.
+//  - over ACoS: a target that sells but above the threshold — by default only the EXCESS counts (what it
+//    spent beyond what its sales would justify at the threshold ACoS: spend − sales × thr), because the part
+//    that bought the sales wasn't wasted; "whole spend" is available as an option.
+// Clicks threshold gates both — a 2-click target with no order is noise, not a measurement.
+function computeWasteRows(product){
+  const st=stFor('waste');
+  if(st.minClicks===undefined) st.minClicks=10;
+  if(st.maxClicks===undefined) st.maxClicks=0;
+  if(st.acosThr===undefined) st.acosThr=Math.round(goalTiers().acosGoal||30);
+  if(st.maxOrders===undefined) st.maxOrders=0;
+  if(st.overMode===undefined) st.overMode='excess';
+  if(st.source===undefined) st.source='targets';
+  if(st.groupBy===undefined) st.groupBy='portfolio';
+  if(st.includePaused===undefined) st.includePaused=false;
+  if(st.excludePorts===undefined) st.excludePorts=[];
+  const en=optimizableCampaignIds(product);
+  let src = st.source==='searchterms'
+    ? DATA.searchTerms.filter(s=>s.product===product && en.has(s.campaignId))
+    : DATA.targets.filter(t=>t.product===product && en.has(t.campaignId) && (st.includePaused || t.state==='enabled'));
+  if(st.port) src=src.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.excludePorts.length) src=src.filter(r=>!st.excludePorts.includes(r.portfolioName||'(No Portfolio)'));
+  const thr=+st.acosThr||0, minC=+st.minClicks||0, maxC=+st.maxClicks||0, maxO=+st.maxOrders||0;
+  const items=src.map(r=>{
+    const d=derive(agg([r]));
+    let bucket=null, waste=0;
+    const clicksOk = d.clicks>=minC && (maxC<=0 || d.clicks<=maxC);
+    if(clicksOk && d.orders===0 && d.spend>0){ bucket='zero'; waste=d.spend; }
+    else if(clicksOk && d.orders>0 && (maxO<=0 || d.orders<=maxO) && thr>0 && d.acos>thr){
+      bucket='over'; waste = st.overMode==='full' ? d.spend : Math.max(0, d.spend - d.sales*thr/100);
+    }
+    const label = st.source==='searchterms' ? r.searchTerm : (r.text||'(ASIN/PT)');
+    return Object.assign({}, r, d, {bucket, waste, label, portfolioName:r.portfolioName||'(No Portfolio)'});
+  });
+  const totalSpend=items.reduce((s,r)=>s+r.spend,0);
+  const groups=new Map();
+  items.forEach(r=>{
+    const key = st.groupBy==='campaign' ? r.campaignId : r.portfolioName;
+    if(!groups.has(key)) groups.set(key,{_uid:key, name: st.groupBy==='campaign' ? (r.campaignName||DATA.campById[r.campaignId]?.name||r.campaignId) : r.portfolioName, portfolioName:r.portfolioName, spend:0,sales:0,orders:0,clicks:0,items:0,wasteZero:0,wasteOver:0,nZero:0,nOver:0});
+    const g=groups.get(key);
+    g.spend+=r.spend; g.sales+=r.sales; g.orders+=r.orders; g.clicks+=r.clicks; g.items++;
+    if(r.bucket==='zero'){ g.wasteZero+=r.waste; g.nZero++; }
+    if(r.bucket==='over'){ g.wasteOver+=r.waste; g.nOver++; }
+  });
+  const rows=[...groups.values()].map(g=>Object.assign(g,{waste:g.wasteZero+g.wasteOver, wastePct: g.spend? (g.wasteZero+g.wasteOver)/g.spend*100 : 0, acos: g.sales? g.spend/g.sales*100 : (g.spend>0?Infinity:0)}));
+  const wasteZero=items.reduce((s,r)=>s+(r.bucket==='zero'?r.waste:0),0);
+  const wasteOver=items.reduce((s,r)=>s+(r.bucket==='over'?r.waste:0),0);
+  return {st, rows, items, totalSpend, wasteZero, wasteOver, nZero:items.filter(r=>r.bucket==='zero').length, nOver:items.filter(r=>r.bucket==='over').length};
+}
+function renderWaste(){
+  const {st, rows, items, totalSpend, wasteZero, wasteOver, nZero, nOver}=computeWasteRows(S.product);
+  const waste=wasteZero+wasteOver;
+  const pct=v=>totalSpend? (v/totalSpend*100).toFixed(1)+'%' : '—';
+  const groupLabel = st.groupBy==='campaign' ? 'Campaign' : 'Portfolio';
+  const cols=[
+    {key:'name',label:groupLabel,l:true,type:'text',cell:r=>`<span style="display:inline-block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(r.name)}">${esc(r.name)}</span>`},
+    {key:'items',label:st.source==='searchterms'?'Search terms':'Targets',type:'int',fmtTotal:t=>fInt(rows.reduce((s,r)=>s+r.items,0))},
+    {key:'clicks',label:'Clicks',type:'int',fmtTotal:()=>fInt(rows.reduce((s,r)=>s+r.clicks,0))},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:()=>fMoney(totalSpend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:()=>fMoney(rows.reduce((s,r)=>s+r.sales,0))},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:()=>{ const s=rows.reduce((a,r)=>a+r.sales,0); return fAcos(s? totalSpend/s*100 : (totalSpend>0?Infinity:0)); }},
+    {key:'wasteZero',label:`Waste · 0 sales (${fInt(nZero)})`,type:'money',cls:r=>r.wasteZero>0?'num-red':'',fmtTotal:()=>fMoney(wasteZero)},
+    {key:'wasteOver',label:`Waste · over ${st.acosThr}% ACoS (${fInt(nOver)})`,type:'money',cls:r=>r.wasteOver>0?'num-amber':'',fmtTotal:()=>fMoney(wasteOver)},
+    {key:'waste',label:'Total waste',type:'money',cls:r=>r.waste>0?'num-red':'',fmtTotal:()=>fMoney(waste)},
+    {key:'wastePct',label:'% of spend',type:'pct',fmtTotal:()=>pct(waste)},
+  ];
+  const tbl=buildTable({columns:cols,rows,tab:'waste',sortDef:{key:'waste',dir:-1},onChange:renderWaste});
+  // Top wasted items — the actual targets/search terms behind the totals, so the number can be checked line by line.
+  const topItems=items.filter(r=>r.bucket).sort((a,b)=>b.waste-a.waste).slice(0,200);
+  topItems.forEach(r=>r._uid=r.campaignId+'|'+(r.adGroupId||'')+'|'+r.label);
+  const icols=[
+    {key:'bucket',label:'Why',l:true,noSort:true,cell:r=>r.bucket==='zero'?`<span class="badge nt">0 sales</span>`:`<span class="badge" style="background:#fef3e2;color:#c2760a;">ACoS ${fAcos(r.acos)}</span>`},
+    {key:'label',label:st.source==='searchterms'?'Search term':'Target',l:true,type:'text'},
+    {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>`<span style="display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(r.campaignName||'')}">${esc(r.campaignName||'')}</span>`},
+    {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>`<span style="display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(r.portfolioName)}">${esc(r.portfolioName)}</span>`},
+    {key:'clicks',label:'Clicks',type:'int'},
+    {key:'spend',label:'Spend',type:'money'},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green'},
+    {key:'orders',label:'Orders',type:'int'},
+    {key:'waste',label:'Waste',type:'money',cls:()=>'num-red'},
+  ];
+  const itbl=buildTable({columns:icols,rows:topItems,tab:'wasteitems',sortDef:{key:'waste',dir:-1},onChange:renderWaste});
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Wasted Spend — ${S.product}</h3>
+      <div class="hint" style="margin-bottom:10px;"><b>0 sales</b>: target cu ≥ Min Clicks și nicio comandă — tot spend-ul e waste. <b>Over ACoS</b>: target care vinde, dar peste pragul de ACoS — implicit contează doar <i>excesul</i> (spend − sales × prag), adică ce a cheltuit peste ce justifică vânzările lui la pragul ales; poți comuta pe "tot spend-ul". Pragul de clicks se aplică la ambele.</div>
+      <div class="ctrls">
+        <div class="field"><label>Sursa</label><select id="ws-source"><option value="targets" ${st.source==='targets'?'selected':''}>Targets (keywords + PT)</option><option value="searchterms" ${st.source==='searchterms'?'selected':''}>Search terms</option></select></div>
+        <div class="field"><label>Min Clicks ≥</label><input type="number" id="ws-minclicks" min="0" value="${st.minClicks}" style="width:90px;"></div>
+        <div class="field"><label>Max Clicks ≤ (0 = fără)</label><input type="number" id="ws-maxclicks" min="0" value="${st.maxClicks}" style="width:110px;"></div>
+        <div class="field"><label>ACoS peste %</label><input type="number" id="ws-acos" min="0" value="${st.acosThr}" style="width:90px;"></div>
+        <div class="field"><label>Max Orders (0 = fără)</label><input type="number" id="ws-maxorders" min="0" value="${st.maxOrders}" style="width:110px;" title="Un target cu multe comenzi dar ACoS mare e volum dovedit — îl poți scoate din waste punând un plafon de comenzi."></div>
+        <div class="field"><label>Over-ACoS waste =</label><select id="ws-overmode"><option value="excess" ${st.overMode==='excess'?'selected':''}>doar excesul peste prag</option><option value="full" ${st.overMode==='full'?'selected':''}>tot spend-ul</option></select></div>
+        <div class="field"><label>Grupează pe</label><select id="ws-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portfolio</option><option value="campaign" ${st.groupBy==='campaign'?'selected':''}>Campaign</option></select></div>
+      </div>
+      <div class="ctrls" style="margin-top:10px;">
+        <div class="field"><label>Portfolio</label><select id="ws-port">${portOptions(st.port)}</select></div>
+        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click)</label><select id="ws-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
+        ${st.source==='targets'?`<label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ws-paused" ${st.includePaused?'checked':''}> Include și targets deja pe pauză</label>`:''}
+        <button class="btn ghost" id="ws-csv" style="align-self:end;">Export CSV (grupat)</button>
+        <button class="btn ghost" id="ws-csv-items" style="align-self:end;">Export CSV (top targets)</button>
+      </div>
+      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="ws-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
+      ${kpi('Spend total (campanii enabled)',fMoney(totalSpend))}${kpi(`Waste · 0 sales (${fInt(nZero)})`,fMoney(wasteZero),'red')}${kpi(`Waste · over ${st.acosThr}% (${fInt(nOver)})`,fMoney(wasteOver),'amber')}${kpi('Total waste',fMoney(waste),'red')}${kpi('% din spend',pct(waste),'pink')}
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Waste pe ${groupLabel.toLowerCase()} (${rows.length})</h3></div>
+      <div id="ws-table">${tbl.html}</div>
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Top ${topItems.length} ${st.source==='searchterms'?'search terms':'targets'} după waste</h3><div class="spacer"></div><span class="countnote">din ${fInt(nZero+nOver)} peste praguri</span></div>
+      <div id="ws-items">${itbl.html}</div>
+    </div>`;
+  tbl.wire($('#ws-table')); itbl.wire($('#ws-items'));
+  const upd=()=>renderWaste();
+  $('#ws-source').onchange=e=>{ st.source=e.target.value; upd(); };
+  $('#ws-minclicks').oninput=debounce(()=>{ st.minClicks=+$('#ws-minclicks').value||0; upd(); },300);
+  $('#ws-maxclicks').oninput=debounce(()=>{ st.maxClicks=+$('#ws-maxclicks').value||0; upd(); },300);
+  $('#ws-acos').oninput=debounce(()=>{ st.acosThr=+$('#ws-acos').value||0; upd(); },300);
+  $('#ws-maxorders').oninput=debounce(()=>{ st.maxOrders=+$('#ws-maxorders').value||0; upd(); },300);
+  $('#ws-overmode').onchange=e=>{ st.overMode=e.target.value; upd(); };
+  $('#ws-group').onchange=e=>{ st.groupBy=e.target.value; upd(); };
+  $('#ws-port').onchange=e=>{ st.port=e.target.value; upd(); };
+  $('#ws-portexclude').onchange=e=>{ st.excludePorts=[...e.target.selectedOptions].map(o=>o.value).filter(Boolean); upd(); };
+  const clr=$('#ws-portexclude-clear'); if(clr) clr.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
+  const pausedEl=$('#ws-paused'); if(pausedEl) pausedEl.onchange=e=>{ st.includePaused=e.target.checked; upd(); };
+  $('#ws-csv').onclick=()=>exportCSV(cols, rows, `wasted_spend_${S.product}_by_${st.groupBy}`);
+  $('#ws-csv-items').onclick=()=>exportCSV(icols, topItems, `wasted_spend_${S.product}_top_items`);
 }
 function sidebarHtml(){
   const ports=new Set(), camps=new Set();
