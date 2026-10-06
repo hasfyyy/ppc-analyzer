@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 13:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 13:08</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1610,8 +1610,15 @@ function renderWaste(){
   const visibleItemUids=new Set(topItems.map(r=>r._uid));
   [...isel].forEach(uid=>{ if(!visibleItemUids.has(uid)) isel.delete(uid); });
   const iselCount=topItems.filter(r=>isel.has(r._uid)).length;
+  const stCtx = st.source==='searchterms' ? wasteStContext(S.product) : null;
+  if(stCtx) topItems.forEach(r=>{ r._act=wasteStAction(r, stCtx); });
   const icols=[
     {key:'bucket',label:'Why',l:true,noSort:true,cell:r=>r.bucket==='zero'?`<span class="badge nt">0 sales</span>`:`<span class="badge" style="background:#fef3e2;color:#c2760a;">ACoS ${fAcos(r.acos)}</span>`},
+    ...(stCtx? [{key:'_act',label:'Acțiune la export',l:true,noSort:true,cell:r=>r._act.action==='pause'
+      ? `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="Termenul vine dintr-un keyword Exact — se pune pe pauză keyword-ul &quot;${esc(r._act.kw.text)}&quot; (nu se poate nega în propriul Exact).">Pause keyword</span>`
+      : r._act.action==='skip'
+      ? `<span class="badge" style="background:#f1f5f9;color:#475569;" title="Keyword-ul &quot;${esc(r._act.kw.text)}&quot; care a generat termenul e deja pe pauză — nu se exportă nimic pentru el.">deja pe pauză</span>`
+      : `<span class="badge neg" title="${r._act.fallback?'Vine dintr-o campanie Exact, dar nu se potrivește cu niciun keyword de acolo (variantă) și ad group-ul are mai multe exact — Negative Exact ca fallback.':'Termen găsit prin Discovery (Auto/Broad/Phrase/PT) — Negative Exact în ad group-ul lui.'}">${r._act.fallback?'Negative Exact (fallback)':'Negative Exact'}</span>`}] : []),
     {key:'label',label:st.source==='searchterms'?'Search term':'Target',l:true,type:'text'},
     {key:'campaignName',label:'Campaign',l:true,type:'text',cell:r=>`<span style="display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(r.campaignName||'')}">${esc(r.campaignName||'')}</span>`},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>`<span style="display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;" title="${esc(r.portfolioName)}">${esc(r.portfolioName)}</span>`},
@@ -1658,7 +1665,7 @@ function renderWaste(){
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Top ${topItems.length} ${st.source==='searchterms'?'search terms':'targets'} după waste</h3><div class="spacer"></div><span class="countnote" style="margin-right:10px;">din ${fInt(nZero+nOver)} peste praguri</span>
         <button class="btn ghost" id="ws-selall">${topItems.length && topItems.every(r=>isel.has(r._uid))?'Deselect all':'Select all'}</button>
         ${st.source==='searchterms'
-          ? `<button class="btn grad-red" id="ws-export" ${iselCount?'':'disabled'} title="Negative Exact în ad group-ul unde a apărut search term-ul — același export ca tab-ul Negatives.">Export Negatives (${iselCount})</button>`
+          ? `<button class="btn grad-red" id="ws-export" ${iselCount?'':'disabled'} title="Termenii din Exact → pauză pe keyword; termenii din Discovery → Negative Exact în ad group-ul lor. Vezi coloana «Acțiune la export».">Export Pause / Negatives (${iselCount})</button>`
           : `<button class="btn grad" id="ws-export" ${iselCount?'':'disabled'} title="State = paused pe fiecare target selectat — același export ca tab-ul Targets.">Export Pause (${iselCount})</button>`}
       </div>
       <div id="ws-items">${itbl.html}</div>
@@ -1680,7 +1687,7 @@ function renderWaste(){
   $('#ws-export').onclick=()=>{
     const chosen=topItems.filter(r=>isel.has(r._uid));
     if(!chosen.length){ alert('Nimic selectat.'); return; }
-    if(st.source==='searchterms') exportNegatives(S.product, chosen);
+    if(st.source==='searchterms') exportWasteSearchTerms(S.product, chosen);
     else exportTargetsPause(S.product, chosen);
   };
   $('#ws-csv').onclick=()=>exportCSV(cols, rows, `wasted_spend_${S.product}_by_${st.groupBy}`);
@@ -3105,6 +3112,50 @@ function exportTargetsPause(product,rows){
     return bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'paused'}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id}));
   });
   writeBulk(out, productFilePrefix(product)+'targets_pause_bulk.xlsx', productSheetName(product));
+}
+// Wasted Spend → search terms: a term that came out of an EXACT keyword is that keyword (or a close variant of
+// it) — negating it in its own ad group would just block the campaign's own target, so the right move is to
+// pause the keyword. A term found by Discovery (Auto/Broad/Phrase/PT) gets a Negative Exact in that ad group,
+// as the Negatives tab does (Alex, 6 oct 2026). The report row carries the generating keyword's match type but
+// not its ID, so the keyword is found by text in the same ad group; if the term is a variant that matches no
+// keyword text and the ad group has several exact keywords, it falls back to a negative and says so.
+function wasteStContext(product){
+  // All states, not just enabled: the keyword behind a wasted term is often already paused (the report window
+  // predates the pause) — that's "nothing left to do", not a reason to drop a negative in instead (6 oct 2026).
+  const kwByAg=new Map();
+  DATA.targets.forEach(t=>{ if(t.product!==product||t.kind!=='keyword') return; const k=t.campaignId+'|'+t.adGroupId; if(!kwByAg.has(k)) kwByAg.set(k,[]); kwByAg.get(k).push(t); });
+  return {kwByAg, exactKwCamps:campaignsWithEnabledExactKw(product)};
+}
+function wasteStAction(r, ctx){
+  const tl=String(r.searchTerm||'').trim().toLowerCase();
+  const fromExact = String(r.matchType||'').toLowerCase()==='exact' || isExactCampaign(r.campaignName) || ctx.exactKwCamps.has(r.campaignId);
+  if(!fromExact) return {action:'negative'};
+  const kws=ctx.kwByAg.get(r.campaignId+'|'+r.adGroupId)||[];
+  let kw=kws.find(t=>String(t.text||'').trim().toLowerCase()===tl);
+  if(!kw){ const ex=kws.filter(t=>t.matchType==='exact' && t.state==='enabled'); if(ex.length===1) kw=ex[0]; }
+  if(!kw) return {action:'negative', fallback:true};
+  return kw.state==='enabled' ? {action:'pause', kw} : {action:'skip', kw};
+}
+function exportWasteSearchTerms(product, rows){
+  if(!rows.length){ alert('Nimic selectat.'); return; }
+  const prod=productLabel(product); const ctx=wasteStContext(product);
+  const out=[]; const seenNeg=new Set(), seenPause=new Set(); let nPause=0, nNeg=0, nSkip=0; const fallbacks=[];
+  rows.forEach(r=>{
+    const term=String(r.searchTerm||'').trim(); const a=wasteStAction(r, ctx);
+    if(a.action==='skip'){ nSkip++; return; }
+    if(a.action==='pause'){
+      if(seenPause.has(a.kw.id)) return; seenPause.add(a.kw.id); nPause++;
+      out.push(bulkRow({'Product':prod,'Entity':'Keyword','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Keyword ID':a.kw.id,'State':'paused'}));
+      return;
+    }
+    if(a.fallback) fallbacks.push(term);
+    const k=r.campaignId+'|'+r.adGroupId+'|'+term.toLowerCase(); if(seenNeg.has(k)) return; seenNeg.add(k); nNeg++;
+    if(ASIN_RE.test(term)) out.push(bulkRow({'Product':prod,'Entity':'Negative product targeting','Operation':'Create','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'enabled','Product Targeting Expression':`asin="${term.toUpperCase()}"`}));
+    else out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Exact'}));
+  });
+  if(!out.length){ alert(`Nothing to export — ${nSkip} selected term(s) come from keywords that are already paused.`); return; }
+  writeBulk(out, productFilePrefix(product)+'wasted_searchterms_bulk.xlsx', productSheetName(product));
+  alert(`Exported ${out.length} row(s): ${nPause} keyword(s) paused (terms from Exact), ${nNeg} Negative Exact (terms from Discovery).${nSkip?`\n\n${nSkip} term(s) skipped — their keyword is already paused.`:''}${fallbacks.length?`\n\n${fallbacks.length} term(s) came from an Exact campaign but matched no keyword text there (variant + several exact keywords in the ad group) — exported as Negative Exact instead: ${fallbacks.slice(0,6).join(', ')}${fallbacks.length>6?'…':''}`:''}`);
 }
 
 /* ============================ DUPLICATES (same target, competing across campaigns) ============================ */
