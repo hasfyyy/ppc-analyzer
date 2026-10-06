@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:55</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1602,7 +1602,12 @@ function renderWaste(){
   const tbl=buildTable({columns:cols,rows,tab:'waste',sortDef:{key:'waste',dir:-1},onChange:renderWaste});
   // Top wasted items — the actual targets/search terms behind the totals, so the number can be checked line by line.
   const topItems=items.filter(r=>r.bucket).sort((a,b)=>b.waste-a.waste).slice(0,200);
-  topItems.forEach(r=>r._uid=r.campaignId+'|'+(r.adGroupId||'')+'|'+r.label);
+  // Targets keep their real ID (same identity Targets tab uses), search terms fall back to campaign+ad group+text.
+  topItems.forEach(r=>r._uid = st.source==='searchterms' ? r.campaignId+'|'+(r.adGroupId||'')+'|'+String(r.searchTerm||'').toLowerCase() : r.campaignId+'|'+(r.adGroupId||'')+'|'+r.id);
+  const isel=selFor('wasteitems');
+  const visibleItemUids=new Set(topItems.map(r=>r._uid));
+  [...isel].forEach(uid=>{ if(!visibleItemUids.has(uid)) isel.delete(uid); });
+  const iselCount=topItems.filter(r=>isel.has(r._uid)).length;
   const icols=[
     {key:'bucket',label:'Why',l:true,noSort:true,cell:r=>r.bucket==='zero'?`<span class="badge nt">0 sales</span>`:`<span class="badge" style="background:#fef3e2;color:#c2760a;">ACoS ${fAcos(r.acos)}</span>`},
     {key:'label',label:st.source==='searchterms'?'Search term':'Target',l:true,type:'text'},
@@ -1614,7 +1619,7 @@ function renderWaste(){
     {key:'orders',label:'Orders',type:'int'},
     {key:'waste',label:'Waste',type:'money',cls:()=>'num-red'},
   ];
-  const itbl=buildTable({columns:icols,rows:topItems,tab:'wasteitems',sortDef:{key:'waste',dir:-1},onChange:renderWaste});
+  const itbl=buildTable({columns:icols,rows:topItems,tab:'wasteitems',selectable:true,idKey:'_uid',sortDef:{key:'waste',dir:-1},onChange:renderWaste});
   $('#app').innerHTML=`
     <div class="card pad">
       <h3 class="sectitle">Wasted Spend — ${S.product}</h3>
@@ -1648,7 +1653,12 @@ function renderWaste(){
       <div id="ws-table">${tbl.html}</div>
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Top ${topItems.length} ${st.source==='searchterms'?'search terms':'targets'} după waste</h3><div class="spacer"></div><span class="countnote">din ${fInt(nZero+nOver)} peste praguri</span></div>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Top ${topItems.length} ${st.source==='searchterms'?'search terms':'targets'} după waste</h3><div class="spacer"></div><span class="countnote" style="margin-right:10px;">din ${fInt(nZero+nOver)} peste praguri</span>
+        <button class="btn ghost" id="ws-selall">${topItems.length && topItems.every(r=>isel.has(r._uid))?'Deselect all':'Select all'}</button>
+        ${st.source==='searchterms'
+          ? `<button class="btn grad-red" id="ws-export" ${iselCount?'':'disabled'} title="Negative Exact în ad group-ul unde a apărut search term-ul — același export ca tab-ul Negatives.">Export Negatives (${iselCount})</button>`
+          : `<button class="btn grad" id="ws-export" ${iselCount?'':'disabled'} title="State = paused pe fiecare target selectat — același export ca tab-ul Targets.">Export Pause (${iselCount})</button>`}
+      </div>
       <div id="ws-items">${itbl.html}</div>
     </div>`;
   tbl.wire($('#ws-table')); itbl.wire($('#ws-items'));
@@ -1664,6 +1674,13 @@ function renderWaste(){
   const clr=$('#ws-portexclude-clear'); if(clr) clr.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
   const pausedEl=$('#ws-paused'); if(pausedEl) pausedEl.onchange=e=>{ st.includePaused=e.target.checked; upd(); };
   $('#ws-showzero').onchange=e=>{ st.showZeroGroups=e.target.checked; upd(); };
+  $('#ws-selall').onclick=()=>{ const all=topItems.length && topItems.every(r=>isel.has(r._uid)); topItems.forEach(r=>{ if(all) isel.delete(r._uid); else isel.add(r._uid); }); upd(); };
+  $('#ws-export').onclick=()=>{
+    const chosen=topItems.filter(r=>isel.has(r._uid));
+    if(!chosen.length){ alert('Nimic selectat.'); return; }
+    if(st.source==='searchterms') exportNegatives(S.product, chosen);
+    else exportTargetsPause(S.product, chosen);
+  };
   $('#ws-csv').onclick=()=>exportCSV(cols, rows, `wasted_spend_${S.product}_by_${st.groupBy}`);
   $('#ws-csv-items').onclick=()=>exportCSV(icols, topItems, `wasted_spend_${S.product}_top_items`);
 }
