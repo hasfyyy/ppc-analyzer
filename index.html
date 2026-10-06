@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:34</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 12:53</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1578,8 +1578,14 @@ function computeWasteRows(product){
   return {st, rows, items, totalSpend, wasteZero, wasteOver, nZero:items.filter(r=>r.bucket==='zero').length, nOver:items.filter(r=>r.bucket==='over').length};
 }
 function renderWaste(){
-  const {st, rows, items, totalSpend, wasteZero, wasteOver, nZero, nOver}=computeWasteRows(S.product);
+  const {st, rows: allRows, items, totalSpend, wasteZero, wasteOver, nZero, nOver}=computeWasteRows(S.product);
+  if(st.showZeroGroups===undefined) st.showZeroGroups=false;
+  // Groups with no waste are the answer "nothing to see here" — listing 77 portfolios at $0.00 next to the few
+  // that matter buried the few that matter (Alex, 6 oct 2026). Totals still cover every group.
+  const rows = st.showZeroGroups ? allRows : allRows.filter(r=>r.waste>0);
   const waste=wasteZero+wasteOver;
+  const clicksWarn = (+st.maxClicks>0 && +st.maxClicks<+st.minClicks) ? `Max Clicks (${st.maxClicks}) este sub Min Clicks (${st.minClicks}) — niciun target nu poate trece. Pune Max pe 0 pentru "fără limită".`
+    : (+st.maxClicks>0 && +st.maxClicks===+st.minClicks) ? `Min și Max Clicks sunt egale (${st.minClicks}) — se numără doar targeturile cu exact ${st.minClicks} clicks. Pentru "≥ ${st.minClicks}" pune Max pe 0.` : '';
   const pct=v=>totalSpend? (v/totalSpend*100).toFixed(1)+'%' : '—';
   const groupLabel = st.groupBy==='campaign' ? 'Campaign' : 'Portfolio';
   const cols=[
@@ -1631,12 +1637,16 @@ function renderWaste(){
         <button class="btn ghost" id="ws-csv-items" style="align-self:end;">Export CSV (top targets)</button>
       </div>
       ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="ws-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+      ${clicksWarn?`<div class="banner" style="margin-top:8px;background:#fef3e2;color:#c2760a;">${esc(clicksWarn)}</div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
       ${kpi('Spend total (campanii enabled)',fMoney(totalSpend))}${kpi(`Waste · 0 sales (${fInt(nZero)})`,fMoney(wasteZero),'red')}${kpi(`Waste · over ${st.acosThr}% (${fInt(nOver)})`,fMoney(wasteOver),'amber')}${kpi('Total waste',fMoney(waste),'red')}${kpi('% din spend',pct(waste),'pink')}
     </div>
     <div class="card pad">
-      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Waste pe ${groupLabel.toLowerCase()} (${rows.length})</h3></div>
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Waste pe ${groupLabel.toLowerCase()} (${rows.length}${st.showZeroGroups?'':` din ${allRows.length}`})</h3><div class="spacer"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ws-showzero" ${st.showZeroGroups?'checked':''}> Arată și grupurile fără waste</label>
+      </div>
+      <div class="hint" style="margin-bottom:6px;">Coloana ACoS e ACoS-ul întregului ${groupLabel.toLowerCase()} (toate targeturile lui), nu doar al celor numărate ca waste — waste-ul vine din targeturile individuale care trec pragurile.</div>
       <div id="ws-table">${tbl.html}</div>
     </div>
     <div class="card pad">
@@ -1656,6 +1666,7 @@ function renderWaste(){
   $('#ws-portexclude').onchange=e=>{ st.excludePorts=[...e.target.selectedOptions].map(o=>o.value).filter(Boolean); upd(); };
   const clr=$('#ws-portexclude-clear'); if(clr) clr.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
   const pausedEl=$('#ws-paused'); if(pausedEl) pausedEl.onchange=e=>{ st.includePaused=e.target.checked; upd(); };
+  $('#ws-showzero').onchange=e=>{ st.showZeroGroups=e.target.checked; upd(); };
   $('#ws-csv').onclick=()=>exportCSV(cols, rows, `wasted_spend_${S.product}_by_${st.groupBy}`);
   $('#ws-csv-items').onclick=()=>exportCSV(icols, topItems, `wasted_spend_${S.product}_top_items`);
 }
