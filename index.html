@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-06 13:21</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-08 17:27</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1928,9 +1928,13 @@ function renderHarvesting(){
       if(st.hvAsinMode==='only') return isAsin;
       return true;
     });
-  // aggregate identical search terms across ad groups
+  // Aggregate identical search terms across ad groups — but PER PORTFOLIO, not account-wide. Keyed on the text
+  // alone, a term found in two portfolios collapsed into one row carrying whichever portfolio came first in
+  // the file; filtering on the other portfolio then showed nothing for that product, even when its only
+  // campaign ("AUTO … catch all", single-product) had the term converting (Alex, 8 oct 2026). Same reasoning
+  // as Negative Phrase's portfolio+root key.
   const byTerm=new Map();
-  rows.forEach(r=>{ const k=r.searchTerm.toLowerCase(); if(!byTerm.has(k)) byTerm.set(k,{searchTerm:r.searchTerm,portfolioName:r.portfolioName,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0}); const e=byTerm.get(k); e.impressions+=r.impressions;e.clicks+=r.clicks;e.spend+=r.spend;e.sales+=r.sales;e.orders+=r.orders; });
+  rows.forEach(r=>{ const k=(r.portfolioName||'(No Portfolio)')+'|'+r.searchTerm.toLowerCase(); if(!byTerm.has(k)) byTerm.set(k,{searchTerm:r.searchTerm,portfolioName:r.portfolioName,campaignId:r.campaignId,campaignName:r.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0}); const e=byTerm.get(k); e.impressions+=r.impressions;e.clicks+=r.clicks;e.spend+=r.spend;e.sales+=r.sales;e.orders+=r.orders; });
   let opps=[...byTerm.values()].map(e=>{ const term=e.searchTerm.toLowerCase(); return Object.assign(e,derive(e),{
     exact:SETS.exact.has(term), phrase:SETS.phrase.has(term), broad:SETS.broad.has(term), pt:SETS.product.has(term), targetedP:false, isAsin:ASIN_RE.test(e.searchTerm.trim()) }); });
   if(st.port) opps=opps.filter(o=>(o.portfolioName||'(No Portfolio)')===st.port);
@@ -1942,9 +1946,9 @@ function renderHarvesting(){
   }
   const statusF=(o,key,val)=>{ if(!val||val==='all')return true; const has=o[key]; return val==='targeted'?has:val==='not'? !has:true; };
   opps=opps.filter(o=>statusF(o,'exact',st.exStat)&&statusF(o,'phrase',st.phStat)&&statusF(o,'broad',st.brStat)&&statusF(o,'pt',st.ptStat));
-  // Stable identity — the lowercased search term is already the aggregation key above, so it's unique and
+  // Stable identity — portfolio + lowercased search term is the aggregation key above, so it's unique and
   // consistent across renders (unlike a positional index, which shifts whenever the filters change the set).
-  opps.forEach(o=>o._uid=o.searchTerm.toLowerCase());
+  opps.forEach(o=>o._uid=(o.portfolioName||'(No Portfolio)')+'|'+o.searchTerm.toLowerCase());
   const totals=agg(opps); const tot=derive(totals);
   const sel=selFor('harvesting');
   const selOpps=opps.filter(o=>sel.has(o._uid));
@@ -2103,10 +2107,13 @@ function renderTopStDetector(){
   const goal=pst.acosGoal;
   const maxAcos=goal*st.maxAcosMult;
   const src=stByToggle();
-  // Aggregate by search term (case-insensitive)
+  // Aggregate by portfolio + search term (case-insensitive). Text alone merged a term across portfolios into
+  // one row stamped with the first portfolio seen, so the portfolio filter hid it from the product it actually
+  // converted for (Alex, 8 oct 2026) — same fix as Harvesting.
   const byTerm=new Map();
   src.forEach(s=>{
-    const key=(s.searchTerm||'').toLowerCase().trim(); if(!key) return;
+    const term=(s.searchTerm||'').toLowerCase().trim(); if(!term) return;
+    const key=(s.portfolioName||'(No Portfolio)')+'|'+term;
     if(!byTerm.has(key)) byTerm.set(key,{searchTerm:s.searchTerm,portfolioName:s.portfolioName,campaignId:s.campaignId,campaignName:s.campaignName,impressions:0,clicks:0,spend:0,sales:0,orders:0});
     const e=byTerm.get(key);
     e.impressions+=s.impressions;e.clicks+=s.clicks;e.spend+=s.spend;e.sales+=s.sales;e.orders+=s.orders;
@@ -2130,7 +2137,7 @@ function renderTopStDetector(){
   if(exclArr.length) rows=rows.filter(r=>!exclArr.some(x=>r.searchTerm.toLowerCase().includes(x)));
   // Tier badges — vizual clar cine e HOT vs OK
   rows.forEach(r=>{
-    r._uid=r.searchTerm.toLowerCase().trim();
+    r._uid=(r.portfolioName||'(No Portfolio)')+'|'+r.searchTerm.toLowerCase().trim();
     if(r.orders>=5 && r.acos<=goal) r.tier='hot';
     else if(r.orders>=3 && r.acos<=goal) r.tier='solid';
     else if(r.orders>=st.minOrders && r.acos<=maxAcos) r.tier='candidate';
