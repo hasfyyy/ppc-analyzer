@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-12 17:49</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-12 17:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3748,7 +3748,13 @@ function renderOptBids(){
     // ONLY through Step 1 (floorBidOverrides), everything else through its placements. The keyword tiers below
     // used to cut the same bid again on top — $1.72→$1.68 on MGG, whose cheapest placement was beating goal,
     // where Alex wanted the bid left alone and only TOS/ROS cut (25 sep 2026).
-    const butlerOwned=singleKw.has(t.campaignId) && (placementsByCamp[t.campaignId]||[]).some(p=>p.clicks>0);
+    // "Owned by the placement engine" only when that engine could actually judge something: a placement past
+    // the click threshold, one with orders, or a Step 1 bid cut. A single-kw campaign whose clicks are spread
+    // thin under the threshold (TOS 6 / ROS 6 / PP 0, 0 orders, $25) got nothing from either side — the
+    // keyword tiers were suppressed and no placement qualified (Alex, 12 oct 2026: 19 such keywords on a 7-day
+    // file). Below that, the keyword falls back to its own tiers — never both.
+    const thrC=clickThresholdFor(t.portfolioName);
+    const butlerOwned=singleKw.has(t.campaignId) && ((placementsByCamp[t.campaignId]||[]).some(p=>p.clicks>=thrC || p.orders>0) || !!floorBidOverrides[t.campaignId]);
     let action='none', newBid=t.bid, pct=null, reason=null;
     const floorOverride=floorBidOverrides[t.campaignId];
     // Computed off the campaign's DOMINANT target's bid (computePlacementOptRows already guards newBid against
@@ -4244,31 +4250,43 @@ function computePlacementOptRows(product, filters){
             // placement's own CPC; a click count past the threshold but under the ladder's first step still
             // counts as proof, so it takes Tier 1's $ rather than nothing.
             const z = zeroOrderDecreaseTierFor(p.clicks, bst) ?? bst.zeroDec1;
-            const target=Math.max(0.02, p.cpc - z);
+            // Off the LOWER of effective bid and CPC — same cutBase rule keywords use. Anchored on CPC alone, a
+            // placement paying MORE than its effective bid (up-and-down bidding, or edited mid-window) got a
+            // target above its effective bid and no cut at all: nattokinase TOS, 17 clicks / 0 orders / $76,
+            // CPC $4.51 vs effective $4.30 → "already below target" (12 oct 2026).
+            const cutFrom0=Math.min(oldEff, p.cpc);
+            const target=Math.max(0.02, cutFrom0 - z);
             if(target<oldEff){
               const np=Math.min(keepPct, pctFor(target));
               if(np<keepPct){ newPct=np; action='decrease'; }
               floorNote = np===0 && bid>target;
-              why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold}): CPC ${fMoney(p.cpc)} − ${fMoney(z)} = ${fMoney(target)} țintă`;
+              why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold}): ${cutFrom0<p.cpc?'efectiv':'CPC'} ${fMoney(cutFrom0)} − ${fMoney(z)} = ${fMoney(target)} țintă`;
             } else why=`0 comenzi, ${fInt(p.clicks)} clicks, dar bid-ul efectiv ${fMoney(oldEff)} e deja sub ținta ${fMoney(target)}`;
           }
         } else if(p.cpc>0){
           const dec=decreaseTierFor(p.acos, tiers);
-          const inc= dec==null && k!=='pp' ? increaseDollarTierFor(p.acos, bst) : null;
+          // A raise needs 2+ orders — one order is luck, not a rate (Alex, 12 oct 2026: 8 raises on 1-2 clicks
+          // with a single order in a 7-day file). Cuts keep working from 1 order: the spend is certain either way.
+          const inc= dec==null && k!=='pp' && p.orders>=2 ? increaseDollarTierFor(p.acos, bst) : null;
           if(dec!=null){
-            const target=Math.max(0.02, p.cpc-dec);
+            // min(effective, CPC) − $ — see the 0-order branch above for why not CPC alone.
+            const cutFrom=Math.min(oldEff, p.cpc);
+            const target=Math.max(0.02, cutFrom-dec);
             if(target<oldEff){
               const np=Math.min(keepPct, pctFor(target));
               if(np<keepPct){ newPct=np; action='decrease'; }
               floorNote = np===0 && bid>target;
-              why=`ACoS ${fAcos(p.acos)}: CPC ${fMoney(p.cpc)} − ${fMoney(dec)} = ${fMoney(target)} țintă`;
+              why=`ACoS ${fAcos(p.acos)}: ${cutFrom<p.cpc?'efectiv':'CPC'} ${fMoney(cutFrom)} − ${fMoney(dec)} = ${fMoney(target)} țintă`;
             } else why=`ACoS ${fAcos(p.acos)}, dar bid-ul efectiv ${fMoney(oldEff)} e deja sub ținta ${fMoney(target)}`;
           } else if(inc>0){
-            const target=p.cpc+inc;
+            // The target (CPC + $) can sit far above the current effective bid when the placement is paying
+            // well over what it nominally bids — MGG TOS: effective $1.68, CPC $2.93 → +77% in one step. Walk
+            // there in steps of at most +25% of the current effective bid instead (Alex, 12 oct 2026).
+            const target=Math.min(p.cpc+inc, oldEff*1.25);
             if(target>oldEff){
               const np=Math.max(keepPct, pctFor(target));
               if(np>keepPct){ newPct=np; action='increase'; }
-              why=`ACoS ${fAcos(p.acos)}: CPC ${fMoney(p.cpc)} + ${fMoney(inc)} = ${fMoney(target)} țintă`;
+              why=`ACoS ${fAcos(p.acos)}: CPC ${fMoney(p.cpc)} + ${fMoney(inc)} = ${fMoney(p.cpc+inc)} țintă${target<p.cpc+inc?` (pas max +25% → ${fMoney(target)})`:''}`;
             }
           }
         }
