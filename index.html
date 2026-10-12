@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-08 17:27</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-12 17:49</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -4168,19 +4168,11 @@ function computePlacementOptRows(product, filters){
       // separately in the CPC Flag tab, so this doesn't need its own cap to guard against it.
       action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
       why=`${fInt(e.impressions)} impressions, no clicks`;
-    } else if(allowRaise && st.pushEnabled && (e.placeType==='top'||e.placeType==='rest') && e.clicks<st.pushClicks && baseBid>0 && d.cpc>0 && baseBid*(1+e.percentage/100)<=d.cpc*1.05){
-      // Only push when the bid is actually the binding constraint — i.e. the effective bid is at or below what
-      // this placement's auctions really cost. If the effective bid already clears the CPC comfortably, more %
-      // buys nothing: it isn't losing auctions on price, it simply isn't getting the volume, and pushing a
-      // placement that already outbids the going rate just raises spend on traffic that was never the issue.
-      // Too few clicks to have EARNED the "bad performer" label above (badPerf already came back false,
-      // whatever the % happens to be) — likely because the campaign's budget keeps getting eaten by another
-      // placement before this one gets a fair shot. Give it more room to compete regardless of its current %,
-      // since a placement already at a real % (140%+) that still can't buy clicks needs the same push as one
-      // stuck at the floor — the % isn't the thing holding it back, the auction volume is. Product Pages is
-      // deliberately excluded — it's usually the placement doing the crowding-out, not the one needing help.
-      action='push'; newPct=Math.min(900, e.percentage+st.pushStep);
     }
+    // A second push branch used to sit here: TOS/ROS with 1-4 clicks (under `pushClicks`) and an effective bid
+    // at/below its CPC got +pushStep "to give it room". Removed (Alex, 12 oct 2026): on a 7-day Lunakai file it
+    // produced 212 pushes on placements with 1-2 clicks, 58 of them on campaigns edited mid-window — "nu avem
+    // info destul". Only the 0-clicks-with-enough-impressions push above (a real starvation signal) remains.
     // A "stuck past the push ceiling" branch used to sit here — flagged a placement as 'stuck-high' whenever
     // its % was already at/above pushCeiling and it still had under `pushClicks` clicks, and (in the Bid
     // Optimizer) bumped the keyword's $ bid instead. Removed entirely (Alex, 25 sep 2026): confirmed on NKS
@@ -4202,7 +4194,8 @@ function computePlacementOptRows(product, filters){
   //    bad. With the anchor fine, a bid cut fixes nothing the placement % can't, and risks starving the
   //    placement that works. New bid = anchor CPC −15%; every placement's % is then recomputed so its
   //    effective bid stays exactly where it was — the bid move alone changes nothing.
-  //  Step 2 — 0 orders with clicks at/over the threshold → 0%.
+  //  Step 2 — 0 orders with clicks at/over the threshold → graduated $ cut off that placement's CPC (the same
+  //    0-order click ladder keywords use); used to be a straight → 0%, see the note in the branch below.
   //  Step 3 — each placement against ITS OWN CPC only. Butler divides by the cheapest placement's CPC
   //    instead, which turned a TOS 20pp over goal into 127%→47% ($3.90→$2.47 on a $3.61 CPC). Over Tier 1 →
   //    target = CPC − that tier's $; under an increase tier → CPC + that tier's $ (never Product Pages, it's
@@ -4244,10 +4237,20 @@ function computePlacementOptRows(product, filters){
         // cu orders reale, ACoS-ul e dovadă suficientă indiferent de câte clicks are placement-ul.
         if(p.orders===0){
           if(p.clicks<threshold){
-            if(keepPush(p)){ newPct=Math.min(900, keepPct+st.pushStep); action='push'; why=p.why||`sub ${st.pushClicks} clicks — mai mult loc în licitații`; }
-          } else {
-            newPct=0; action= p.percentage>0 ? 'decrease' : 'none';
-            why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold})`;
+            if(keepPush(p)){ newPct=Math.min(900, keepPct+st.pushStep); action='push'; why=p.why||`impresii fără clicks — mai mult loc în licitații`; }
+          } else if(p.cpc>0){
+            // Was "→ 0%" in one step (Butler's rule) — 199%→0% on a ROS with 17 clicks/0 orders read as far too
+            // aggressive (Alex, 12 oct 2026). Now the same graduated 0-order $ ladder keywords use, off THIS
+            // placement's own CPC; a click count past the threshold but under the ladder's first step still
+            // counts as proof, so it takes Tier 1's $ rather than nothing.
+            const z = zeroOrderDecreaseTierFor(p.clicks, bst) ?? bst.zeroDec1;
+            const target=Math.max(0.02, p.cpc - z);
+            if(target<oldEff){
+              const np=Math.min(keepPct, pctFor(target));
+              if(np<keepPct){ newPct=np; action='decrease'; }
+              floorNote = np===0 && bid>target;
+              why=`0 comenzi, ${fInt(p.clicks)} clicks (prag ${threshold}): CPC ${fMoney(p.cpc)} − ${fMoney(z)} = ${fMoney(target)} țintă`;
+            } else why=`0 comenzi, ${fInt(p.clicks)} clicks, dar bid-ul efectiv ${fMoney(oldEff)} e deja sub ținta ${fMoney(target)}`;
           }
         } else if(p.cpc>0){
           const dec=decreaseTierFor(p.acos, tiers);
@@ -4316,7 +4319,7 @@ function renderOptPlacements(){
     // Compensation can push a 'push'/'increase' row's newPct further than its own base step, so the badge
     // always shows the REAL delta actually being applied, not just the rule's nominal step size.
     const delta=(r.newPct-r.percentage).toFixed(1);
-    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Under ${st.pushClicks} clicks on Top of Search / Rest of Search — pushed up regardless of its current % or ACoS, so it gets a real shot at winning auctions there before another placement eats the whole budget.">↑ +${delta}pp (push)</span>`;
+    if(r.action==='push') return `<span class="badge" style="background:#dbeafe;color:#1d4ed8;" title="Top of Search / Rest of Search shown plenty (impressions past the CTR-derived floor) but bought ZERO clicks — pushed up so it gets a real shot at winning auctions there. Placements with 1-4 clicks are no longer pushed: too little data.">↑ +${delta}pp (push)</span>`;
     if(r.action==='compensate') return `<span class="badge" style="background:#ede9fe;color:#6d28d9;" title="The shared bid is being cut (this campaign's cheapest placement is over goal). This bump keeps THIS placement's own effective bid where it was.">↑ +${delta}pp (compensate)</span>`;
     return `<span class="badge" style="background:#dcfce7;color:#15803d;">↑ +${delta}pp</span>`;
   };
