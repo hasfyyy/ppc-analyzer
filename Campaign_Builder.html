@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-14 15:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-14 15:34</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -167,15 +167,22 @@ function sortPortfolios(list){
   other.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id)));
   return [...ded, ...other];
 }
-// Mixed/branded (non-numbered) portfolios are excluded from selection entirely — they group many parents,
-// so there's no single ASIN/naming to inherit from them; only dedicated (numbered) portfolios are selectable.
+// Mixed/branded (non-numbered) portfolios are excluded from selection when the account HAS numbered ones — they group
+// many parents, so there's no single ASIN/naming to inherit from them. But an account whose portfolios aren't
+// numbered at all (".BEDRAIL NOBAG-RANK", "LEMONBEDPAN60"…) would otherwise show an EMPTY list, so then show all.
+function selectablePortfolios(list){
+  const ded=list.filter(p=>isDedicatedPortfolio(p.name));
+  return sortPortfolios(ded.length? ded : list);
+}
+// Portfolios come from the Brand Table account; if none is picked/loaded, fall back to the ones read from the
+// Reference Bulk (top of the page), so uploading a bulk there is enough to pick a portfolio.
 function btPortfolioOptions(acc,selId){
-  const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const all=A?A.portfolios:[];
-  const list=sortPortfolios(all.filter(p=>isDedicatedPortfolio(p.name)));
+  const A=(acc&&BT.accounts[acc])?acctObj(acc):null; const all=(A&&A.portfolios.length)?A.portfolios:(REF.portfolios||[]);
+  const list=selectablePortfolios(all);
   return `<option value="">— select portfolio —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(selId)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
 }
 function rowPortfolioSelect(i, pid, ports){
-  const list=sortPortfolios(ports.filter(p=>isDedicatedPortfolio(p.name)));
+  const list=selectablePortfolios(ports);
   const opts = `<option value="">— none —</option>`+list.map(p=>`<option value="${esc(p.id)}" ${String(pid)===String(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
   return `<select data-i="${i}" data-pfsel="1" style="width:160px;">${opts}</select>`;
 }
@@ -190,16 +197,24 @@ function renderNav(){
 function renderTab(){ ({brandtable:renderBrandTable, create:renderCampaignCreate, singlekw:renderSingleKw}[S.tab])(); }
 
 /* ============================ Reference Bulk (optional — powers naming detection) ============================ */
-let REF={campaigns:[], brandEntityId:'', tld:'', videoAssets:[]}; // campaigns: {campaignId, campaignName, portfolioName, product}
+let REF={campaigns:[], brandEntityId:'', tld:'', videoAssets:[], portfolios:[]}; // campaigns: {campaignId, campaignName, portfolioName, product}; portfolios: {id,name}
 function normH(h){ return String(h).toLowerCase().replace(/\(.*?informational.*?\)/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
 function parseReferenceBulk(wb){
-  REF.campaigns=[]; REF.brandEntityId=''; REF.tld=''; REF.videoAssets=[];
+  REF.campaigns=[]; REF.brandEntityId=''; REF.tld=''; REF.videoAssets=[]; REF.portfolios=[];
+  const pfSeen=new Map();   // portfolio id -> name, from the Portfolios sheet and from any campaign row
   wb.SheetNames.forEach(sn=>{
     const ws=wb.Sheets[sn]; const json=XLSX.utils.sheet_to_json(ws,{defval:''});
     if(!json.length) return;
     const headers=Object.keys(json[0]);
     const cEntity=headers.find(h=>normH(h)==='entity');
     const cCampName=headers.find(h=>normH(h)==='campaign name');
+    const cPfId=headers.find(h=>normH(h)==='portfolio id'), cPfNm=headers.find(h=>normH(h)==='portfolio name');
+    if(cEntity && cPfId && cPfNm){
+      json.forEach(row=>{
+        const id=String(row[cPfId]||'').trim(), nm=String(row[cPfNm]||'').trim();
+        if(id && nm && !pfSeen.has(id)) pfSeen.set(id,nm);
+      });
+    }
     if(!cEntity||!cCampName) return;
     const cProduct=headers.find(h=>normH(h)==='product');
     const cCampId=headers.find(h=>normH(h)==='campaign id');
@@ -224,10 +239,11 @@ function parseReferenceBulk(wb){
       REF.campaigns.push({campaignId:String(cCampId?row[cCampId]:'').trim(), campaignName:String(row[cCampName]||'').trim(), portfolioName:String(cPortName?row[cPortName]:'').trim(), product:prod});
     });
   });
+  REF.portfolios=[...pfSeen.entries()].map(([id,name])=>({id,name}));
 }
 function refStatusText(){
   const n=REF.campaigns.length;
-  return n? `${n} existing campaign(s) loaded — naming will be copied from matches in the chosen portfolio.` : 'No reference bulk loaded — campaign names will use the manual fields below. Upload your Bulk Operations export to copy naming (and continue numbering) from campaigns that already exist.';
+  return n? `${n} existing campaign(s) and ${REF.portfolios.length} portfolio(s) loaded — pick the portfolio above; naming will be copied from matches in it.` : 'No reference bulk loaded — campaign names will use the manual fields below. Upload your Bulk Operations export to copy naming (and continue numbering) from campaigns that already exist.';
 }
 // True Amazon Bulk Operations export → false for a hand-made "Brand Table"-style sheet (which has no Entity column).
 function looksLikeBulkExport(wb){
@@ -364,9 +380,10 @@ function detectNamingTemplate(portfolioName, matchType, product, prefix){
   return best;
 }
 function getPortfolioNameById(acc,pid){
-  if(!acc||!pid||!BT.accounts[acc]) return '';
-  const p=acctObj(acc).portfolios.find(x=>String(x.id)===String(pid));
-  return p?(p.name||''):'';
+  if(!pid) return '';
+  if(acc && BT.accounts[acc]){ const p=acctObj(acc).portfolios.find(x=>String(x.id)===String(pid)); if(p && p.name) return p.name; }
+  const r=(REF.portfolios||[]).find(x=>String(x.id)===String(pid));   // Reference Bulk fallback
+  return r?(r.name||''):'';
 }
 
 /* ============================ BRAND TABLE (master data) ============================ */
@@ -569,7 +586,11 @@ function normVideoAssetId(v){
 }
 function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2,negateOwn:false,brandEntityId:'',videoAssetId:'',landingAsin:'',tld:'',sbBidOpt:false,sbTos:'0',sbDetail:'0',sbHome:'0',sbOther:'0'}; } return CFG; }
 function rowHeaders(cfg){ return cfg.type==='sbv'? SB_HEADERS : BULK_HEADERS; }
-function isKwType(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='sbv'; }
+// SBV can target keywords (default) or competitor ASINs (product targeting) — one or the other per campaign, like SP.
+function isSbvAsin(cfg){ return cfg.type==='sbv' && cfg.sbvTarget==='asin'; }
+function usesAsinTargets(cfg){ return cfg.type==='pt' || cfg.type==='sd' || isSbvAsin(cfg); }
+function isKwType(cfg){ return (cfg.type==='manual' || cfg.type==='brand' || cfg.type==='sbv') && !isSbvAsin(cfg); }
+function sbvCur(cfg){ const t=String(cfg.tld||REF.tld||'').toLowerCase(); return (t==='com'||t==='ca'||t==='com.mx'||t==='com.au')?'$':(t==='co.uk')?'£':'€'; }
 // Sponsored Brands Video — structure copied 1:1 from a live SBV campaign in a real export (Createk,
 // SBV_EXACT_TPS_B0GN93HNM6_20_MAY26_PB): Campaign → Bidding Adjustment by Placement → Ad Group → Video Ad →
 // Keyword → Negative Keyword, all on the "SB Multi Ad Group Campaigns" sheet. No Product ad rows (the product is
@@ -615,10 +636,16 @@ function buildSbvRows(cfg){
       });
       out.push(sbRow({'Product':P,'Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled'}));
       out.push(sbRow({'Product':P,'Entity':'Video Ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Name':cname,'State':'enabled','Landing Page URL':`https://www.amazon.${tld}/dp/${asin}`,'Landing Page Type':'Detail Page','Consent To Translate':'False','Creative ASINs':asin,'Video Asset IDs':normVideoAssetId(cfg.videoAssetId)}));
-      grp.forEach(kw=>out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})));
-      // Entity spelled exactly as the SB Multi Ad Group export spells it ("Negative Keyword", capital K).
-      negList(cfg.negExact).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Exact'})));
-      negList(cfg.negPhrase).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Phrase'})));
+      if(isSbvAsin(cfg)){
+        // Competitor ASIN targeting — "Product Targeting" rows with asin="B0…", exactly as the SB Multi Ad Group
+        // export spells them. No negative keywords here: Amazon rejects a keyword negative in an ASIN-targeting ad group.
+        grp.forEach(a0=>{ const a=String(a0).trim().toUpperCase(); if(!a) return; out.push(sbRow({'Product':P,'Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':`asin="${a}"`})); });
+      } else {
+        grp.forEach(kw=>out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})));
+        // Entity spelled exactly as the SB Multi Ad Group export spells it ("Negative Keyword", capital K).
+        negList(cfg.negExact).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Exact'})));
+        negList(cfg.negPhrase).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Phrase'})));
+      }
     });
   });
   return out;
@@ -638,7 +665,7 @@ function brandedKeyword(cfg, kw){
 // campaign-wide in practice. Product Targeting and SD campaigns don't get them: Amazon rejects a negative
 // keyword in an ad group that has product targeting ("Ad group cannot have both keyword(theme) and product
 // attribute"), and SD has no keyword negatives.
-function hasNegatives(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='auto' || cfg.type==='sbv'; }
+function hasNegatives(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='auto' || (cfg.type==='sbv' && !isSbvAsin(cfg)); }
 function negList(text){ const seen=new Set(); return linesOf(text).filter(k=>{ const l=k.toLowerCase(); if(seen.has(l)) return false; seen.add(l); return true; }); }
 function negativeRowsFor(cfg, cname, agname, alreadyExact){
   const out=[]; const skip=alreadyExact||new Set();
@@ -654,7 +681,7 @@ function negativeConflicts(cfg, targets){
   negList(cfg.negPhrase).forEach(n=>{ const hit=targets.find(t=>pad(t).includes(pad(n))); if(hit) bad.push(`negative phrase "${n}" is inside targeted keyword "${hit}"`); });
   return bad;
 }
-function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt') return ['PAT']; if(cfg.type==='sd') return ['SDPT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
+function selectedMatches(cfg){ if(cfg.type==='auto') return ['AUTO']; if(cfg.type==='pt'||isSbvAsin(cfg)) return ['PAT']; if(cfg.type==='sd') return ['SDPT']; const r=[]; if(cfg.m_exact)r.push('EXACT'); if(cfg.m_phrase)r.push('PHRASE'); if(cfg.m_broad)r.push('BROAD'); return r; }
 function manualName(cfg,match,num){
   // Product Targeting (SP or SD) campaigns use "PREFIX 1", "PREFIX 2" (prefix + space + number, no duplicate
   // match segment) instead of the usual "PREFIX_MATCH_NUM" pattern.
@@ -689,7 +716,7 @@ function buildName(cfg,match,num){
 }
 function kwGroups(cfg){
   if(cfg.type==='auto') return [[]];
-  let list = (cfg.type==='pt'||cfg.type==='sd')? linesOf(cfg.targetAsins) : linesOf(cfg.keywords);
+  let list = usesAsinTargets(cfg)? linesOf(cfg.targetAsins) : linesOf(cfg.keywords);
   if(cfg.type==='brand'){ const seenKw=new Set(); list=list.map(kw=>brandedKeyword(cfg,kw)).filter(kw=>{ const k=kw.toLowerCase(); if(seenKw.has(k)) return false; seenKw.add(k); return true; }); }
   const per=Math.max(0,parseInt(cfg.perCampaign||0)||0);
   if(per<=0) return [list];
@@ -793,7 +820,8 @@ function builderIssues(cfg){
   if(!hasTemplate && !String(cfg.brand).trim() && !String(cfg.asin).trim()) iss.push('Enter a Brand/Niche or ASIN for the campaign name (or upload a Reference Bulk to copy naming from an existing campaign).');
   if(isKwType(cfg) && !linesOf(cfg.keywords).length) iss.push('Enter at least one keyword (manual campaigns).');
   if(cfg.type==='brand' && !String(cfg.brandName||'').trim()) iss.push('Enter the brand name to put in front of every keyword (e.g. lunakai).');
-  if((cfg.type==='pt'||cfg.type==='sd') && !linesOf(cfg.targetAsins).length) iss.push('Enter at least one ASIN to target.');
+  if(usesAsinTargets(cfg) && !linesOf(cfg.targetAsins).length) iss.push('Enter at least one ASIN to target.');
+  if(isSbvAsin(cfg)){ const badA=linesOf(cfg.targetAsins).filter(a=>!/^[A-Z0-9]{10}$/i.test(String(a).trim())); if(badA.length) iss.push(`Target ASINs must be 10 characters — check "${badA[0]}"${badA.length>1?` (+${badA.length-1} more)`:''}.`); }
   if(cfg.type==='auto' && !AUTO_GROUPS.some(g=>cfg[g.key])) iss.push('Select at least one auto targeting group (Close Match / Loose Match / Substitutes / Complements).');
   if(hasNegatives(cfg)){
     const conflicts=negativeConflicts(cfg, kwGroups(cfg).flat());
@@ -860,8 +888,10 @@ function renderCampaignCreate(){
         <div class="field grow"><label>Extra SKUs (not auto-detected — one per line)</label><input type="text" id="cc-extrasku" placeholder="e.g. HEALTH-GUMMY-COLLA-60-2020" style="width:100%;"></div>
         <div class="hint">A product only shows above if it has a live, dedicated campaign somewhere in the account — one only advertised via a catchall, or whose only dedicated campaign is paused, won't be detected even if it's the real top seller. Type its SKU here and press Enter to add it regardless. Current extras: ${linesOf(cfg.extraSkus).length? esc(linesOf(cfg.extraSkus).join(', ')) : '<span class="muted">none</span>'}${linesOf(cfg.extraSkus).length? ` <a href="#" id="cc-extrasku-clear" style="color:#dc2626;">clear</a>` : ''}</div>
       </div>` : ''}
+      ${cfg.type==='sbv'? `<div class="ctrls" style="margin-bottom:10px;"><div class="field"><label>Targeting</label>
+        <div class="seg" id="cc-sbv-target"><button data-m="kw" class="${!isSbvAsin(cfg)?'active':''}">Keywords</button><button data-m="asin" class="${isSbvAsin(cfg)?'active':''}">Competitor ASINs (product targeting)</button></div></div></div>` : ''}
       <div class="ctrls" id="cc-matches" style="${cfg.type==='auto'?'display:none;':''}">
-        <div class="field" id="cc-matchtypes-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'display:none;':''}"><label>Match types (one campaign each)</label>
+        <div class="field" id="cc-matchtypes-field" style="${usesAsinTargets(cfg)?'display:none;':''}"><label>Match types (one campaign each)</label>
           <div style="display:flex;gap:14px;height:32px;align-items:center;">
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-exact" ${cfg.m_exact?'checked':''}> Exact</label>
             <label style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-m-phrase" ${cfg.m_phrase?'checked':''}> Phrase</label>
@@ -869,9 +899,9 @@ function renderCampaignCreate(){
           </div>
         </div>
         ${cfg.type==='pt'? `<label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;height:32px;align-items:center;"><input type="checkbox" id="cc-pt-expanded" ${cfg.ptExpanded?'checked':''}> Expanded (asin-expanded — also match variations of each ASIN)</label>` : ''}
-        <div class="field"><label>${(cfg.type==='pt'||cfg.type==='sd')?'ASINs':'Keywords'} / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
+        <div class="field"><label>${usesAsinTargets(cfg)?'ASINs':'Keywords'} / campaign</label><input type="number" id="cc-per" min="0" value="${esc(cfg.perCampaign)}" placeholder="all" style="width:110px;"></div>
         <div class="field"><label>Start #</label><input type="number" id="cc-start" min="1" value="${esc(cfg.startNum)}" style="width:80px;"></div>
-        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all ${(cfg.type==='pt'||cfg.type==='sd')?'ASINs':'keywords'} in 1 campaign · 1 = single-target campaigns · N = N per campaign. Numbered from Start #.</div></div>
+        <div class="field" style="flex:1;min-width:180px;"><label>&nbsp;</label><div class="hint">Blank = all ${usesAsinTargets(cfg)?'ASINs':'keywords'} in 1 campaign · 1 = single-target campaigns · N = N per campaign. Numbered from Start #.</div></div>
       </div>
       <div class="ctrls" id="cc-auto-groups" style="${cfg.type==='auto'?'':'display:none;'}">
         <div class="field"><label>Auto targeting groups (Product Targeting rows, one per group, bid = Default Bid below)</label>
@@ -902,8 +932,8 @@ function renderCampaignCreate(){
       </div>
       <div class="hint" style="margin:4px 0 8px;">The .mp4 itself can't go through a bulk file — upload it once in Amazon Ads (Creative assets), then paste its asset ID above. ${REF.videoAssets.length? `${REF.videoAssets.length} video(s) already used in this account are suggested in the dropdown.` : 'Upload a Reference Bulk to get the account\'s Brand Entity ID and existing videos filled in.'} Landing page = https://www.amazon.${esc(cfg.tld||REF.tld||'de')}/dp/${esc(cfg.landingAsin||cfg.asin||'…')}</div>
       <div class="ctrls">
-        <div class="field"><label>Daily Budget (€)</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
-        <div class="field"><label>Keyword Bid (€)</label><input type="number" id="cc-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
+        <div class="field"><label>Daily Budget (${sbvCur(cfg)})</label><input type="number" id="cc-budget" value="${esc(cfg.budget)}" style="width:90px;"></div>
+        <div class="field"><label>${isSbvAsin(cfg)?'Target':'Keyword'} Bid (${sbvCur(cfg)})</label><input type="number" id="cc-bid" step="0.01" value="${esc(cfg.bid)}" style="width:90px;"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="cc-sbbidopt" ${cfg.sbBidOpt?'checked':''}> Bid Optimization (Amazon auto-adjusts bids)</label>
         <div class="field"><label>Top of Search %</label><input type="number" id="cc-sbtos" value="${esc(cfg.sbTos)}" style="width:90px;"></div>
         <div class="field"><label>Detail Page %</label><input type="number" id="cc-sbdetail" value="${esc(cfg.sbDetail)}" style="width:90px;"></div>
@@ -926,12 +956,12 @@ function renderCampaignCreate(){
       <div class="ctrls" style="margin-top:12px;align-items:stretch;">
         <div class="field grow" style="${cfg.type==='sbv'?'display:none;':''}"><label>SKUs to advertise (auto-filled from the portfolio above — still editable)</label><textarea class="kwbox" id="cc-skus" style="min-height:120px;" placeholder="SKU-001&#10;SKU-002">${esc(cfg.skus)}</textarea></div>
         <div class="field grow" id="cc-kw-field" style="${isKwType(cfg)?'':'display:none;'}"><label>${cfg.type==='brand'?'Keywords (one per line — brand name added automatically)':'Keywords (one per line)'}</label><textarea class="kwbox" id="cc-kw" style="min-height:120px;" placeholder="${cfg.type==='brand'?'vitamin b12&#10;magnesium glycinate':'blue widget&#10;widget for desk'}">${esc(cfg.keywords)}</textarea></div>
-        <div class="field grow" id="cc-pt-field" style="${(cfg.type==='pt'||cfg.type==='sd')?'':'display:none;'}"><label>${cfg.type==='sd'?'Competitor ASINs to target (one per line)':'ASINs to target (one per line)'}</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
+        <div class="field grow" id="cc-pt-field" style="${usesAsinTargets(cfg)?'':'display:none;'}"><label>${(cfg.type==='sd'||cfg.type==='sbv')?'Competitor ASINs to target (one per line)':'ASINs to target (one per line)'}</label><textarea class="kwbox" id="cc-pt-asins" style="min-height:120px;" placeholder="B0DP1GX3J9&#10;B0EXAMPLE1">${esc(cfg.targetAsins)}</textarea></div>
       </div>
       ${hasNegatives(cfg)? `<div class="ctrls" style="margin-top:12px;align-items:stretch;">
         <div class="field grow"><label>Negative Exact (one per line — added to every campaign created here)</label><textarea class="kwbox" id="cc-negexact" style="min-height:90px;" placeholder="free&#10;used">${esc(cfg.negExact||'')}</textarea></div>
         <div class="field grow"><label>Negative Phrase (one per line — added to every campaign created here)</label><textarea class="kwbox" id="cc-negphrase" style="min-height:90px;" placeholder="cheap&#10;diy">${esc(cfg.negPhrase||'')}</textarea></div>
-      </div>` : (cfg.type==='pt'? `<div class="hint" style="margin-top:12px;">Negative keywords can't be added on Product Targeting campaigns — Amazon rejects a keyword negative in an ad group that targets ASINs/categories.</div>` : '')}
+      </div>` : ((cfg.type==='pt'||isSbvAsin(cfg))? `<div class="hint" style="margin-top:12px;">Negative keywords can't be added on Product Targeting campaigns — Amazon rejects a keyword negative in an ad group that targets ASINs/categories.</div>` : '')}
       ${isKwType(cfg) && (cfg.m_phrase||cfg.m_broad)? `<div class="ctrls" style="margin-top:10px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="cc-negateown" ${cfg.negateOwn?'checked':''}> Add these same keywords as Negative Exact in the Phrase/Broad campaign(s)</label>
         <div class="hint" style="align-self:center;">So Phrase/Broad discovers OTHER queries instead of re-matching the exact terms you're already launching — Exact campaigns from this same batch are never negated.</div>
@@ -1031,6 +1061,8 @@ function renderCampaignCreate(){
     if(b.dataset.t==='sbv' && (cfg.prefix==='BSQ'||cfg.prefix==='SDPT')){ cfg.prefix='SBV'; if(cfg.tip==='BRND') cfg.tip=''; }
     cfg.type=b.dataset.t; renderCampaignCreate();
   });
+  const sbvTargetEl=$('#cc-sbv-target');
+  if(sbvTargetEl) sbvTargetEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{ cfg.sbvTarget=b.dataset.m; renderCampaignCreate(); });
   $('#cc-export').onclick=exportCreatedCampaigns;
   updateBuilderOutputs();
 }
@@ -1050,7 +1082,7 @@ function updateBuilderOutputs(){
   const nCamp=names.length, nAds=nCamp*Math.max(1,skus);
   const nGroups=AUTO_GROUPS.filter(g=>cfg[g.key]).length, nKw=matches.length*kws, nPt=matches.length*asins;
   const targetSummary = cfg.type==='auto'? ` · ${nCamp*nGroups} auto targeting row(s) (${nGroups} group(s)/campaign)`
-    : (cfg.type==='pt'||cfg.type==='sd')? ` · ${nPt} ${cfg.type==='sd'?'contextual targeting':'product targeting'} row(s)`
+    : usesAsinTargets(cfg)? ` · ${nPt} ${cfg.type==='sd'?'contextual targeting':'product targeting'} row(s)`
     : ` · ${nKw} keyword(s)`;
   $('#cc-summary').textContent = cfg.type==='sbv'
     ? `Will create: ${nCamp} SBV campaign(s) · ${nCamp} ad group(s) · ${nCamp} video ad(s)${targetSummary} — sheet "${SB_SHEET}"`
@@ -1317,14 +1349,19 @@ btLoad();
 renderNav(); renderTab();
 $('#ref-file').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
+  // Big account bulks (100 MB+) take 1–2 minutes to unpack and the page is frozen meanwhile — say so first, and let the
+  // browser paint that message before the heavy work starts, otherwise it just looks like nothing happened.
+  $('#ref-status').textContent=`Reading ${f.name} (${Math.round(f.size/1e6)} MB)… large bulks can take 1–2 minutes and the page may freeze — please wait, don't reload.`;
   const r=new FileReader();
   r.onload=ev=>{
-    try{
-      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
-      parseReferenceBulk(wb);
-      $('#ref-status').textContent=refStatusText();
-      if(S.tab==='create'||S.tab==='singlekw') renderTab();
-    }catch(err){ console.error(err); $('#ref-status').textContent='Error reading reference bulk: '+err.message; }
+    setTimeout(()=>{
+      try{
+        const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+        parseReferenceBulk(wb);
+        $('#ref-status').textContent=refStatusText();
+        if(S.tab==='create'||S.tab==='singlekw') renderTab();
+      }catch(err){ console.error(err); $('#ref-status').textContent='Error reading reference bulk: '+err.message; }
+    },60);
   };
   r.readAsArrayBuffer(f);
 };
