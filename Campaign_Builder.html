@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-12 17:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-14 15:08</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -559,6 +559,14 @@ function importBrandTable(file){
 /* ============================ CAMPAIGN BUILDER ============================ */
 function currentMonthYear(){ const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const d=new Date(); return M[d.getMonth()]+String(d.getFullYear()).slice(2); }
 let CFG=null;
+// Amazon wants amzn1.assetlibrary.asset1.<hash>:version_v1 — the asset page URL shows it with "/" or %3A, so normalize.
+function normVideoAssetId(v){
+  let s=String(v||'').trim();
+  try{ s=decodeURIComponent(s); }catch(e){}
+  s=s.replace(/^.*?(amzn1\.assetlibrary\.asset1\.)/i,'$1').replace(/[\/;]\s*version_v1/i,':version_v1').replace(/\s+/g,'');
+  if(/^amzn1\.assetlibrary\.asset1\.[0-9a-f]+$/i.test(s)) s+=':version_v1';
+  return s;
+}
 function ensureBuilderInit(){ if(!CFG){ CFG={type:'manual',m_exact:true,m_phrase:false,m_broad:false,prefix:'BSQ',tip:'BRND',brand:'',asin:'',agent:'',budget:'10',monthyear:currentMonthYear(),bid:'0.75',strategy:'Dynamic bids - down only',tos:'0',pp:'0',ros:'0',portfolioId:'',agency:'Insiders®',separator:'_',skus:'',keywords:'',targetAsins:'',ptExpanded:false,perCampaign:'',startNum:'1',startNumTouched:false,btAccount:'',childSel:{},autoClose:true,autoLoose:true,autoSub:true,autoComp:true,ignoreNaming:false,topSkus:2,negateOwn:false,brandEntityId:'',videoAssetId:'',landingAsin:'',tld:'',sbBidOpt:false,sbTos:'0',sbDetail:'0',sbHome:'0',sbOther:'0'}; } return CFG; }
 function rowHeaders(cfg){ return cfg.type==='sbv'? SB_HEADERS : BULK_HEADERS; }
 function isKwType(cfg){ return cfg.type==='manual' || cfg.type==='brand' || cfg.type==='sbv'; }
@@ -606,7 +614,7 @@ function buildSbvRows(cfg){
         if(!cfg.sbBidOpt || pct>0) out.push(sbRow({'Product':P,'Entity':'Bidding Adjustment by Placement','Operation':'Create','Campaign ID':cname,'Placement':pl,'Percentage':String(pct)}));
       });
       out.push(sbRow({'Product':P,'Entity':'Ad Group','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Group Name':agname,'State':'enabled'}));
-      out.push(sbRow({'Product':P,'Entity':'Video Ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Name':cname,'State':'enabled','Landing Page URL':`https://www.amazon.${tld}/dp/${asin}`,'Landing Page Type':'Detail Page','Consent To Translate':'False','Creative ASINs':asin,'Video Asset IDs':String(cfg.videoAssetId||'').trim()}));
+      out.push(sbRow({'Product':P,'Entity':'Video Ad','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'Ad Name':cname,'State':'enabled','Landing Page URL':`https://www.amazon.${tld}/dp/${asin}`,'Landing Page Type':'Detail Page','Consent To Translate':'False','Creative ASINs':asin,'Video Asset IDs':normVideoAssetId(cfg.videoAssetId)}));
       grp.forEach(kw=>out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})));
       // Entity spelled exactly as the SB Multi Ad Group export spells it ("Negative Keyword", capital K).
       negList(cfg.negExact).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Exact'})));
