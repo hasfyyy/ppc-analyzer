@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-14 15:08</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-14 15:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -801,7 +801,7 @@ function builderIssues(cfg){
   }
   if(cfg.type==='sbv'){
     syncSbvDefaults(cfg);
-    if(!String(cfg.brandEntityId||'').trim()) iss.push('Enter the Brand Entity ID (ENTITY…) — Amazon requires it on every Sponsored Brands campaign. Upload a Reference Bulk to fill it automatically.');
+    // Brand Entity ID is optional: Amazon only requires it for accounts with several brands. Left blank, the column stays empty.
     if(!String(cfg.videoAssetId||'').trim()) iss.push('Enter the Video Asset ID (amzn1.assetlibrary.asset1.…) — upload the video in Amazon Ads → Creative assets first, the bulk file can only reference it.');
     const a=String(cfg.landingAsin||cfg.asin||'').trim();
     if(!/^B0[A-Z0-9]{8}$/i.test(a)) iss.push('Landing/creative ASIN must be a 10-character ASIN (B0…) — this is the product the video ad sends shoppers to.');
@@ -895,7 +895,7 @@ function renderCampaignCreate(){
         <div class="field"><label>Separator</label><input type="text" id="cc-sep" value="${esc(cfg.separator)}" placeholder="_" style="width:60px;" maxlength="3"></div>
       </div>
       ${cfg.type==='sbv'? `<div class="ctrls" style="margin-top:12px;">
-        <div class="field"><label>Brand Entity ID</label><input type="text" id="cc-brandentity" value="${esc(cfg.brandEntityId||REF.brandEntityId||'')}" placeholder="ENTITY…" style="width:200px;"></div>
+        <div class="field"><label>Brand Entity ID (optional)</label><input type="text" id="cc-brandentity" value="${esc(cfg.brandEntityId||REF.brandEntityId||'')}" placeholder="blank = single-brand account" style="width:200px;"></div>
         <div class="field grow"><label>Video Asset ID (from Amazon Ads → Creative assets)</label><input type="text" id="cc-videoasset" list="cc-videoasset-list" value="${esc(cfg.videoAssetId||'')}" placeholder="amzn1.assetlibrary.asset1.…:version_v1" style="width:100%;"><datalist id="cc-videoasset-list">${REF.videoAssets.map(v=>`<option value="${esc(v.id)}">${esc([v.asins,v.campaignName||v.adName].filter(Boolean).join(' — '))}</option>`).join('')}</datalist></div>
         <div class="field"><label>Landing / creative ASIN</label><input type="text" id="cc-landingasin" value="${esc(cfg.landingAsin||cfg.asin||'')}" placeholder="B0H9MBP1TM" style="width:130px;"></div>
         <div class="field"><label>Marketplace (amazon.?)</label><input type="text" id="cc-tld" value="${esc(cfg.tld||REF.tld||'de')}" placeholder="de" style="width:70px;"></div>
