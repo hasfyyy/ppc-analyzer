@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-14 15:34</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-15 11:38</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -363,6 +363,7 @@ function campStatePassRow(row, c, campState){
     campState[String(g('campaignId')||'').trim()]=String(g('state')||'').trim().toLowerCase();
   }
 }
+let CUR_SHEET=''; // name of the bulk sheet being ingested, kept on each campaign so exports can write back to the same sheet
 function ingestDataRow(row, c, sheetProduct, campState){
   const g=f=>c[f]!==undefined?row[c[f]]:'';
   const ent=String(g('entity')||'').trim().toLowerCase();
@@ -385,7 +386,7 @@ function ingestDataRow(row, c, sheetProduct, campState){
   if(ent==='campaign'){
     const cn=String(g('campaignName')||'');
     const bidStrat=String(g('biddingStrategy')||'');
-    DATA.campaigns.push(Object.assign({product, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
+    DATA.campaigns.push(Object.assign({product, sheet:CUR_SHEET, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget'))},met));
     DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, budget:toNum(g('dailyBudget'))};
   } else if(ent==='ad group'){
     DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
@@ -434,6 +435,7 @@ function ingestSheetJson(json, name){
   const headers=Object.keys(json[0]); const c=colmap(headers);
   if(c.entity===undefined && c.searchTerm===undefined && c.campaignId===undefined) return; // not a bulk sheet
   const sheetProduct=sheetProductFor(name);
+  CUR_SHEET=name;
   // Paused/archived campaigns are never touched by any optimizer tab, but their rows can dwarf the
   // enabled ones in a mature account (seen: 3,397 paused vs 130 enabled campaigns, 90% of all rows).
   // Dropping them here — before anything is pushed into DATA — keeps big accounts from blowing the
@@ -1291,7 +1293,7 @@ function renderNgram(){
       <div class="kpis">${kpiRowFromAgg(agg(src))}</div>
       <div class="card pad">
         <h3 class="sectitle">Brand / Misspelling Negation</h3>
-        <div class="hint" style="margin:8px 0;">Negă brandul propriu (și greșeli de scriere) ca Negative Phrase, în toate campaniile Auto/Broad/Phrase/PT enabled, din TOATE portofoliile — nu doar cel filtrat mai jos. Scopul: o căutare de brand nu rămâne izolată pe o campanie Branded dedicată dacă și campaniile Discovery o pot prinde la fel de bine, ceea ce le umflă artificial ACoS-ul (brandul convertește mereu mai bine decât genericul).</div>
+        <div class="hint" style="margin:8px 0;">Negă brandul propriu (și greșeli de scriere) ca Negative Phrase, la nivel de campanie, în TOATE campaniile active — SP (Auto/Broad/Phrase/PT, inclusiv single-keyword) și SB/SBV cu keywords — din TOATE portofoliile și ambele produse, într-un singur fișier. Se sar doar campaniile Exact (checkbox) și cele care țintesc chiar brandul. Scopul: o căutare de brand nu rămâne izolată pe o campanie Branded dedicată dacă și campaniile Discovery o pot prinde la fel de bine, ceea ce le umflă artificial ACoS-ul (brandul convertește mereu mai bine decât genericul).</div>
         <div class="ctrls">
           <div class="field grow"><label>Brand terms + misspellings (comma-separated)</label><input type="text" id="ng-brandterms" placeholder="e.g. mybrand, mibrand, my-brand" value="${esc(st.brandNegTerms||'')}"></div>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted2);white-space:nowrap;align-self:end;padding-bottom:8px;" title="Detectat după nume ȘI structural (campania are un keyword Exact enabled înăuntru) — nu doar după convenția de denumire."><input type="checkbox" id="ng-brand-exexcat" ${st.brandNegExcludeExact!==false?'checked':''}> Exclude Exact campaigns</label>
@@ -3034,57 +3036,78 @@ function exportNgramNegatives(entries, matchType, excludeExact){
 // target) — naming conventions aren't always followed, but a campaign that actually targets ASINs/categories
 // instead of keywords IS a PT campaign regardless of what it's called (Alex, 2 oct 2026: "mai usor").
 function exportBrandNegatives(brandTermsArr, excludeExact){
-  const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
-  const isSB = S.product==='SB';
-  const prod = isSB?'Sponsored Brands':'Sponsored Products';
-  const singleKw=singleKwCampaigns(S.product);
-  const exactKwCamps=campaignsWithEnabledExactKw(S.product);
-  const adGroupsByCamp = isSB ? campaignAdGroupsFor(S.product) : null;
-  const campHasPtTarget=new Set();
-  DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===S.product) campHasPtTarget.add(t.campaignId); });
-  // The dedicated Branded campaign itself — the one this whole feature exists to PROTECT — targets the exact
-  // brand terms being negated here, as a keyword or PT expression (e.g. "lunakai", "lunakai vitamins"). Detected
-  // structurally (the keyword/target text contains the term), not by name — same reasoning as Exact above:
-  // exporting a negative INTO the campaign that's supposed to own this traffic would block its own targeting
-  // (Alex, 2 oct 2026: "care contine kws de brand inauntru").
+  // Typed brand terms go as Negative PHRASE into EVERY enabled campaign of BOTH Sponsored Products and Sponsored
+  // Brands in one file (Alex, 15 oct 2026: "se duce in toate campaniile, auto, phrase, broad, sb phrase broad,
+  // absolut toate, la nivel de campanie"). Skipped: Exact campaigns (checkbox, by name or because an enabled Exact
+  // keyword sits inside), the campaign that targets the brand itself, and SB campaigns with no keyword at all.
+  // A single-keyword manual campaign is NOT skipped anymore: the brand-protection check below already keeps a
+  // campaign whose own keyword contains the term safe, and a "SUP | Broad | trampoline" campaign is exactly
+  // where a brand search must be blocked.
+  // SP: one "Campaign Negative Keyword" row per campaign. SB has no such entity (Amazon: Invalid entity, 2 oct
+  // 2026). Its "Negative Keyword" row needs a Campaign ID + Ad Group ID (every one of the 21k existing SB
+  // negatives in a real bulk has both), shown in the Amazon UI at campaign level. So one row per ad group.
   const termsLower=brandTermsArr.map(t=>t.toLowerCase()).filter(Boolean);
-  const brandKwCamps=new Set();
-  DATA.targets.forEach(t=>{
-    if(t.product!==S.product || t.state!=='enabled') return;
-    const text=String(t.text||'').toLowerCase();
-    if(termsLower.some(term=>term && text.includes(term))) brandKwCamps.add(t.campaignId);
-  });
-  const eligible=DATA.campaigns.filter(c=>{
-    const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
-    if(c.product!==S.product || c.state!=='enabled') return false;
-    if(excludeExact && (isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId))) return false;
-    if(brandKwCamps.has(c.campaignId)) return false;
-    // Same reasoning as exportNgramNegatives: a single-kw manual campaign's one keyword IS the point, don't
-    // risk blocking it via a brand/misspelling term that happens to overlap it.
-    if(!isAuto && singleKw.has(c.campaignId)) return false;
-    return isAuto || isBroadOrPhraseCampaignName(c.campaignName) || isPatCampaignName(c.campaignName) || campHasPtTarget.has(c.campaignId);
-  });
-  brandTermsArr.forEach(term=>{
-    eligible.forEach(c=>{
-      if(isSB){
-        const ags=[...(adGroupsByCamp.get(c.campaignId)||[])];
-        ags.forEach(agId=>{
-          if(isNegated(c.campaignId, term, agId)){ skippedNegated++; return; }
-          const dk=c.campaignId+'|'+agId+'|'+term.toLowerCase();
-          if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
-          out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Phrase'}));
-        });
-        return;
-      }
-      if(isNegatedCampaignWide(c.campaignId, term)){ skippedNegated++; return; }
-      const dk=c.campaignId+'|'+term.toLowerCase();
-      if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
-      out.push(bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Phrase'}));
+  const sheets=new Map(); // sheet name -> rows
+  const addRow=(sheet,row)=>{ if(!sheets.has(sheet)) sheets.set(sheet,[]); sheets.get(sheet).push(row); };
+  const mk=()=>({rows:0,camps:new Set(),eligible:0,exact:0,protectedN:0,already:0,ptOnly:0});
+  const per={SP:mk(),SB:mk()};
+  const seen=new Set(); const noAdGroup=[];
+  ['SP','SB'].forEach(product=>{
+    const isSB=product==='SB'; const st=per[product];
+    const prod=isSB?'Sponsored Brands':'Sponsored Products';
+    const exactKwCamps=campaignsWithEnabledExactKw(product);
+    // ad groups per campaign: from enabled targets AND from Ad Group rows (a campaign can have an ad group with no live target)
+    const agByCamp=new Map();
+    if(isSB){
+      campaignAdGroupsFor(product).forEach((set,cid)=>agByCamp.set(cid,new Set(set)));
+      DATA.adGroups.forEach(a=>{ if(a.product!==product||a.state!=='enabled'||!a.adGroupId) return; if(!agByCamp.has(a.campaignId)) agByCamp.set(a.campaignId,new Set()); agByCamp.get(a.campaignId).add(a.adGroupId); });
+    }
+    const brandKwCamps=new Set(); const kwCampsLive=new Set();
+    DATA.targets.forEach(t=>{
+      if(t.product!==product || t.state!=='enabled') return;
+      if(t.kind==='keyword') kwCampsLive.add(t.campaignId);
+      const text=String(t.text||'').toLowerCase();
+      if(termsLower.some(term=>text.includes(term))) brandKwCamps.add(t.campaignId);
+    });
+    // Amazon lists an SB campaign in BOTH "Sponsored Brands Campaigns" and "SB Multi Ad Group Campaigns": count and export it once
+    const doneCamp=new Set();
+    DATA.campaigns.forEach(c=>{
+      if(c.product!==product || c.state!=='enabled') return;
+      if(doneCamp.has(c.campaignId)) return; doneCamp.add(c.campaignId);
+      st.eligible++;
+      if(excludeExact && (isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId))){ st.exact++; return; }
+      if(brandKwCamps.has(c.campaignId)){ st.protectedN++; return; }
+      // SB campaigns that only target products/categories take no negative KEYWORDS in Amazon (none of the 14 in a real
+      // bulk has one), and one invalid row makes Amazon reject the whole file, so they're left out and reported.
+      if(isSB && !kwCampsLive.has(c.campaignId)){ st.ptOnly++; return; }
+      const sheet=isSB?(/multi/i.test(c.sheet||'')?c.sheet:'Sponsored Brands Campaigns'):'Sponsored Products Campaigns';
+      brandTermsArr.forEach(term=>{
+        if(isSB){
+          const ags=[...(agByCamp.get(c.campaignId)||[])];
+          if(!ags.length){ noAdGroup.push(c.campaignName); return; }
+          ags.forEach(agId=>{
+            if(isNegated(c.campaignId, term, agId)){ st.already++; return; }
+            const dk=c.campaignId+'|'+agId+'|'+term.toLowerCase();
+            if(seen.has(dk)) return; seen.add(dk); st.camps.add(c.campaignId); st.rows++;
+            addRow(sheet, bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Phrase'}));
+          });
+          return;
+        }
+        if(isNegatedCampaignWide(c.campaignId, term)){ st.already++; return; }
+        const dk=c.campaignId+'|'+term.toLowerCase();
+        if(seen.has(dk)) return; seen.add(dk); st.camps.add(c.campaignId); st.rows++;
+        addRow(sheet, bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Phrase'}));
+      });
     });
   });
-  if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no eligible Auto/Broad/Phrase/PT campaign found, or no brand terms typed.'); return; }
-  writeBulk(out, 'brand_negatives_phrase.xlsx', isSB?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} Negative Phrase row(s) across ${campsAll.size} campaign(s), every portfolio${excludeExact?' (Exact campaigns excluded)':''}, for ${brandTermsArr.length} brand term(s)/misspelling(s).${isSB?' Sponsored Brands has no campaign-wide negative, so this is one Negative Keyword row per enabled ad group.':''} ${brandKwCamps.size} campaign(s) targeting the brand itself were protected (skipped entirely).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+  const total=per.SP.rows+per.SB.rows;
+  const already=per.SP.already+per.SB.already;
+  if(!total){ alert(already? `Nothing to export — brandul e deja negat (Phrase) în toate campaniile eligibile (${already} deja negate).` : 'Nothing to export — nicio campanie activă eligibilă găsită, sau niciun brand term scris.'); return; }
+  const wb=XLSX.utils.book_new();
+  sheets.forEach((rows,name)=>XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([BULK_HEADERS,...rows]), name));
+  XLSX.writeFile(wb,'brand_negatives_phrase.xlsx');
+  const line=(label,st)=>`${label}: ${st.rows} rânduri în ${st.camps.size} din ${st.eligible} campanii active` + `${st.exact?` · ${st.exact} Exact sărite`:''}${st.protectedN?` · ${st.protectedN} cu brandul în keyword protejate`:''}${st.already?` · ${st.already} deja negate`:''}${st.ptOnly?` · ${st.ptOnly} doar cu product targeting sărite (Amazon nu acceptă negative keyword acolo)`:''}`;
+  alert(`Brand negat ca Negative Phrase (${brandTermsArr.length} termen/i), un singur fișier.\n\n${line('Sponsored Products (nivel campanie)',per.SP)}\n${line('Sponsored Brands (un rând per ad group, apare la nivel de campanie în Amazon)',per.SB)}`+(noAdGroup.length?`\n\n${noAdGroup.length} campanii SB nu au niciun ad group activ în bulk și au fost sărite.`:''));
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 // Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
