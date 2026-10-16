@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-15 11:38</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-16 10:26</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1390,31 +1390,43 @@ function renderNgram(){
 // yourself, instead of concentrating it where the bid is actually controlled. Negative EXACT (not Phrase,
 // unlike Brand Negation above) — a narrower block, so Auto/Broad/PT can still discover longer-tail variations
 // you haven't isolated yet. Same close-variant risk as the Negatives tab (Alex, 2 oct 2026) applies here too.
-function computeIsolationRows(terms, product){
-  const isSB=product==='SB';
-  const singleKw=singleKwCampaigns(product);
-  const exactKwCamps=campaignsWithEnabledExactKw(product);
-  const campHasPtTarget=new Set();
-  DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===product) campHasPtTarget.add(t.campaignId); });
-  const eligible=DATA.campaigns.filter(c=>{
-    const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
-    if(c.product!==product || c.state!=='enabled') return false;
-    if(isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId)) return false;
-    if(!isAuto && singleKw.has(c.campaignId)) return false;
-    return isAuto || isBroadOrPhraseCampaignName(c.campaignName) || isPatCampaignName(c.campaignName) || campHasPtTarget.has(c.campaignId);
-  });
-  // Protects a Discovery campaign that's ALSO deliberately running this precise term (an exact-equals match on
-  // one of its own enabled targets) — equals, not "contains" like Brand Negation's protection: an isolation
-  // term is usually a specific phrase, and a BROADER keyword that merely contains it as a substring is a
-  // different targeting decision, not a duplicate of this one.
-  const termSet=new Set(terms.map(t=>t.toLowerCase()));
-  const campsWithOwnTarget=new Set();
+// Rewritten 16 oct 2026 (Alex): (1) scope PER PORTFOLIO, (2) the discovery campaigns are detected from what is
+// really inside them (Auto targeting, any enabled Broad/Phrase keyword, any enabled product/category target),
+// not from the campaign name, (3) the Negative Exact is written at AD GROUP level, one row per ad group.
+// Default scope "auto": each keyword is negated only in the portfolio(s) where it is already running as an
+// enabled Exact keyword, so a whole list of top keywords from several portfolios can be pasted at once.
+// Skipped on purpose: Exact campaigns / ad groups that contain an enabled Exact keyword, and any ad group that
+// itself targets that exact term (negating it there would block its own targeting).
+function isoIndex(product){
+  const campById=new Map();
+  DATA.campaigns.forEach(c=>{ if(c.product===product && c.state==='enabled' && !campById.has(c.campaignId)) campById.set(c.campaignId,c); });
+  const agMap=new Map(); const termPortfolios=new Map();
   DATA.targets.forEach(t=>{
-    if(t.product!==product || t.state!=='enabled') return;
-    if(termSet.has(String(t.text||'').toLowerCase().trim())) campsWithOwnTarget.add(t.campaignId);
+    if(t.product!==product || t.state!=='enabled' || !t.adGroupId || !campById.has(t.campaignId)) return;
+    const k=t.campaignId+'|'+t.adGroupId;
+    let g=agMap.get(k);
+    if(!g){ g={campaignId:t.campaignId, adGroupId:t.adGroupId, bp:false, pt:false, exact:false, texts:new Set()}; agMap.set(k,g); }
+    const txt=String(t.text||'').toLowerCase().trim();
+    if(txt) g.texts.add(txt);
+    if(t.kind==='keyword'){
+      if(t.matchType==='exact'){
+        g.exact=true;
+        const pf=campById.get(t.campaignId).portfolioName||'(No Portfolio)';
+        if(!termPortfolios.has(txt)) termPortfolios.set(txt,new Set());
+        termPortfolios.get(txt).add(pf);
+      } else g.bp=true;
+    } else g.pt=true;
   });
-  // Global search-term performance (not per-portfolio — isolation terms can be pasted across niches at once),
-  // used only to flag a variant NOT already covered by the pasted list itself.
+  return {campById, ags:[...agMap.values()], termPortfolios};
+}
+function isoPortfolios(product){
+  const set=new Set();
+  DATA.campaigns.forEach(c=>{ if(c.product===product && c.state==='enabled') set.add(c.portfolioName||'(No Portfolio)'); });
+  return [...set].sort((x,y)=>x.localeCompare(y));
+}
+function isoPlan(terms, product, mode){
+  const idx=isoIndex(product);
+  const termSet=new Set(terms.map(t=>t.toLowerCase()));
   const termTotals=new Map();
   DATA.searchTerms.forEach(s=>{
     if(s.product!==product) return;
@@ -1422,66 +1434,64 @@ function computeIsolationRows(terms, product){
     if(!termTotals.has(key)) termTotals.set(key,{term:s.searchTerm.trim(), orders:0, sales:0});
     const e=termTotals.get(key); e.orders+=s.orders; e.sales+=s.sales;
   });
-  const eligibleCamps=eligible.filter(c=>!campsWithOwnTarget.has(c.campaignId));
+  const discovery=idx.ags.filter(g=>{
+    const c=idx.campById.get(g.campaignId);
+    if(g.exact || isExactCampaign(c.campaignName)) return false;
+    const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
+    return isAuto || g.bp || g.pt;
+  });
   return terms.map(term=>{
     const key=term.toLowerCase();
-    const negatedCount=eligibleCamps.filter(c=>isSB
-      ? [...(campaignAdGroupsFor(product).get(c.campaignId)||[])].every(ag=>isNegated(c.campaignId,term,ag))
-      : isNegatedCampaignWide(c.campaignId,term)).length;
-    const touchable=eligibleCamps.length-negatedCount;
+    let ports=null;
+    if(mode==='__auto') ports=idx.termPortfolios.get(key)||new Set();
+    else if(mode!=='__all') ports=new Set([mode]);
+    const notFound=!!(ports && ports.size===0);
+    const touch=[]; const camps=new Set(); let already=0, own=0, total=0;
+    if(!notFound){
+      discovery.forEach(g=>{
+        const c=idx.campById.get(g.campaignId);
+        if(ports && !ports.has(c.portfolioName||'(No Portfolio)')) return;
+        total++; camps.add(g.campaignId);
+        if(g.texts.has(key)){ own++; return; }
+        if(isNegated(g.campaignId, term, g.adGroupId)){ already++; return; }
+        touch.push(g);
+      });
+    }
     const variant=searchTermVariants(key).filter(v=>!termSet.has(v)).map(v=>termTotals.get(v)).find(v=>v && v.orders>0);
-    return {term, campaignCount:eligibleCamps.length, alreadyNegated:negatedCount, touchable, variantWarning: variant? {term:variant.term, orders:variant.orders, sales:variant.sales} : null};
+    return {term, portfolios:ports?[...ports]:['(toate)'], notFound, campaignCount:camps.size, adGroupCount:total, alreadyNegated:already, ownProtected:own, touchable:touch.length, touch,
+      variantWarning: variant? {term:variant.term, orders:variant.orders, sales:variant.sales} : null};
   });
 }
-function exportIsolationNegatives(terms, product){
+function exportIsolationNegatives(terms, product, mode){
   const isSB=product==='SB';
   const prod=isSB?'Sponsored Brands':'Sponsored Products';
-  const singleKw=singleKwCampaigns(product);
-  const exactKwCamps=campaignsWithEnabledExactKw(product);
-  const adGroupsByCamp=isSB?campaignAdGroupsFor(product):null;
-  const campHasPtTarget=new Set();
-  DATA.targets.forEach(t=>{ if(t.kind==='target' && t.state==='enabled' && t.product===product) campHasPtTarget.add(t.campaignId); });
-  const termSet=new Set(terms.map(t=>t.toLowerCase()));
-  const campsWithOwnTarget=new Set();
-  DATA.targets.forEach(t=>{
-    if(t.product!==product || t.state!=='enabled') return;
-    if(termSet.has(String(t.text||'').toLowerCase().trim())) campsWithOwnTarget.add(t.campaignId);
-  });
-  const eligible=DATA.campaigns.filter(c=>{
-    const isAuto=String(c.targetingType||'').toLowerCase()==='auto';
-    if(c.product!==product || c.state!=='enabled') return false;
-    if(isExactCampaign(c.campaignName) || exactKwCamps.has(c.campaignId)) return false;
-    if(campsWithOwnTarget.has(c.campaignId)) return false;
-    if(!isAuto && singleKw.has(c.campaignId)) return false;
-    return isAuto || isBroadOrPhraseCampaignName(c.campaignName) || isPatCampaignName(c.campaignName) || campHasPtTarget.has(c.campaignId);
-  });
-  const out=[]; const seen=new Set(); const campsAll=new Set(); let skippedNegated=0;
-  terms.forEach(term=>{
-    eligible.forEach(c=>{
-      if(isSB){
-        const ags=[...(adGroupsByCamp.get(c.campaignId)||[])];
-        ags.forEach(agId=>{
-          if(isNegated(c.campaignId, term, agId)){ skippedNegated++; return; }
-          const dk=c.campaignId+'|'+agId+'|'+term.toLowerCase();
-          if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
-          out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Exact'}));
-        });
-        return;
-      }
-      if(isNegatedCampaignWide(c.campaignId, term)){ skippedNegated++; return; }
-      const dk=c.campaignId+'|'+term.toLowerCase();
-      if(seen.has(dk)) return; seen.add(dk); campsAll.add(c.campaignId);
-      out.push(bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':term,'Match Type':'Negative Exact'}));
+  const plan=isoPlan(terms, product, mode);
+  const out=[]; const seen=new Set(); const camps=new Set(); const ports=new Set();
+  const idx=isoIndex(product);
+  let already=0, own=0, notFound=[];
+  plan.forEach(r=>{
+    already+=r.alreadyNegated; own+=r.ownProtected;
+    if(r.notFound) notFound.push(r.term);
+    r.touch.forEach(g=>{
+      const dk=g.campaignId+'|'+g.adGroupId+'|'+r.term.toLowerCase();
+      if(seen.has(dk)) return; seen.add(dk); camps.add(g.campaignId);
+      ports.add(idx.campById.get(g.campaignId).portfolioName||'(No Portfolio)');
+      out.push(bulkRow({'Product':prod,'Entity':'Negative keyword','Operation':'Create','Campaign ID':g.campaignId,'Ad Group ID':g.adGroupId,'State':'enabled','Keyword Text':r.term,'Match Type':'Negative Exact'}));
     });
   });
-  if(!out.length){ alert(skippedNegated? `Nothing to export — all ${skippedNegated} candidate row(s) are already negated in their campaign(s).` : 'Nothing to export — no eligible Auto/Broad/Phrase/PT campaign found, or no keywords typed.'); return; }
+  if(!out.length){
+    alert((notFound.length?`${notFound.length} keyword(s) nu apar ca Exact enabled în niciun portofoliu (${notFound.slice(0,5).join(', ')}${notFound.length>5?'…':''}) — alege un portofoliu din listă ca să le negi totuși acolo.\n\n`:'')+(already||own?`Nothing to export — ${already} ad group(s) deja negate, ${own} protejate (țintesc chiar acel keyword).`:'Nothing to export — nicio campanie Auto/Broad/Phrase/PT enabled găsită în portofoliul ales.'));
+    return;
+  }
   writeBulk(out, (isSB?'sb_':'')+'isolation_negatives.xlsx', isSB?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
-  alert(`Exported ${out.length} Negative Exact row(s) across ${campsAll.size} campaign(s), for ${terms.length} keyword(s).${skippedNegated?` (${skippedNegated} skipped — already negated.)`:''}`);
+  alert(`Exportat ${out.length} rânduri Negative Exact, la nivel de ad group, în ${camps.size} campanii din ${ports.size} portofoliu(ri), pentru ${terms.length} keyword(s).${already?` ${already} ad group(s) sărite — deja negate.`:''}${own?` ${own} protejate — țintesc chiar acel keyword.`:''}${notFound.length?`\n\n${notFound.length} keyword(s) nu au fost găsite ca Exact enabled în niciun portofoliu și au fost sărite: ${notFound.slice(0,8).join(', ')}${notFound.length>8?'…':''}`:''}`);
 }
 function renderIsolation(){
-  const st=stFor('isolation'); if(st.kws===undefined) st.kws='';
+  const st=stFor('isolation'); if(st.kws===undefined) st.kws=''; if(st.mode===undefined) st.mode='__auto';
   const terms=[...new Set(st.kws.split('\n').map(s=>s.trim().toLowerCase()).filter(Boolean))];
-  const rows=terms.length? computeIsolationRows(terms, S.product) : [];
+  const portfolios=isoPortfolios(S.product);
+  if(st.mode!=='__auto' && st.mode!=='__all' && !portfolios.includes(st.mode)) st.mode='__auto';
+  const rows=terms.length? isoPlan(terms, S.product, st.mode) : [];
   rows.forEach(r=>r._uid=r.term);
   const sel=selFor('isolation');
   if(!st.initialSelected && rows.length){ rows.forEach(r=>sel.add(r._uid)); st.initialSelected=true; }
@@ -1489,23 +1499,32 @@ function renderIsolation(){
   [...sel].forEach(uid=>{ if(!visibleUids.has(uid)) sel.delete(uid); });
   const cols=[
     {key:'term',label:'Keyword',l:true,type:'text'},
+    {key:'portfolioText',label:'Portofoliu',l:true,type:'text',cell:r=>r.notFound?'<span class="badge" style="background:#fef3c7;color:#92400e;">nu e Exact enabled nicăieri</span>':esc(r.portfolios.join(' · ').slice(0,90))},
     {key:'campaignCount',label:'Campanii Auto/Broad/Phrase/PT',type:'int'},
+    {key:'adGroupCount',label:'Ad groups',type:'int'},
     {key:'alreadyNegated',label:'Deja negat',type:'int'},
+    {key:'ownProtected',label:'Protejate',type:'int'},
     {key:'touchable',label:'De atins acum',type:'int'},
     {key:'variantWarning',label:'',l:true,noSort:true,cell:r=>r.variantWarning?`<span class="badge" style="background:#fee2e2;color:#b91c1c;" title="Amazon's negative exact matching automatically includes close variants (plurals) — this can't be turned off. Negating &quot;${esc(r.term)}&quot; will likely ALSO block &quot;${esc(r.variantWarning.term)}&quot;, which has ${fInt(r.variantWarning.orders)} order(s) and ${fMoney(r.variantWarning.sales)} in sales of its own, and isn't in your pasted list.">⚠ "${esc(r.variantWarning.term)}" convertește, nu e în listă</span>`:''},
   ];
-  const tbl=buildTable({columns:cols,rows,tab:'isolation',selectable:true,idKey:'_uid',sortDef:{key:'campaignCount',dir:-1},onChange:renderIsolation});
+  rows.forEach(r=>{ r.portfolioText=r.notFound?'':r.portfolios.join(' · '); });
+  const tbl=buildTable({columns:cols,rows,tab:'isolation',selectable:true,idKey:'_uid',sortDef:{key:'touchable',dir:-1},onChange:renderIsolation});
   const selCount=rows.filter(r=>sel.has(r._uid)).length;
+  const touchSel=rows.filter(r=>sel.has(r._uid)).reduce((n,r)=>n+r.touchable,0);
+  const opts=[`<option value="__auto" ${st.mode==='__auto'?'selected':''}>Automat — portofoliul unde keyword-ul e deja Exact</option>`,
+    `<option value="__all" ${st.mode==='__all'?'selected':''}>Toate portofoliile</option>`]
+    .concat(portfolios.map(pf=>`<option value="${esc(pf)}" ${st.mode===pf?'selected':''}>${esc(pf)}</option>`)).join('');
   $('#app').innerHTML=`
     <div class="card pad">
-      <h3 class="sectitle">Isolation — negă keywords deja lansate în Exact, peste tot în Discovery</h3>
-      <div class="hint" style="margin-bottom:10px;">Lipește câte un keyword pe linie — cele deja lansate de tine ca Exact. Exportă Negative Exact în toate campaniile enabled Auto/Broad/Phrase/PT din cont (orice produs, ${S.product}), excluzând campaniile Exact și cele care targetează deja chiar acel keyword. Campaniile single-kw manuale (SUP_/SK_) sunt și ele excluse, ca să nu le blochezi singurul keyword.</div>
+      <h3 class="sectitle">Isolation — negă keywords deja lansate în Exact, în campaniile Discovery din același portofoliu</h3>
+      <div class="hint" style="margin-bottom:10px;">Lipește câte un keyword pe linie — top keywords lansate de tine ca Exact. Tool-ul găsește singur campaniile Discovery din portofoliu: orice Auto, orice campanie cu keywords Broad sau Phrase și orice campanie cu Product/Category Targeting, după ce conțin de fapt, nu după nume. Exportă Negative Exact la nivel de ad group (${S.product}), câte un rând per ad group. Se sar ad groups din campanii Exact, ad groups care au deja un keyword Exact enabled și ad groups care țintesc chiar acel keyword.</div>
       <div class="ctrls">
+        <div class="field"><label>Portofoliu</label><select id="iso-mode" style="font-size:13px;padding:8px;border:1px solid var(--border);border-radius:8px;min-width:340px;">${opts}</select></div>
         <div class="field grow"><label>Keywords (unul pe linie)</label><textarea id="iso-kws" rows="6" style="width:100%;font-family:inherit;font-size:13px;padding:8px;border:1px solid var(--border);border-radius:8px;" placeholder="trampoline&#10;trampoline with net&#10;16 ft trampoline">${esc(st.kws||'')}</textarea></div>
       </div>
     </div>
-    <div class="kpis" style="grid-template-columns:repeat(3,1fr);">
-      ${kpi('Keywords',fInt(terms.length))}${kpi('Cu avertizare plural/singular',fInt(rows.filter(r=>r.variantWarning).length),'red')}${kpi('Selectate export',fInt(selCount),'pink')}
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      ${kpi('Keywords',fInt(terms.length))}${kpi('Cu avertizare plural/singular',fInt(rows.filter(r=>r.variantWarning).length),'red')}${kpi('Selectate export',fInt(selCount),'pink')}${kpi('Rânduri de exportat',fInt(touchSel))}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Preview (${rows.length})</h3><div class="spacer"></div>
@@ -1516,6 +1535,7 @@ function renderIsolation(){
   tbl.wire($('#iso-table'));
   const upd=()=>renderIsolation();
   $('#iso-kws').oninput=debounce(()=>{ st.kws=$('#iso-kws').value; st.initialSelected=false; upd(); },300);
+  $('#iso-mode').onchange=e=>{ st.mode=e.target.value; st.initialSelected=false; upd(); };
   $('#iso-export').onclick=()=>{
     const chosen=rows.filter(r=>sel.has(r._uid));
     if(!chosen.length){ alert('No keywords selected.'); return; }
@@ -1524,7 +1544,7 @@ function renderIsolation(){
       const list=withWarning.slice(0,8).map(r=>`"${r.term}" → ar bloca și "${r.variantWarning.term}" (${fInt(r.variantWarning.orders)} comenzi, nu e în lista ta)`).join('\n');
       if(!confirm(`${withWarning.length} din keywords au un plural/singular care convertește bine și NU e în lista ta — Amazon le neagă pe AMÂNDOUĂ automat la Negative Exact:\n\n${list}${withWarning.length>8?`\n…+${withWarning.length-8} more`:''}\n\nContinui oricum exportul (adaugă și varianta în listă dacă vrei s-o protejezi)?`)) return;
     }
-    exportIsolationNegatives(chosen.map(r=>r.term), S.product);
+    exportIsolationNegatives(chosen.map(r=>r.term), S.product, st.mode);
   };
 }
 /* ============================ WASTED SPEND ============================ */
