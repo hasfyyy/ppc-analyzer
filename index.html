@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-16 10:26</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-16 10:57</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -342,7 +342,24 @@ function fixSheetRange(ws){
   // would misparse those as cell addresses. Dense sheets already carry a correct '!ref' from
   // XLSX.read itself though — the stale-dimension bug this function exists for was sparse-only —
   // so there's nothing to fix here; just leave it alone.
-  if(ws['0']!==undefined) return;
+  if(ws['0']!==undefined){
+    // Dense sheet. It does NOT always carry a correct '!ref': a fresh Amazon bulk (16 oct 2026, Jumpzylla,
+    // 229k rows) declares the Campaigns sheet as A1:BB1, so sheet_to_json() read just the header and the
+    // whole account silently vanished (0 campaigns, 459 targets). Recompute the range from the rows that
+    // are really there.
+    let maxR=-1, maxC=-1;
+    for(const k in ws){
+      if(k.charCodeAt(0)<48 || k.charCodeAt(0)>57) continue;
+      const r=+k; const row=ws[k];
+      if(r>maxR) maxR=r;
+      if(row && row.length-1>maxC) maxC=row.length-1;
+    }
+    if(maxR>=0 && maxC>=0){
+      const cur=ws['!ref']? XLSX.utils.decode_range(ws['!ref']) : null;
+      if(!cur || cur.e.r<maxR || cur.e.c<maxC) ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:maxR,c:maxC}});
+    }
+    return;
+  }
   let minR=Infinity,minC=Infinity,maxR=-1,maxC=-1;
   for(const addr in ws){
     if(addr[0]==='!') continue;
