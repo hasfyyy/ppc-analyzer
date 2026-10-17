@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-17 16:23</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-17 16:29</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -275,7 +275,7 @@ function wakeCtrFor(campaignId, campCtr, acctCtr){
 
 /* ============================ parsing ============================ */
 const DATA = {
-  campaigns:[], adGroups:[], productAds:[], targets:[], searchTerms:[],
+  campaigns:[], adGroups:[], productAds:[], targets:[], searchTerms:[], portfolios:[],
   negatives:[], placements:[], audienceAdjustments:[],
   campById:{},           // campaignId -> {name, portfolio, product, targetingType, budget}
   skuByCampaign:{},       // campaignId -> [{sku,asin}]
@@ -462,11 +462,17 @@ function ingestSheetJson(json, name){
   json.forEach(row=>ingestDataRow(row,c,sheetProduct,campState));
 }
 function parseWorkbook(wb){
-  Object.assign(DATA,{campaigns:[],adGroups:[],productAds:[],targets:[],searchTerms:[],negatives:[],placements:[],audienceAdjustments:[],campById:{},skuByCampaign:{}});
+  Object.assign(DATA,{campaigns:[],adGroups:[],productAds:[],targets:[],searchTerms:[],portfolios:[],negatives:[],placements:[],audienceAdjustments:[],campById:{},skuByCampaign:{}});
   wb.SheetNames.forEach(name=>{
     const ws=wb.Sheets[name]; if(!ws) return;
     fixSheetRange(ws);
     const json=XLSX.utils.sheet_to_json(ws,{defval:''});
+    if(/^portfolios$/i.test(name)){
+      json.forEach(r=>{ const k=Object.keys(r); const hid=k.find(h=>normH(h)==='portfolio id'), hnm=k.find(h=>normH(h)==='portfolio name'), hst=k.find(h=>normH(h)==='state');
+        const id=String(hid?r[hid]:'').trim(), nm=String(hnm?r[hnm]:'').trim();
+        if(id && nm) DATA.portfolios.push({id, name:nm, state:String(hst?r[hst]:'').toLowerCase()}); });
+      return;
+    }
     ingestSheetJson(json, name);
   });
   // fill portfolio/campaign name on search terms from campaign map when missing
@@ -829,6 +835,7 @@ const TABS=[
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
   {id:'duplicates',label:'Duplicates',ic:''},
   {id:'pausecamp',label:'Pause Campaigns',ic:''},
+  {id:'movecamp',label:'Move Campaigns',ic:''},
 ];
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
 // Campaigns, which works purely off campaign-level metrics (budget, spend, ACoS) that SD already parses
@@ -837,7 +844,7 @@ const OPT_TABS=new Set(['cpcflag','rebalance','optbids','optplacements','optbudg
 // Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
 // SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
 // only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
-const FIXED_PRODUCT_TABS=new Set(['negatives','negatives-sb','targets','targets-sb','targets-sd']);
+const FIXED_PRODUCT_TABS=new Set(['movecamp','negatives','negatives-sb','targets','targets-sb','targets-sd']);
 function renderNav(){
   const visTabs = S.focusMode ? TABS.filter(t=>FOCUS_TABS.has(t.id)) : TABS;
   if(S.focusMode && !FOCUS_TABS.has(S.tab)) S.tab='optbids';
@@ -870,7 +877,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, isolation:renderIsolation, waste:renderWaste, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns}[S.tab])();
+    ngram:renderNgram, isolation:renderIsolation, waste:renderWaste, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns, movecamp:renderMoveCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -1949,6 +1956,131 @@ function exportCampaignsPause(product,rows,setBudget1){
   });
   writeBulk(out, productFilePrefix(product)+'campaigns_pause_bulk.xlsx', productSheetName(product));
   alert(`Exported ${out.length} campaign pause update(s)${setBudget1?` — ${budgetCol} set to 1 on each`:''}.`);
+}
+
+/* ============================ MOVE CAMPAIGNS ============================ */
+// Search every campaign by any tag (portfolio abbreviation, ASIN, a word from the name, campaign ID …), tick the
+// ones wanted and move them into another portfolio. Space-separated words must ALL match (or ANY, switchable);
+// a word starting with "-" excludes; "quoted phrases" stay together. The export is a Campaign Update row per
+// campaign carrying the TARGET Portfolio ID — only this one field changes, so nothing else on the campaign is touched
+// (and the portfolio is never left blank, which would pull the campaign OUT of every portfolio).
+const SB_MOVE_HEADERS=["Product","Entity","Operation","Campaign ID","Portfolio ID","Ad Group ID","Ad ID","Keyword ID","Product Targeting ID","Campaign Name","Ad Group Name","Ad Name","Start Date","End Date","State","Brand Entity ID","Budget Type","Budget","Bid Optimization","Product Location","Bid","Placement","Percentage","Keyword Text","Match Type","Native Language Keyword","Native Language Locale","Product Targeting Expression","Landing Page URL","Landing Page ASINs","Landing Page Type","Brand Name","Consent To Translate","Brand Logo Asset ID","Brand Logo Crop","Custom Images","Creative Headline","Creative ASINs","Video Asset IDs","Subpages","Product Exclusions","Ad Title","Sites"];
+function moveSearchTerms(q){
+  const out=[]; String(q||'').replace(/(-?)"([^"]+)"|(-?)(\S+)/g,(m,n1,p1,n2,p2)=>{ const neg=!!(n1||n2); const t=String(p1||p2||'').toLowerCase().trim(); if(t) out.push({neg,t}); return m; });
+  return out;
+}
+function moveCampaignPool(){
+  // one entry per campaign (Amazon lists an SB campaign on two sheets); the ASINs come from its product ads / creative
+  const asinBy=new Map();
+  DATA.productAds.forEach(a=>{ if(!a.campaignId) return; if(!asinBy.has(a.campaignId)) asinBy.set(a.campaignId,new Set()); if(a.asin) asinBy.get(a.campaignId).add(String(a.asin).toUpperCase()); });
+  const by=new Map();
+  DATA.campaigns.forEach(c=>{
+    const prev=by.get(c.campaignId);
+    if(prev){ prev.multi=prev.multi||/multi/i.test(c.sheet||''); return; }
+    const asins=new Set(asinBy.get(c.campaignId)||[]);
+    (String(c.campaignName||'').match(/B0[A-Z0-9]{8}/ig)||[]).forEach(a=>asins.add(a.toUpperCase()));
+    (String(c.portfolioName||'').match(/B0[A-Z0-9]{8}/ig)||[]).forEach(a=>asins.add(a.toUpperCase()));
+    const pfName=c.portfolioName || (DATA.portfolios.find(p=>p.id===String(c.portfolioId||'').trim())||{}).name || '';
+    const e=Object.assign({},c,{_uid:c.campaignId, portfolioName:pfName, asins:[...asins], multi:/multi/i.test(c.sheet||'')});
+    e._blob=[c.campaignName,c.portfolioName||'(No Portfolio)',c.campaignId,c.portfolioId,c.product,c.targetingType,c.state,c.biddingStrategy,e.asins.join(' ')].join(' | ').toLowerCase();
+    by.set(c.campaignId,e);
+  });
+  return [...by.values()];
+}
+function movePortfolioList(){
+  const m=new Map(); DATA.portfolios.forEach(p=>m.set(p.id,{id:p.id,name:p.name,state:p.state}));
+  DATA.campaigns.forEach(c=>{ const id=String(c.portfolioId||'').trim(); if(id && !m.has(id)) m.set(id,{id,name:c.portfolioName||id,state:''}); });
+  return [...m.values()].filter(p=>p.state!=='ended' && !/archived/.test(p.state)).sort((a,b)=>a.name.localeCompare(b.name));
+}
+function renderMoveCampaigns(){
+  const st=stFor('movecamp');
+  if(st.q===undefined) st.q=''; if(st.mode===undefined) st.mode='all'; if(st.prod===undefined) st.prod='all'; if(st.target===undefined) st.target='';
+  const terms=moveSearchTerms(st.q);
+  const pool=moveCampaignPool();
+  let rows=pool.filter(c=>{
+    if(st.prod!=='all' && c.product!==st.prod) return false;
+    const pos=terms.filter(t=>!t.neg), neg=terms.filter(t=>t.neg);
+    if(neg.some(t=>c._blob.includes(t.t))) return false;
+    if(!pos.length) return !!terms.length || st.showAll;       // nothing typed: show nothing until asked
+    return st.mode==='any'? pos.some(t=>c._blob.includes(t.t)) : pos.every(t=>c._blob.includes(t.t));
+  });
+  const sel=selFor('movecamp');
+  // forget ticks that fell out of the current search so the export counter only counts what is visible
+  const visible=new Set(rows.map(r=>r._uid)); [...sel].forEach(id=>{ if(!visible.has(id)) sel.delete(id); });
+  const pfs=movePortfolioList();
+  const tgt=pfs.find(p=>p.name===String(st.target||'').trim());
+  const picked=rows.filter(r=>sel.has(r._uid));
+  const already=picked.filter(r=>tgt && String(r.portfolioId||'')===tgt.id).length;
+  const byPf={}; rows.forEach(r=>{ const k=r.portfolioName||'(No Portfolio)'; byPf[k]=(byPf[k]||0)+1; });
+  const pfChips=Object.entries(byPf).sort((a,b)=>b[1]-a[1]).slice(0,12).map(([k,n])=>`<span class="badge">${esc(k.length>46?k.slice(0,46)+'…':k)} · ${n}</span>`).join(' ');
+  const totals=agg(rows);
+  const cols=[
+    {key:'campaignName',label:'Campaign',l:true,type:'text'},
+    {key:'product',label:'Type',l:true,type:'text'},
+    {key:'portfolioName',label:'Current portfolio',l:true,type:'text',cell:r=>esc(r.portfolioName||'(No Portfolio)')},
+    {key:'asinsTxt',label:'ASIN(s)',l:true,noSort:true,cell:r=>esc(r.asins.slice(0,3).join(', ')+(r.asins.length>3?' …':''))},
+    {key:'spend',label:'Spend',type:'money',fmtTotal:t=>fMoney(t.spend)},
+    {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
+    {key:'orders',label:'Orders',type:'int',fmtTotal:t=>fInt(t.orders)},
+    {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
+  ];
+  rows.forEach(r=>Object.assign(r,derive(r)));
+  const tbl=buildTable({columns:cols,rows,tab:'movecamp',selectable:true,idKey:'_uid',totals,sortDef:{key:'campaignName',dir:1},onChange:renderMoveCampaigns});
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <h3 class="sectitle">Find campaigns</h3>
+      <div class="ctrls">
+        <div class="field grow"><label>Search tags — portfolio abbreviation, ASIN, word from the name, campaign ID… (space = all must match · -word excludes · "exact phrase")</label><input type="text" id="mv-q" value="${esc(st.q)}" placeholder='e.g.  COR  B0H63SX8TH   or   SBV -paused   or   "best campaigns"' style="width:100%;"></div>
+        <div class="field"><label>Match</label><select id="mv-mode"><option value="all" ${st.mode==='all'?'selected':''}>All words</option><option value="any" ${st.mode==='any'?'selected':''}>Any word</option></select></div>
+        <div class="field"><label>Type</label><select id="mv-prod"><option value="all">SP + SB + SD</option>${['SP','SB','SD'].map(x=>`<option ${st.prod===x?'selected':''}>${x}</option>`).join('')}</select></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="mv-all" ${st.showAll?'checked':''}> Show all campaigns</label>
+      </div>
+      <div class="hint" style="margin-top:6px;">Searches name, portfolio, Campaign ID, ASIN(s) and type of every campaign loaded (only enabled campaigns are loaded from the bulk). ${rows.length? `<b>${fInt(rows.length)}</b> found in:` : ''} ${pfChips}</div>
+    </div>
+    <div class="card pad">
+      <h3 class="sectitle">Move to portfolio</h3>
+      <div class="ctrls">
+        <div class="field grow"><label>Target portfolio (type to search)</label><input type="text" id="mv-target" list="mv-pf-list" value="${esc(st.target)}" placeholder="start typing the portfolio name…" style="width:100%;"><datalist id="mv-pf-list">${pfs.map(p=>`<option value="${esc(p.name)}">`).join('')}</datalist></div>
+        <div class="field" style="align-self:end;"><button class="btn ghost" id="mv-selall" ${rows.length?'':'disabled'}>Select all ${fInt(rows.length)}</button> <button class="btn ghost" id="mv-clear" ${sel.size?'':'disabled'}>Clear</button></div>
+      </div>
+      <div class="hint" style="margin-top:6px;">${tgt? `Target: <b>${esc(tgt.name)}</b> (ID ${esc(tgt.id)})` : (st.target? '<span style="color:#dc2626;">No portfolio with exactly that name — pick one from the list.</span>' : 'Pick the portfolio the selected campaigns should go to.')}${already? ` · ${already} selected already sit there and are skipped` : ''}</div>
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campaigns (${fInt(rows.length)})</h3><div class="spacer"></div>
+        <button class="btn grad" id="mv-export" ${(tgt && picked.length-already>0)?'':'disabled'}>Export Move (${fInt(Math.max(0,picked.length-already))})</button>
+      </div>
+      <div id="mv-table">${rows.length? tbl.html : '<div class="empty"><p>Type a tag above (or tick “Show all campaigns”).</p></div>'}</div>
+    </div>`;
+  if(rows.length) tbl.wire($('#mv-table'));
+  const rer=()=>{ const pos=$('#mv-q').selectionStart; renderMoveCampaigns(); const q=$('#mv-q'); q.focus(); q.setSelectionRange(pos,pos); };
+  $('#mv-q').oninput=debounce(()=>{ st.q=$('#mv-q').value; rer(); },260);
+  $('#mv-mode').onchange=e=>{ st.mode=e.target.value; renderMoveCampaigns(); };
+  $('#mv-prod').onchange=e=>{ st.prod=e.target.value; renderMoveCampaigns(); };
+  $('#mv-all').onchange=e=>{ st.showAll=e.target.checked; renderMoveCampaigns(); };
+  $('#mv-target').onchange=e=>{ st.target=e.target.value; renderMoveCampaigns(); };
+  $('#mv-selall').onclick=()=>{ rows.forEach(r=>sel.add(r._uid)); renderMoveCampaigns(); };
+  $('#mv-clear').onclick=()=>{ sel.clear(); renderMoveCampaigns(); };
+  $('#mv-export').onclick=()=>exportCampaignMove(picked, tgt);
+}
+function exportCampaignMove(picked, tgt){
+  if(!tgt){ alert('Pick the target portfolio first.'); return; }
+  const todo=picked.filter(r=>String(r.portfolioId||'')!==tgt.id);
+  if(!todo.length){ alert('Nothing to move — the selected campaigns are already in that portfolio.'); return; }
+  const sheets=new Map(); const add=(sh,row)=>{ if(!sheets.has(sh)) sheets.set(sh,[]); sheets.get(sh).push(row); };
+  const cnt={SP:0,SB:0,SD:0};
+  todo.forEach(r=>{
+    cnt[r.product]++;
+    if(r.product==='SB'){
+      // SB campaigns live on "SB Multi Ad Group Campaigns" (a superset — it also holds the video/SBV ones that are NOT on the old sheet)
+      const sh=r.multi?'SB Multi Ad Group Campaigns':'Sponsored Brands Campaigns';
+      add(sh, SB_MOVE_HEADERS.map(h=>({'Product':'Sponsored Brands','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Portfolio ID':tgt.id})[h]||''));
+    } else add(productSheetName(r.product), bulkRow({'Product':productLabel(r.product),'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Portfolio ID':tgt.id}));
+  });
+  const wb=XLSX.utils.book_new();
+  sheets.forEach((rows,name)=>{ const hdr=/brands|^sb /i.test(name)? SB_MOVE_HEADERS : BULK_HEADERS; XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([hdr,...rows]), name); });
+  const safe=tgt.name.replace(/[^a-z0-9]+/gi,'_').slice(0,40);
+  XLSX.writeFile(wb,'move_campaigns_to_'+safe+'.xlsx');
+  alert(`Exported ${todo.length} campaign move(s) → "${tgt.name}" (SP ${cnt.SP} · SB ${cnt.SB} · SD ${cnt.SD}).`+(picked.length>todo.length?`\n${picked.length-todo.length} skipped — already in that portfolio.`:''));
 }
 
 /* ============================ HARVESTING ============================ */
