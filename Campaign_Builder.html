@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-16 10:57</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-17 16:23</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -197,10 +197,10 @@ function renderNav(){
 function renderTab(){ ({brandtable:renderBrandTable, create:renderCampaignCreate, singlekw:renderSingleKw}[S.tab])(); }
 
 /* ============================ Reference Bulk (optional — powers naming detection) ============================ */
-let REF={campaigns:[], brandEntityId:'', tld:'', videoAssets:[], portfolios:[]}; // campaigns: {campaignId, campaignName, portfolioName, product}; portfolios: {id,name}
+let REF={campaigns:[], brandEntityId:'', tld:'', videoAssets:[], portfolios:[], sbCampaigns:{}}; // campaigns: {campaignId, campaignName, portfolioName, product}; portfolios: {id,name}
 function normH(h){ return String(h).toLowerCase().replace(/\(.*?informational.*?\)/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
 function parseReferenceBulk(wb){
-  REF.campaigns=[]; REF.brandEntityId=''; REF.tld=''; REF.videoAssets=[]; REF.portfolios=[];
+  REF.campaigns=[]; REF.brandEntityId=''; REF.tld=''; REF.videoAssets=[]; REF.portfolios=[]; REF.sbCampaigns={};
   const pfSeen=new Map();   // portfolio id -> name, from the Portfolios sheet and from any campaign row
   wb.SheetNames.forEach(sn=>{
     const ws=wb.Sheets[sn]; const json=XLSX.utils.sheet_to_json(ws,{defval:''});
@@ -227,7 +227,25 @@ function parseReferenceBulk(wb){
     const cVideo=headers.find(h=>normH(h)==='video asset ids');
     const cCreativeAsins=headers.find(h=>normH(h)==='creative asins');
     const cAdName=headers.find(h=>normH(h)==='ad name');
+    // "Attach to existing SBV campaigns" mode: per Campaign ID remember the name, its Ad Group ID, whether a Video Ad
+    // is already there and how many keywords it has. In a real export the campaign name sits in "Campaign Name" on the
+    // Campaign row but only in "...(Informational only)" on the Ad Group / Video Ad rows, so look at every column.
+    const isSbSheet=/sponsored brands|^sb multi/i.test(sn);
+    const cAgId=headers.find(h=>normH(h)==='ad group id');
+    const campNameCols=headers.filter(h=>normH(h)==='campaign name');
+    const stateCols=headers.filter(h=>normH(h)==='state'||normH(h)==='campaign state');
     json.forEach(row=>{
+      if(isSbSheet){
+        const ent=String(row[cEntity]||'').trim().toLowerCase(); const cid=String(cCampId?row[cCampId]:'').trim();
+        if(cid){
+          const e=REF.sbCampaigns[cid]||(REF.sbCampaigns[cid]={campaignId:cid,name:'',adGroupId:'',hasVideo:false,asin:'',videoId:'',state:'',kwCount:0});
+          if(!e.name){ const nm=campNameCols.map(h=>String(row[h]||'').trim()).find(Boolean); if(nm) e.name=nm; }
+          if(ent==='ad group'){ if(!e.adGroupId) e.adGroupId=String(cAgId?row[cAgId]:'').trim(); }
+          else if(ent==='video ad' || ent==='brand video ad'){ e.hasVideo=true; if(cCreativeAsins && !e.asin) e.asin=String(row[cCreativeAsins]||'').trim().split(/[ ,]+/)[0]; if(cVideo && !e.videoId) e.videoId=String(row[cVideo]||'').trim(); }
+          else if(ent==='keyword'){ e.kwCount++; }
+          else if(ent==='campaign'){ const st=stateCols.map(h=>String(row[h]||'').trim()).find(Boolean); if(st) e.state=st.toLowerCase(); }
+        }
+      }
       if(cBrandEnt && !REF.brandEntityId && String(row[cBrandEnt]||'').trim()) REF.brandEntityId=String(row[cBrandEnt]).trim();
       if(cLanding && !REF.tld){ const m=String(row[cLanding]||'').match(/amazon\.([a-z.]+?)\//i); if(m) REF.tld=m[1].toLowerCase(); }
       if(cVideo && String(row[cVideo]||'').trim()){
@@ -605,6 +623,11 @@ function syncSbvDefaults(cfg){
   if(!String(cfg.tld||'').trim() && REF.tld) cfg.tld=REF.tld;
   if(!String(cfg.landingAsin||'').trim() && String(cfg.asin||'').trim()) cfg.landingAsin=String(cfg.asin).trim().toUpperCase();
 }
+// "keyword ; 3.16" (also tab-separated, as pasted from Excel) -> own bid for that keyword; without a bid the default applies.
+function parseKwBid(line){
+  const m=String(line||'').match(/^(.*?)\s*[;\t]\s*([0-9]+(?:[.,][0-9]+)?)\s*$/);
+  return m? {kw:m[1].trim(), bid:m[2].replace(',','.')} : {kw:String(line||'').trim(), bid:''};
+}
 function buildSbvRows(cfg){
   syncSbvDefaults(cfg);
   const out=[]; const matches=selectedMatches(cfg);
@@ -641,7 +664,7 @@ function buildSbvRows(cfg){
         // export spells them. No negative keywords here: Amazon rejects a keyword negative in an ASIN-targeting ad group.
         grp.forEach(a0=>{ const a=String(a0).trim().toUpperCase(); if(!a) return; out.push(sbRow({'Product':P,'Entity':'Product Targeting','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Product Targeting Expression':`asin="${a}"`})); });
       } else {
-        grp.forEach(kw=>out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':cfg.bid,'Keyword Text':kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})));
+        grp.forEach(line=>{ const pk=parseKwBid(line); out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Bid':pk.bid||cfg.bid,'Keyword Text':pk.kw,'Match Type':match.charAt(0)+match.slice(1).toLowerCase()})); });
         // Entity spelled exactly as the SB Multi Ad Group export spells it ("Negative Keyword", capital K).
         negList(cfg.negExact).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Exact'})));
         negList(cfg.negPhrase).forEach(k=>out.push(sbRow({'Product':P,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':cname,'Ad Group ID':agname,'State':'enabled','Keyword Text':k,'Match Type':'Negative Phrase'})));
@@ -824,7 +847,7 @@ function builderIssues(cfg){
   if(isSbvAsin(cfg)){ const badA=linesOf(cfg.targetAsins).filter(a=>!/^[A-Z0-9]{10}$/i.test(String(a).trim())); if(badA.length) iss.push(`Target ASINs must be 10 characters — check "${badA[0]}"${badA.length>1?` (+${badA.length-1} more)`:''}.`); }
   if(cfg.type==='auto' && !AUTO_GROUPS.some(g=>cfg[g.key])) iss.push('Select at least one auto targeting group (Close Match / Loose Match / Substitutes / Complements).');
   if(hasNegatives(cfg)){
-    const conflicts=negativeConflicts(cfg, kwGroups(cfg).flat());
+    const conflicts=negativeConflicts(cfg, kwGroups(cfg).flat().map(l=>cfg.type==='sbv'?parseKwBid(l).kw:l));
     if(conflicts.length) iss.push('A negative would block your own target — '+conflicts[0]+(conflicts.length>1?` (+${conflicts.length-1} more)`:'')+'.');
   }
   if(cfg.type==='sbv'){
@@ -848,8 +871,20 @@ function namingBannerHtml(cfg){
   }
   return REF.campaigns.length? `No existing ${esc(m)} campaign with prefix "${esc(cfg.prefix)}" found in this portfolio — using the manual fields below.` : `No Reference Bulk loaded — using the manual fields below. Upload one (top of page) to copy naming from an existing campaign.`;
 }
+function typeSegHtml(cfg){
+  const T=[['manual','Manual (keywords)'],['pt','Product Targeting (ASINs)'],['auto','Auto targeting'],['sd','SD Competitor Targeting'],['brand','Branded campaigns'],['sbv','SBV (Brands Video)'],['sbvx','SBV: add to existing']];
+  return `<div class="seg" id="cc-type">${T.map(([k,l])=>`<button data-t="${k}" class="${cfg.type===k?'active':''}">${l}</button>`).join('')}</div>`;
+}
+function bindTypeSeg(cfg){
+  $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    if(b.dataset.t==='sd' && cfg.prefix==='BSQ') cfg.prefix='SDPT';
+    if(b.dataset.t==='sbv' && (cfg.prefix==='BSQ'||cfg.prefix==='SDPT')){ cfg.prefix='SBV'; if(cfg.tip==='BRND') cfg.tip=''; }
+    cfg.type=b.dataset.t; renderCampaignCreate();
+  });
+}
 function renderCampaignCreate(){
   const cfg=ensureBuilderInit();
+  if(cfg.type==='sbvx') return renderSbvExisting(cfg);
   if(cfg.type==='sbv') syncSbvDefaults(cfg);
   const strat=['Dynamic bids - down only','Dynamic bids - up and down','Fixed bids'];
   const primaryTemplate = cfg.type!=='auto' ? templateFor(cfg, selectedMatches(cfg)[0]) : null;
@@ -862,14 +897,7 @@ function renderCampaignCreate(){
   $('#app').innerHTML=`
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campaign Setup</h3>
-        <div class="seg" id="cc-type">
-          <button data-t="manual" class="${cfg.type==='manual'?'active':''}">Manual (keywords)</button>
-          <button data-t="pt" class="${cfg.type==='pt'?'active':''}">Product Targeting (ASINs)</button>
-          <button data-t="auto" class="${cfg.type==='auto'?'active':''}">Auto targeting</button>
-          <button data-t="sd" class="${cfg.type==='sd'?'active':''}">SD Competitor Targeting</button>
-          <button data-t="brand" class="${cfg.type==='brand'?'active':''}">Branded campaigns</button>
-          <button data-t="sbv" class="${cfg.type==='sbv'?'active':''}">SBV (Brands Video)</button>
-        </div>
+        ${typeSegHtml(cfg)}
       </div>
       <div class="ctrls" id="cc-source" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);">
         <div class="field"><label>Account (Brand Table)</label><select id="cc-acc">${btAccountOptions(cfg.btAccount)}</select></div>
@@ -1053,14 +1081,7 @@ function renderCampaignCreate(){
   const negateEl=$('#cc-negateown'); if(negateEl) negateEl.onchange=e=>{ cfg.negateOwn=e.target.checked; updateBuilderOutputs(); };
   document.querySelectorAll('.cc-auto-g').forEach(cb=>cb.onchange=()=>{ cfg[cb.dataset.g]=cb.checked; updateBuilderOutputs(); });
   const ignoreEl=$('#cc-ignore-naming'); if(ignoreEl) ignoreEl.onchange=()=>{ cfg.ignoreNaming=ignoreEl.checked; renderCampaignCreate(); };
-  $('#cc-type').querySelectorAll('button').forEach(b=>b.onclick=()=>{
-    // Nudge the prefix to this account's own "SDPT" (SD Product Targeting) convention when switching into
-    // the SD tab, same idea as any other default — only if the user hasn't already typed something else.
-    if(b.dataset.t==='sd' && cfg.prefix==='BSQ') cfg.prefix='SDPT';
-    // Same nudge for SBV (the account's own convention: SBV_EXACT_TPS_B0GN93HNM6_20_MAY26_PB has no Tip segment).
-    if(b.dataset.t==='sbv' && (cfg.prefix==='BSQ'||cfg.prefix==='SDPT')){ cfg.prefix='SBV'; if(cfg.tip==='BRND') cfg.tip=''; }
-    cfg.type=b.dataset.t; renderCampaignCreate();
-  });
+  bindTypeSeg(cfg);
   const sbvTargetEl=$('#cc-sbv-target');
   if(sbvTargetEl) sbvTargetEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{ cfg.sbvTarget=b.dataset.m; renderCampaignCreate(); });
   $('#cc-export').onclick=exportCreatedCampaigns;
@@ -1336,6 +1357,131 @@ const SB_SHEET='SB Multi Ad Group Campaigns';
 function bulkRow(f){ return BULK_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
 function sbRow(f){ return SB_HEADERS.map(h=>f[h]!==undefined?f[h]:''); }
 function writeBulk(rows,filename,sheet,headers){ const aoa=[headers||BULK_HEADERS,...rows]; const ws=XLSX.utils.aoa_to_sheet(aoa); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet||'Sponsored Products Campaigns'); XLSX.writeFile(wb,filename); }
+
+/* ====== SBV: add Video Ad + Keywords to campaigns that already exist ======
+   Typical case: the first upload created the SBV campaign + ad group but the Video Ad row bounced (video asset not
+   ready, wrong asset ID…). The campaign and ad group now live in Amazon under numeric IDs, so the fix file carries ONLY
+   Video Ad + Keyword rows pointing at those IDs (worked 17 oct 2026 for MDC/MHV/COR). Candidates come from the
+   Reference Bulk (SB sheets): Campaign ID + Ad Group ID per campaign. */
+const SBVX_ASIN_RE=/B0[A-Z0-9]{8}/i;
+function sbvxMatch(name){ const m=String(name||'').match(/(?:^|[_\s-])(EXACT|PHRASE|BROAD)(?=[_\s\d-]|$)/i); return m? m[1].charAt(0).toUpperCase()+m[1].slice(1).toLowerCase() : ''; }
+function sbvxAsin(c){ const m=String(c.name||'').match(SBVX_ASIN_RE); return (m? m[0] : (c.asin||'')).toUpperCase(); }
+function sbvxCandidates(){
+  return Object.values(REF.sbCampaigns).filter(c=>c.adGroupId && c.name && (/sbv/i.test(c.name)||c.hasVideo) && !/archived/i.test(c.state))
+    .sort((a,b)=>(a.hasVideo-b.hasVideo)||a.name.localeCompare(b.name));
+}
+function sbvxData(cfg,asin){
+  cfg.sbvxData=cfg.sbvxData||{};
+  let d=cfg.sbvxData[asin];
+  if(!d){
+    const known=REF.videoAssets.slice().reverse().find(v=>String(v.asins||'').toUpperCase().includes(asin));
+    d=cfg.sbvxData[asin]={video:known?known.id:'', keywords:''};
+  }
+  return d;
+}
+function sbvxSelected(cfg){ return sbvxCandidates().filter(c=>cfg.sbvxSel && cfg.sbvxSel[c.campaignId]); }
+function buildSbvxRows(cfg){
+  const out=[]; const P='Sponsored Brands';
+  const tld=String(cfg.tld||REF.tld||'com').trim().replace(/^\.+/,'');
+  sbvxSelected(cfg).forEach(c=>{
+    const asin=sbvxAsin(c), d=sbvxData(cfg,asin), match=sbvxMatch(c.name);
+    if(!c.hasVideo && cfg.sbvxAddVideo!==false && d.video)
+      out.push(sbRow({'Product':P,'Entity':'Video Ad','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':c.adGroupId,'Ad Name':c.name,'State':'enabled','Landing Page URL':`https://www.amazon.${tld}/dp/${asin}`,'Landing Page Type':'Detail Page','Consent To Translate':'False','Creative ASINs':asin,'Video Asset IDs':normVideoAssetId(d.video)}));
+    const seen=new Set();
+    linesOf(d.keywords).forEach(line=>{
+      const pk=parseKwBid(line); const k=pk.kw.toLowerCase(); if(!pk.kw || seen.has(k)) return; seen.add(k);
+      out.push(sbRow({'Product':P,'Entity':'Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':c.adGroupId,'State':'enabled','Bid':pk.bid||cfg.bid,'Keyword Text':pk.kw,'Match Type':match}));
+    });
+  });
+  return out;
+}
+function sbvxIssues(cfg){
+  const iss=[]; const sel=sbvxSelected(cfg);
+  if(!REF.campaigns.length && !sbvxCandidates().length) return ['Upload a fresh Reference Bulk (top of page) — the campaigns and their Campaign ID / Ad Group ID are read from it.'];
+  if(!sel.length) return ['Tick at least one campaign.'];
+  if(!(+cfg.bid>0)) iss.push('Default bid must be above 0.');
+  sel.forEach(c=>{
+    const asin=sbvxAsin(c), d=sbvxData(cfg,asin);
+    if(!sbvxMatch(c.name)) iss.push(`Can't tell Exact/Phrase/Broad from the name "${c.name}".`);
+    if(!/^B0[A-Z0-9]{8}$/.test(asin)) iss.push(`No ASIN found for "${c.name}".`);
+    if(!c.hasVideo && cfg.sbvxAddVideo!==false && !String(d.video||'').trim()) iss.push(`Video Asset ID missing for ${asin}.`);
+    if(!linesOf(d.keywords).length) iss.push(`No keywords for ${asin}.`);
+  });
+  return [...new Set(iss)];
+}
+function renderSbvExisting(cfg){
+  const cands=sbvxCandidates();
+  if(cfg.sbvxSel===undefined){ cfg.sbvxSel={}; cands.filter(c=>!c.hasVideo).forEach(c=>cfg.sbvxSel[c.campaignId]=true); }
+  if(cfg.sbvxAddVideo===undefined) cfg.sbvxAddVideo=true;
+  const q=String(cfg.sbvxFilter||'').toLowerCase();
+  const shown=cands.filter(c=>!q||c.name.toLowerCase().includes(q));
+  $('#app').innerHTML=`
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campaign Setup</h3>${typeSegHtml(cfg)}</div>
+      <div class="hint" style="margin:10px 0;">Adds a <b>Video Ad</b> and <b>Keywords</b> to SBV campaigns that <b>already exist</b> in Amazon — e.g. when the first upload created the campaign but the video ad failed. The file carries only those rows, pointing at each campaign's Campaign ID + Ad Group ID from the Reference Bulk (top of page — export it AFTER the campaigns were created). Campaigns that already have a Video Ad get keywords only.</div>
+      ${cands.length? '' : '<div class="banner" style="margin:8px 0;">No SBV campaign with an Ad Group found in the Reference Bulk yet — upload a bulk exported after the campaigns were created.</div>'}
+      <div class="ctrls">
+        <div class="field"><label>Filter campaigns</label><input type="text" id="sx-filter" value="${esc(cfg.sbvxFilter||'')}" placeholder="e.g. MDC or 20_OCT26" style="width:220px;"></div>
+        <div class="field"><label>Default keyword bid (${sbvCur(cfg)})</label><input type="number" step="0.01" id="sx-bid" value="${esc(cfg.bid)}" style="width:110px;"></div>
+        <div class="field"><label>Marketplace (amazon.?)</label><input type="text" id="sx-tld" value="${esc(cfg.tld||REF.tld||'com')}" style="width:70px;"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="sx-addvideo" ${cfg.sbvxAddVideo!==false?'checked':''}> Add the Video Ad (only for campaigns that have none)</label>
+      </div>
+      <div class="flist" id="sx-list" style="max-height:260px;overflow:auto;margin-top:8px;">${shown.map(c=>`<label class="fitem"><input type="checkbox" data-sx="${esc(c.campaignId)}" ${cfg.sbvxSel[c.campaignId]?'checked':''}><span>${esc(c.name)} <span class="muted">— ${c.hasVideo?'has Video Ad':'<b style="color:#dc2626;">no Video Ad</b>'} · ${c.kwCount} kw · ${esc(c.state||'')}</span></span></label>`).join('')||'<span class="muted">—</span>'}</div>
+      <div class="ctrls" style="margin-top:6px;"><button class="btn" id="sx-nov">Select: no Video Ad</button><button class="btn" id="sx-none">Clear</button></div>
+    </div>
+    <div class="card pad"><h3 class="sectitle">Video + keywords per product</h3>
+      <div class="hint" style="margin-bottom:8px;">One block per ASIN (read from the campaign names) — its Exact/Phrase/Broad campaigns all get the same keywords. One keyword per line; add <b>keyword ; bid</b> (or paste two Excel columns) for an own bid, otherwise the default bid is used.</div>
+      <div id="sx-groups"></div>
+    </div>
+    <div class="card pad">
+      <div class="rowbar"><h3 class="sectitle" style="margin:0;">Bulk Preview</h3><div class="spacer"></div><span id="cc-issues" class="countnote"></span><button class="btn grad" id="cc-export">Export Bulk (.xlsx)</button></div>
+      <div id="cc-summary" class="countnote" style="margin:6px 0;"></div><div id="cc-preview"></div>
+    </div>`;
+  bindTypeSeg(cfg);
+  const upd=debounce(updateSbvxOutputs,150);
+  $('#sx-filter').oninput=e=>{ cfg.sbvxFilter=e.target.value; const pos=e.target.selectionStart; renderSbvExisting(cfg); const f=$('#sx-filter'); f.focus(); f.setSelectionRange(pos,pos); };
+  $('#sx-bid').oninput=e=>{ cfg.bid=e.target.value; upd(); };
+  $('#sx-tld').oninput=e=>{ cfg.tld=e.target.value; upd(); };
+  $('#sx-addvideo').onchange=e=>{ cfg.sbvxAddVideo=e.target.checked; renderSbvGroups(cfg); updateSbvxOutputs(); };
+  document.querySelectorAll('[data-sx]').forEach(cb=>cb.onchange=()=>{ cfg.sbvxSel[cb.dataset.sx]=cb.checked; renderSbvGroups(cfg); updateSbvxOutputs(); });
+  $('#sx-nov').onclick=()=>{ cands.forEach(c=>cfg.sbvxSel[c.campaignId]=!c.hasVideo); renderSbvExisting(cfg); };
+  $('#sx-none').onclick=()=>{ cfg.sbvxSel={}; renderSbvExisting(cfg); };
+  $('#cc-export').onclick=()=>{
+    const iss=sbvxIssues(cfg); if(iss.length){ alert('Please fix before export:\n\n• '+iss.join('\n• ')); return; }
+    writeBulk(buildSbvxRows(cfg), 'SBV_video_keywords_existing_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'.xlsx', SB_SHEET, SB_HEADERS);
+  };
+  renderSbvGroups(cfg); updateSbvxOutputs();
+}
+function renderSbvGroups(cfg){
+  const byAsin={};
+  sbvxSelected(cfg).forEach(c=>{ const a=sbvxAsin(c)||'(no ASIN)'; (byAsin[a]=byAsin[a]||[]).push(c); });
+  const upd=debounce(updateSbvxOutputs,150);
+  const asins=Object.keys(byAsin);
+  $('#sx-groups').innerHTML = asins.length? asins.map(a=>{
+    const d=sbvxData(cfg,a), cs=byAsin[a], needVideo=cfg.sbvxAddVideo!==false && cs.some(c=>!c.hasVideo);
+    const opts=REF.videoAssets.filter(v=>String(v.asins||'').toUpperCase().includes(a));
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">
+      <div style="font-weight:600;margin-bottom:6px;">${esc(a)} <span class="muted" style="font-weight:400;">— ${cs.map(c=>esc(sbvxMatch(c.name)||'?')).join(' + ')} (${cs.length} campaign${cs.length>1?'s':''})</span></div>
+      <div class="ctrls" style="align-items:stretch;">
+        ${needVideo? `<div class="field grow"><label>Video Asset ID</label><input type="text" data-sxv="${esc(a)}" list="sx-vl-${esc(a)}" value="${esc(d.video)}" placeholder="amzn1.assetlibrary.asset1.…:version_v1" style="width:100%;"><datalist id="sx-vl-${esc(a)}">${opts.map(v=>`<option value="${esc(v.id)}">${esc(v.campaignName||v.adName)}</option>`).join('')}</datalist></div>` : '<div class="hint" style="align-self:center;">Video Ad not needed here (already has one, or turned off).</div>'}
+        <div class="field grow"><label>Keywords (keyword ; bid)</label><textarea class="kwbox" data-sxk="${esc(a)}" style="min-height:140px;" placeholder="inositol capsules ; 4&#10;myo inositol ; 3.16">${esc(d.keywords)}</textarea></div>
+      </div></div>`;
+  }).join('') : '<span class="muted">Tick campaigns above.</span>';
+  document.querySelectorAll('[data-sxv]').forEach(i=>i.oninput=()=>{ sbvxData(cfg,i.dataset.sxv).video=i.value; upd(); });
+  document.querySelectorAll('[data-sxk]').forEach(i=>i.oninput=()=>{ sbvxData(cfg,i.dataset.sxk).keywords=i.value; upd(); });
+}
+function updateSbvxOutputs(){
+  const cfg=CFG; if(!cfg || cfg.type!=='sbvx') return;
+  const rows=buildSbvxRows(cfg); const ix=n=>SB_HEADERS.indexOf(n);
+  const iss=sbvxIssues(cfg);
+  $('#cc-issues').innerHTML=iss.length? `<span style="color:#dc2626;">${esc(iss[0])}${iss.length>1?` (+${iss.length-1} more)`:''}</span>` : '<span style="color:#15803d;">Ready to export</span>';
+  $('#cc-export').disabled=iss.length>0;
+  const nV=rows.filter(r=>r[ix('Entity')]==='Video Ad').length, nK=rows.filter(r=>r[ix('Entity')]==='Keyword').length;
+  $('#cc-summary').textContent=`Will add: ${nV} Video Ad(s) · ${nK} keyword(s) on ${sbvxSelected(cfg).length} existing campaign(s) — sheet "${SB_SHEET}"`;
+  let h='<div class="tablewrap"><table><thead><tr><th class="l">Entity</th><th class="l">Campaign ID</th><th class="l">Ad Group ID</th><th class="l">Keyword / Video</th><th class="l">Match</th><th>Bid</th></tr></thead><tbody>';
+  rows.slice(0,300).forEach(r=>{ h+=`<tr><td class="l"><b>${esc(r[ix('Entity')])}</b></td><td class="l">${esc(r[ix('Campaign ID')])}</td><td class="l">${esc(r[ix('Ad Group ID')])}</td><td class="l">${esc(r[ix('Keyword Text')]||r[ix('Video Asset IDs')])}</td><td class="l">${esc(r[ix('Match Type')])}</td><td>${esc(r[ix('Bid')])}</td></tr>`; });
+  $('#cc-preview').innerHTML=h+'</tbody></table></div>'+(rows.length>300?`<div class="countnote">…+${rows.length-300} more rows</div>`:'');
+}
 function exportCreatedCampaigns(){
   const cfg=ensureBuilderInit(); const iss=builderIssues(cfg);
   if(iss.length){ alert('Please fix before export:\n\n• '+iss.join('\n• ')); return; }
