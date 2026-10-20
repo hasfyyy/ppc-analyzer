@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-17 16:29</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-20 18:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3523,6 +3523,10 @@ function bidTierDefaults(bst){
 // A keyword cut lands below what it actually PAYS, not just below its bid (Alex, 25 sep 2026: bid $2.55, CPC
 // $2.00, −$0.20 → $1.80) — a bid far above its own CPC was never the real price. The LOWER of the two, because
 // placement % can push a keyword's CPC above its base bid, and anchoring on that CPC would then never cut at all.
+// Lowest bid Amazon accepts per ad type. A Sponsored Brands keyword/target below $0.10 is rejected by the bulk upload
+// ("Bid cannot be updated. Outside of allowed range" on 0.04 / 0.05 / 0.07 — 3 of 8 rows of an SB bid file, 20 oct
+// 2026; 0.11 and up went through), while SP and SD accept $0.02.
+function minBidFor(product){ return product==='SB' ? 0.10 : 0.02; }
 function cutBase(t, d){ return d.cpc>0 ? Math.min(t.bid, d.cpc) : t.bid; }
 function cutBaseLabel(t, d){ return d.cpc>0 && d.cpc<t.bid ? `CPC ${fMoney(d.cpc)}` : `bid ${fMoney(t.bid)}`; }
 function decTiersFor(portfolioName, bst){
@@ -3967,7 +3971,7 @@ function renderOptBids(){
     } else if(!butlerOwned && (t.clicks>=st.minClicks || t.orders>=st.minOrdersInc) && t.spend>=st.minSpend){
       const decDollar = t.orders>=1? decreaseTierFor(effAcos, decTiers) : null;
       if(decDollar!=null){
-        const nb=Math.max(0.02, +(cutBase(t,d)-decDollar).toFixed(2));
+        const nb=Math.max(minBidFor(t.product), +(cutBase(t,d)-decDollar).toFixed(2));
         if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`ACoS ${fAcos(d.acos)} → ${cutBaseLabel(t,d)} − ${fMoney(decDollar)}`; }
       } else if(t.orders>=st.minOrdersInc){
         const incDollar=increaseDollarTierFor(effAcos, incTiers);
@@ -3981,7 +3985,7 @@ function renderOptBids(){
     if(action==='none' && !butlerOwned && t.orders===0){
       const zdec=zeroOrderDecreaseTierFor(t.clicks, st);
       if(zdec!=null){
-        const nb=Math.max(0.02, +(cutBase(t,d)-zdec).toFixed(2));
+        const nb=Math.max(minBidFor(t.product), +(cutBase(t,d)-zdec).toFixed(2));
         if(nb<t.bid){ action='decrease'; newBid=nb; pct=+(((t.bid-nb)/t.bid)*100).toFixed(1); reason=`0 orders, ${t.clicks} wasted clicks → ${cutBaseLabel(t,d)} − ${fMoney(zdec)}`; }
       }
     }
@@ -4656,7 +4660,7 @@ function computeRebalanceRows(product){
     let dominant=targets[0];
     targets.forEach(t=>{ if(t.clicks>dominant.clicks || (t.clicks===dominant.clicks && t.spend>dominant.spend)) dominant=t; });
     const oldBid=dominant.bid;
-    const newBid=Math.max(0.02, +(oldBid*(1-st.reducePct/100)).toFixed(2));
+    const newBid=Math.max(minBidFor(dominant.product), +(oldBid*(1-st.reducePct/100)).toFixed(2));
     const plMap=plByCamp[cid]||{};
     const perPlace={};
     ['top','rest','pp'].forEach(type=>{
