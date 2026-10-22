@@ -109,7 +109,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-10-22 11:40</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Account Tools · build 2026-10-22 11:41</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -140,6 +140,18 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 'use strict';
 function $(s){ return document.querySelector(s); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Amazon's bulk export often declares a wrong sheet dimension (e.g. "A1" / "A1:BB1" with thousands of rows), so
+// sheet_to_json saw the header only. Recompute each sheet's range from the cells that exist before reading.
+function fixWorkbookRanges(wb){
+  wb.SheetNames.forEach(n=>{
+    const ws=wb.Sheets[n]; if(!ws) return;
+    if(ws['0']!==undefined){ let mr=-1,mc=-1; for(const k in ws){ if(k.charCodeAt(0)<48||k.charCodeAt(0)>57) continue; const r=+k,row=ws[k]; if(r>mr) mr=r; if(row&&row.length-1>mc) mc=row.length-1; } if(mr>=0&&mc>=0) ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:mr,c:mc}}); return; }
+    let a=Infinity,b=Infinity,c=-1,d=-1;
+    for(const k in ws){ if(k[0]==='!') continue; const x=XLSX.utils.decode_cell(k); if(x.r<a)a=x.r; if(x.c<b)b=x.c; if(x.r>c)c=x.r; if(x.c>d)d=x.c; }
+    if(c>=0) ws['!ref']=XLSX.utils.encode_range({s:{r:a,c:b},e:{r:c,c:d}});
+  });
+  return wb;
+}
 function normH(h){ h=String(h||'').toLowerCase(); h=h.replace(/\(.*?\)/g,''); h=h.replace(/[^a-z0-9]+/g,' '); return h.trim(); }
 function linesOf(s){ return String(s||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean); }
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
@@ -1233,7 +1245,7 @@ $('#cm-file').onchange=e=>{
   r.onload=ev=>{
     try{
       const buf=new Uint8Array(ev.target.result);
-      LAST_WB=XLSX.read(buf,{type:'array'}); LAST_FILENAME=file.name;
+      LAST_WB=fixWorkbookRanges(XLSX.read(buf,{type:'array'})); LAST_FILENAME=file.name;
       const rows=processWorkbook(LAST_WB, '');
       $('#cm-status').innerHTML = `<b>${esc(file.name)}</b> — ${rows.length} enabled campaign(s) found.`;
       renderApp(rows);
