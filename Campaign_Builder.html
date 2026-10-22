@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-22 11:41</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-22 11:46</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1510,9 +1510,47 @@ function exportCreatedCampaigns(){
   writeBulk(rows, fn+'_bulk.xlsx', cfg.type==='sd'?'Sponsored Display Campaigns':cfg.type==='sbv'?SB_SHEET:'Sponsored Products Campaigns', rowHeaders(cfg));
 }
 
+
+/* ============================ auto-load the bulk imported in PPC Analyzer ============================ */
+// PPC Analyzer already keeps the last bulk it loaded in IndexedDB (db "ppc_analyzer", store "files", key "last", same
+// site). Read that here so importing a bulk ONCE in the Analyzer fills this tool too — Brand Table (products / SKUs /
+// portfolios) AND the Reference Bulk (naming, video assets, existing SBV campaigns) — without uploading it again
+// (Alex, 22 oct 2026). Parsing a big bulk takes a while, so the extracted result is cached under "builder_digest" and
+// reused until the Analyzer loads a different file. Nothing goes to localStorage.
+function anIdb(){ return new Promise((res,rej)=>{ const q=indexedDB.open('ppc_analyzer',1); q.onupgradeneeded=()=>q.result.createObjectStore('files'); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
+async function anGet(key){ const db=await anIdb(); return await new Promise(res=>{ const rq=db.transaction('files','readonly').objectStore('files').get(key); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); }); }
+async function anPut(key,val){ try{ const db=await anIdb(); db.transaction('files','readwrite').objectStore('files').put(val,key); }catch(e){} }
+async function autoLoadFromAnalyzer(){
+  const st=$('#ref-status');
+  try{
+    const rec=await anGet('last'); if(!rec || !rec.buf) return;
+    if(REF.campaigns.length) return;                      // something was already loaded by hand this session
+    const sig=rec.name+'|'+(rec.buf.byteLength||0);
+    const acc=String(rec.name||'bulk').replace(/\.[^.]+$/,'');
+    let dg=await anGet('builder_digest');
+    if(!(dg && dg.sig===sig)){
+      if(st) st.textContent=`Reading "${rec.name}" from PPC Analyzer (${Math.round((rec.buf.byteLength||0)/1e6)} MB)… big bulks can take 1–2 minutes — the page may freeze, please wait.`;
+      await new Promise(r=>setTimeout(r,60));
+      const wb=fixWorkbookRanges(XLSX.read(new Uint8Array(rec.buf),{type:'array'}));
+      if(!looksLikeBulkExport(wb)) return;
+      const bd=extractBrandDataFromBulk(wb);
+      parseReferenceBulk(wb);
+      dg={sig, acc, products:bd.products, portfolios:bd.portfolios, skuSales:bd.skuSales, ref:JSON.parse(JSON.stringify(REF))};
+      anPut('builder_digest', dg);
+    } else {
+      Object.assign(REF, dg.ref);
+    }
+    if(REF.campaigns.length===0 && !dg.products.length && !dg.portfolios.length) return;
+    BT.current=acc; mergeImportedIntoAccount(acc, dg.products, dg.portfolios, dg.skuSales);
+    if(st) st.textContent=`Loaded automatically from PPC Analyzer: "${rec.name}" — ${dg.products.length} product(s), ${dg.portfolios.length} portfolio(s), ${REF.campaigns.length} campaign(s) (naming detection ready).`;
+    renderTab();
+  }catch(err){ console.error('auto-load from Analyzer failed', err); }
+}
+
 /* ============================ init ============================ */
 btLoad();
 renderNav(); renderTab();
+autoLoadFromAnalyzer();
 $('#ref-file').onchange=e=>{
   const f=e.target.files[0]; if(!f) return;
   // Big account bulks (100 MB+) take 1–2 minutes to unpack and the page is frozen meanwhile — say so first, and let the
