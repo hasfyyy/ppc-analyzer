@@ -110,7 +110,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-20 18:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">Campaign Builder · build 2026-10-22 11:40</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -198,6 +198,26 @@ function renderTab(){ ({brandtable:renderBrandTable, create:renderCampaignCreate
 
 /* ============================ Reference Bulk (optional — powers naming detection) ============================ */
 let REF={campaigns:[], brandEntityId:'', tld:'', videoAssets:[], portfolios:[], sbCampaigns:{}}; // campaigns: {campaignId, campaignName, portfolioName, product}; portfolios: {id,name}
+// Amazon's Bulk Operations export often declares a WRONG sheet dimension (60.xlsx, 22 oct 2026: Portfolios "A1", Campaigns
+// "A1:BB1" while thousands of rows are really there). sheet_to_json trusts that range, so it saw the header only: 0 products,
+// 0 portfolios, no reference campaigns. Recompute every sheet's range from the cells that exist before reading anything.
+function fixSheetRange(ws){
+  if(!ws) return;
+  if(ws['0']!==undefined){ // dense sheet: rows stored under numeric keys
+    let maxR=-1,maxC=-1;
+    for(const k in ws){ if(k.charCodeAt(0)<48||k.charCodeAt(0)>57) continue; const r=+k, row=ws[k]; if(r>maxR) maxR=r; if(row&&row.length-1>maxC) maxC=row.length-1; }
+    if(maxR>=0&&maxC>=0) ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:maxR,c:maxC}});
+    return;
+  }
+  let minR=Infinity,minC=Infinity,maxR=-1,maxC=-1;
+  for(const addr in ws){
+    if(addr[0]==='!') continue;
+    const c=XLSX.utils.decode_cell(addr);
+    if(c.r<minR) minR=c.r; if(c.c<minC) minC=c.c; if(c.r>maxR) maxR=c.r; if(c.c>maxC) maxC=c.c;
+  }
+  if(maxR>=0) ws['!ref']=XLSX.utils.encode_range({s:{r:minR,c:minC},e:{r:maxR,c:maxC}});
+}
+function fixWorkbookRanges(wb){ wb.SheetNames.forEach(n=>fixSheetRange(wb.Sheets[n])); return wb; }
 function normH(h){ return String(h).toLowerCase().replace(/\(.*?informational.*?\)/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
 function parseReferenceBulk(wb){
   REF.campaigns=[]; REF.brandEntityId=''; REF.tld=''; REF.videoAssets=[]; REF.portfolios=[]; REF.sbCampaigns={};
@@ -539,7 +559,7 @@ function importBrandTable(file){
   r.onload=ev=>{
     try{
       const buf=new Uint8Array(ev.target.result);
-      const wb=XLSX.read(buf,{type:'array'});
+      const wb=fixWorkbookRanges(XLSX.read(buf,{type:'array'}));
 
       // 1) Try to detect a hand-curated "Brand Table"-style sheet first (Brand Name + Product Code columns).
       let best=null;
@@ -1502,7 +1522,7 @@ $('#ref-file').onchange=e=>{
   r.onload=ev=>{
     setTimeout(()=>{
       try{
-        const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+        const wb=fixWorkbookRanges(XLSX.read(new Uint8Array(ev.target.result),{type:'array'}));
         parseReferenceBulk(wb);
         $('#ref-status').textContent=refStatusText();
         if(S.tab==='create'||S.tab==='singlekw') renderTab();
