@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-27 19:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-27 19:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1778,11 +1778,12 @@ function renderWaste(){
   $('#ws-csv').onclick=()=>exportCSV(cols, rows, `wasted_spend_${S.product}_by_${st.groupBy}`);
   $('#ws-csv-items').onclick=()=>exportCSV(icols, topItems, `wasted_spend_${S.product}_top_items`);
 }
-function sidebarHtml(){
+function sidebarHtml(stKey='ngram', allPorts=false){
   const ports=new Set(), camps=new Set();
-  stByToggle().forEach(s=>{ports.add(s.portfolioName||'(No Portfolio)');});
+  if(allPorts) allPortfolioNames().forEach(p=>ports.add(p));
+  else stByToggle().forEach(s=>{ports.add(s.portfolioName||'(No Portfolio)');});
   DATA.campaigns.filter(c=>c.product===S.product).forEach(c=>camps.add(c.campaignName));
-  const st=stFor('ngram');
+  const st=stFor(stKey);
   const pl=[...ports].filter(Boolean).sort(), cl=[...camps].filter(Boolean).sort();
   const filterList=(arr,q)=>q?arr.filter(x=>x.toLowerCase().includes(q.toLowerCase())):arr;
   const pItems=filterList(pl,st.psearch).map(p=>`<label class="fitem"><input type="checkbox" data-port="${esc(p)}" ${S.sidebarPortfolios.has(p)?'checked':''}><span>${esc(p)}</span></label>`).join('');
@@ -1794,13 +1795,17 @@ function sidebarHtml(){
     <div style="padding:0 12px;"><button class="resetbtn" id="sb-reset">Reset Filters</button></div>
   </div>`;
 }
-function wireSidebar(){
-  const st=stFor('ngram');
-  document.querySelectorAll('[data-port]').forEach(cb=>cb.onchange=()=>{ cb.checked?S.sidebarPortfolios.add(cb.dataset.port):S.sidebarPortfolios.delete(cb.dataset.port); renderNgram(); });
-  document.querySelectorAll('[data-camp]').forEach(cb=>cb.onchange=()=>{ cb.checked?S.sidebarCampaigns.add(cb.dataset.camp):S.sidebarCampaigns.delete(cb.dataset.camp); renderNgram(); });
-  $('#sb-psearch').oninput=debounce(()=>{st.psearch=$('#sb-psearch').value; renderNgram();},200);
-  $('#sb-csearch').oninput=debounce(()=>{st.csearch=$('#sb-csearch').value; renderNgram();},200);
-  $('#sb-reset').onclick=()=>{ S.sidebarPortfolios.clear(); S.sidebarCampaigns.clear(); st.psearch=''; st.csearch=''; renderNgram(); };
+function wireSidebar(rerender=renderNgram, stKey='ngram'){
+  const st=stFor(stKey);
+  // Ticking a box re-renders the host tab, which throws the list scroll away with it — remember where each list
+  // was and put it back, or ticking 6 portfolios from a 74-long list would jump back to the top after every tick.
+  const go=()=>{ const tops=[...document.querySelectorAll('.sidebar .flist')].map(el=>el.scrollTop); rerender(); document.querySelectorAll('.sidebar .flist').forEach((el,i)=>{ el.scrollTop=tops[i]||0; }); };
+  const refocus=id=>{ const e=$('#'+id); if(e){ e.focus(); const n=e.value.length; try{ e.setSelectionRange(n,n); }catch(_){} } };
+  document.querySelectorAll('[data-port]').forEach(cb=>cb.onchange=()=>{ cb.checked?S.sidebarPortfolios.add(cb.dataset.port):S.sidebarPortfolios.delete(cb.dataset.port); go(); });
+  document.querySelectorAll('[data-camp]').forEach(cb=>cb.onchange=()=>{ cb.checked?S.sidebarCampaigns.add(cb.dataset.camp):S.sidebarCampaigns.delete(cb.dataset.camp); go(); });
+  $('#sb-psearch').oninput=debounce(()=>{ st.psearch=$('#sb-psearch').value; rerender(); refocus('sb-psearch'); },300);
+  $('#sb-csearch').oninput=debounce(()=>{ st.csearch=$('#sb-csearch').value; rerender(); refocus('sb-csearch'); },300);
+  $('#sb-reset').onclick=()=>{ S.sidebarPortfolios.clear(); S.sidebarCampaigns.clear(); st.psearch=''; st.csearch=''; rerender(); };
 }
 
 /* ============================ TARGETS (SP + SB) ============================ */
@@ -4065,7 +4070,7 @@ function renderOptBids(){
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.excludePorts===undefined) st.excludePorts=[];
-  if(st.excludePorts.length) rows=rows.filter(r=>!portHidden(st,r.portfolioName));
+  rows=rows.filter(passesSidebar); // left sidebar: tick portfolios/campaigns -> only those stay
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   // Stable identity (real keyword/PT ID), not a positional index — a positional "ob3" meant a different
   // target every time the threshold/filter changed the row set, so a stale selection either inflated
@@ -4120,7 +4125,7 @@ function renderOptBids(){
     }},
   ];
   const tbl=buildTable({columns:cols,rows,tab:'optbids',selectable:true,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderOptBids});
-  $('#app').innerHTML=`
+  $('#app').innerHTML=`<div class="cols"><div class="sidebar">${sidebarHtml('optbids',true)}</div><div class="content">
     <details class="card pad" id="ob-settings" ${st.settingsOpen?'open':''}>
       <summary class="sectitle" style="cursor:pointer;">Bid rules — decrease &gt;${st.hi1}%/&gt;${st.hi2}%/&gt;${st.hi3}% ACoS <span class="hint" style="font-weight:400;">(click to edit)</span></summary>
       <div class="hint" style="margin:10px 0 8px;" title="Exact earns ranking value beyond direct ROI, so it can tolerate a higher ACoS before a cut lands (and needs a lower ACoS to earn a bump). Branded has no real competition to win, so there's no upside to pushing bids — keep it tight. Discovery (Phrase/Broad/Auto/PT) sits at the baseline. A target is Branded if the campaign name, the portfolio name, OR the keyword/targeting text itself contains one of the terms below (or the word &quot;brand&quot; if left empty).">ACoS allowance by category — shifts Goal stricter/looser per target type. Hover for details.</div>
@@ -4158,10 +4163,8 @@ function renderOptBids(){
         <div class="field"><label>Min Clicks</label><input type="number" id="ob-mc" value="${st.minClicks}" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="ob-ms" value="${st.minSpend}" style="width:80px;"></div>
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
-        ${portScopeField('ob',st)}
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
-      ${portScopeHint(st)}
       <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake). Flat $, not %: keywords go to the lower of bid and CPC, minus this amount; multi-keyword placements get their multiplier scaled so what their keywords pay drops by about this much. Single-keyword placements with 0 orders go to 0% once they reach the click threshold instead. Typing 10 is read as 10 cents ($0.10).">0 orders — runs on clicks instead of ACoS (undefined with no sales). A graduated cut in $ for proven wasted spend.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
@@ -4212,8 +4215,9 @@ function renderOptBids(){
         <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Kw in camp</th><th>Would</th><th>Bid</th><th>→ New bid</th><th>Impressions</th></tr></thead><tbody>
         ${kwGateSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fInt(x.kwCount)}</td><td class="l muted">${x.would}</td><td>${fMoney(x.bid)}</td><td>${x.newBid!=null?fMoney(x.newBid):'—'}</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
         </tbody></table>${kwGateSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${kwGateSkipped.length-40} more</div>`:''}</details>`:''}
-    </div>`;
+    </div></div></div>`;
   tbl.wire($('#ob-table'));
+  wireSidebar(()=>withFocus(renderOptBids),'optbids');
   const upd=()=>withFocus(renderOptBids);
   wirePortfolioGoalPanel(S.product, upd);
   // Every input change re-renders this whole tab from scratch, which would otherwise reset the <details>
@@ -4244,7 +4248,6 @@ function renderOptBids(){
   bind('ob-maxkw','maxKwForRaise',v=>+v||0);
   $('#ob-maxkwgate').onchange=e=>{ st.maxKwGateEnabled=e.target.checked; renderOptBids(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
-  wirePortScope('ob',st,upd);
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
   $('#ob-actionf').onchange=e=>{ st.actionFilter=e.target.value; upd(); };
