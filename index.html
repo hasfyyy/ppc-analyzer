@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-27 18:29</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-27 19:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -953,6 +953,41 @@ function portExcludeOptions(selArr){
   const arr=allPortfolioNames(); const sel=new Set(selArr||[]);
   return arr.map(p=>`<option value="${esc(p)}" ${sel.has(p)?'selected':''}>${esc(p)}</option>`).join('');
 }
+// Portfolio scope picker shared by the tabs with a portfolio multi-select: "Hide selected" (the old behaviour) or
+// "Show only selected" — working 6 portfolios of a 70-portfolio account by hiding the other 64 one ctrl-click at a
+// time wasn't workable. Same list (st.excludePorts) either way; st.portMode says which way it cuts. Empty = no filter.
+function portHidden(st,name){
+  const sel=st.excludePorts; if(!sel||!sel.length) return false;
+  const has=sel.includes(name||'(No Portfolio)');
+  return st.portMode==='include' ? !has : has;
+}
+function portScopeField(pfx,st){
+  return `<div class="field" style="min-width:300px;"><label>Portfolios — scope</label>
+    <div style="display:flex;gap:6px;margin-bottom:4px;">
+      <select id="${pfx}-portmode" style="width:150px;"><option value="exclude" ${st.portMode!=='include'?'selected':''}>Hide selected</option><option value="include" ${st.portMode==='include'?'selected':''}>Show only selected</option></select>
+      <input type="text" id="${pfx}-portq" placeholder="Search portfolio…" value="${esc(st.portQ||'')}" style="flex:1;min-width:110px;">
+    </div>
+    <select id="${pfx}-portexclude" multiple size="6" style="min-width:300px;">${portExcludeOptions(st.excludePorts)}</select>
+    <div style="display:flex;gap:6px;margin-top:4px;"><button type="button" class="btn ghost" id="${pfx}-portall" title="Select every portfolio matching the search box">Select shown</button><button type="button" class="btn ghost" id="${pfx}-portclr">Clear</button></div>
+  </div>`;
+}
+function portScopeHint(st){
+  const n=(st.excludePorts||[]).length; if(!n) return '';
+  return `<div class="hint" style="margin-top:6px;">${st.portMode==='include'?'Doar':'Excluse'} ${n} portofolii: ${esc(st.excludePorts.join(', '))}</div>`;
+}
+function wirePortScope(pfx,st,rerender){
+  const sel=$('#'+pfx+'-portexclude'); if(!sel) return;
+  const q=$('#'+pfx+'-portq');
+  // Typing in the search box only hides/shows list entries in place — no re-render, selection untouched.
+  const applyQ=()=>{ const v=(q.value||'').trim().toLowerCase(); Array.from(sel.options).forEach(o=>{ o.hidden=!!v && !o.value.toLowerCase().includes(v); }); };
+  applyQ();
+  q.oninput=()=>{ st.portQ=q.value; applyQ(); };
+  const commit=()=>{ st.excludePorts=Array.from(sel.selectedOptions).map(o=>o.value); rerender(); };
+  sel.onchange=debounce(commit,400);
+  $('#'+pfx+'-portmode').onchange=e=>{ st.portMode=e.target.value; rerender(); };
+  $('#'+pfx+'-portall').onclick=()=>{ Array.from(sel.options).forEach(o=>{ if(!o.hidden) o.selected=true; }); commit(); };
+  $('#'+pfx+'-portclr').onclick=()=>{ st.excludePorts=[]; st.portQ=''; rerender(); };
+}
 function campOptions(sel,product){
   const set=new Set(); DATA.campaigns.forEach(c=>{ if(!product||c.product===product) set.add(c.campaignName); });
   const arr=[...set].filter(Boolean).sort();
@@ -973,7 +1008,7 @@ function renderPlacement(){
   if(st.excludePorts===undefined) st.excludePorts=[];
   let rowsRaw=DATA.placements.filter(p=>p.product===S.product);
   if(st.port) rowsRaw=rowsRaw.filter(p=>(p.portfolioName||'(No Portfolio)')===st.port);
-  if(st.excludePorts.length) rowsRaw=rowsRaw.filter(p=>!st.excludePorts.includes(p.portfolioName||'(No Portfolio)'));
+  if(st.excludePorts.length) rowsRaw=rowsRaw.filter(p=>!portHidden(st,p.portfolioName));
   const hasMetrics = rowsRaw.some(p=>p.impressions||p.clicks||p.spend);
   const totals=agg(rowsRaw);
   // summary by placement
@@ -1000,7 +1035,7 @@ function renderPlacement(){
   // the Placement Totals above, so that total still means "spend attributable to a placement" and nothing else.
   let audRows=DATA.audienceAdjustments.filter(a=>a.product===S.product);
   if(st.port) audRows=audRows.filter(a=>(a.portfolioName||'(No Portfolio)')===st.port);
-  if(st.excludePorts.length) audRows=audRows.filter(a=>!st.excludePorts.includes(a.portfolioName||'(No Portfolio)'));
+  if(st.excludePorts.length) audRows=audRows.filter(a=>!portHidden(st,a.portfolioName));
   const byAud={}; audRows.forEach(a=>{ const k=a.segmentName||'(unnamed segment)'; (byAud[k]=byAud[k]||[]).push(a); });
   const audTotals=agg(audRows);
   const audSummary=Object.keys(byAud).map(k=>{ const list=byAud[k]; const d=derive(agg(list)); const avgAdj=list.reduce((s,x)=>s+x.percentage,0)/list.length; return Object.assign({name:k, campaigns:list.length, adj:avgAdj}, d); });
@@ -1012,9 +1047,9 @@ function renderPlacement(){
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Placement Summary</h3>
         <div class="field"><label>Filter by Portfolio</label><select id="pl-port">${portOptions(st.port)}</select></div>
-        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click for more than one)</label><select id="pl-portexclude" multiple size="5" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
+        ${portScopeField('pl',st)}
         <div class="spacer"></div><button class="btn ghost" id="pl-dl">Download</button></div>
-      ${st.excludePorts.length?`<div class="hint" style="margin-bottom:8px;">Hiding ${st.excludePorts.length} portfolio(s): ${esc(st.excludePorts.join(', '))} <a href="#" id="pl-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+      ${portScopeHint(st)}
       ${!hasMetrics?`<div class="banner">This bulk file has no placement-level performance metrics — showing configured bid adjustments only. For placement performance, download a Placement report from the Amazon Ads console.</div>`:''}
       ${rowsRaw.length? `<div id="pl-table">${tbl.html}</div>` :'<div class="empty"><div class="ic"></div><p>No bidding adjustment / placement rows found in this file.</p></div>'}
     </div>
@@ -1028,8 +1063,7 @@ function renderPlacement(){
       <div id="pl-audience">${audTbl.html}</div>
     </div>`:''}`;
   $('#pl-port').onchange=e=>{st.port=e.target.value; renderPlacement();};
-  const plExcl=$('#pl-portexclude'); if(plExcl) plExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); renderPlacement(); };
-  const plExclClear=$('#pl-portexclude-clear'); if(plExclClear) plExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; renderPlacement(); };
+  wirePortScope('pl',st,renderPlacement);
   if(rowsRaw.length){ tbl.wire($('#pl-table')); camptbl.wire($('#pl-camp')); $('#pl-dl').onclick=()=>exportCSV(cols,rows,'placement_summary'); $('#pl-dl2').onclick=()=>exportCSV(campCols,campRows,'placement_by_campaign'); }
   if(audTbl) audTbl.wire($('#pl-audience'));
 }
@@ -1601,7 +1635,7 @@ function computeWasteRows(product){
     ? DATA.searchTerms.filter(s=>s.product===product && en.has(s.campaignId))
     : DATA.targets.filter(t=>t.product===product && en.has(t.campaignId) && (st.includePaused || t.state==='enabled'));
   if(st.port) src=src.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
-  if(st.excludePorts.length) src=src.filter(r=>!st.excludePorts.includes(r.portfolioName||'(No Portfolio)'));
+  if(st.excludePorts.length) src=src.filter(r=>!portHidden(st,r.portfolioName));
   const thr=+st.acosThr||0, minC=+st.minClicks||0, maxC=+st.maxClicks||0, maxO=+st.maxOrders||0;
   const items=src.map(r=>{
     const d=derive(agg([r]));
@@ -1695,12 +1729,12 @@ function renderWaste(){
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="ws-port">${portOptions(st.port)}</select></div>
-        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click)</label><select id="ws-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
+        ${portScopeField('ws',st)}
         ${st.source==='targets'?`<label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ws-paused" ${st.includePaused?'checked':''}> Include și targets deja pe pauză</label>`:''}
         <button class="btn ghost" id="ws-csv" style="align-self:end;">Export CSV (grupat)</button>
         <button class="btn ghost" id="ws-csv-items" style="align-self:end;">Export CSV (top targets)</button>
       </div>
-      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="ws-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+      ${portScopeHint(st)}
       ${clicksWarn?`<div class="banner" style="margin-top:8px;background:#fef3e2;color:#c2760a;">${esc(clicksWarn)}</div>`:''}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);">
@@ -1731,8 +1765,7 @@ function renderWaste(){
   $('#ws-overmode').onchange=e=>{ st.overMode=e.target.value; upd(); };
   $('#ws-group').onchange=e=>{ st.groupBy=e.target.value; upd(); };
   $('#ws-port').onchange=e=>{ st.port=e.target.value; upd(); };
-  $('#ws-portexclude').onchange=e=>{ st.excludePorts=[...e.target.selectedOptions].map(o=>o.value).filter(Boolean); upd(); };
-  const clr=$('#ws-portexclude-clear'); if(clr) clr.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
+  wirePortScope('ws',st,upd);
   const pausedEl=$('#ws-paused'); if(pausedEl) pausedEl.onchange=e=>{ st.includePaused=e.target.checked; upd(); };
   $('#ws-showzero').onchange=e=>{ st.showZeroGroups=e.target.checked; upd(); };
   $('#ws-selall').onclick=()=>{ const all=topItems.length && topItems.every(r=>isel.has(r._uid)); topItems.forEach(r=>{ if(all) isel.delete(r._uid); else isel.add(r._uid); }); upd(); };
@@ -4032,7 +4065,7 @@ function renderOptBids(){
   if(st.hideStale) rows=rows.filter(r=>!r.stale);
   if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
   if(st.excludePorts===undefined) st.excludePorts=[];
-  if(st.excludePorts.length) rows=rows.filter(r=>!st.excludePorts.includes(r.portfolioName||'(No Portfolio)'));
+  if(st.excludePorts.length) rows=rows.filter(r=>!portHidden(st,r.portfolioName));
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   // Stable identity (real keyword/PT ID), not a positional index — a positional "ob3" meant a different
   // target every time the threshold/filter changed the row set, so a stale selection either inflated
@@ -4125,10 +4158,10 @@ function renderOptBids(){
         <div class="field"><label>Min Clicks</label><input type="number" id="ob-mc" value="${st.minClicks}" style="width:80px;"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="ob-ms" value="${st.minSpend}" style="width:80px;"></div>
         <div class="field"><label>Portfolio</label><select id="ob-port">${portOptions(st.port)}</select></div>
-        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click pentru mai multe)</label><select id="ob-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
+        ${portScopeField('ob',st)}
         <div class="field grow"><label>Campaign</label><input type="text" id="ob-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
       </div>
-      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="ob-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+      ${portScopeHint(st)}
       <div class="hint" style="margin:12px 0 4px;" title="0 clicks is handled separately below (Wake). Flat $, not %: keywords go to the lower of bid and CPC, minus this amount; multi-keyword placements get their multiplier scaled so what their keywords pay drops by about this much. Single-keyword placements with 0 orders go to 0% once they reach the click threshold instead. Typing 10 is read as 10 cents ($0.10).">0 orders — runs on clicks instead of ACoS (undefined with no sales). A graduated cut in $ for proven wasted spend.</div>
       <div class="ctrls">
         <div class="field"><label>Tier 1: Clicks ≥</label><input type="number" id="ob-zerohi1" value="${st.zeroHi1}" style="width:80px;"></div>
@@ -4211,8 +4244,7 @@ function renderOptBids(){
   bind('ob-maxkw','maxKwForRaise',v=>+v||0);
   $('#ob-maxkwgate').onchange=e=>{ st.maxKwGateEnabled=e.target.checked; renderOptBids(); };
   $('#ob-port').onchange=e=>{st.port=e.target.value; upd();};
-  const obPortExcl=$('#ob-portexclude'); if(obPortExcl) obPortExcl.onchange=debounce(()=>{ st.excludePorts=Array.from(obPortExcl.selectedOptions).map(o=>o.value); upd(); },400);
-  const obPortExclClear=$('#ob-portexclude-clear'); if(obPortExclClear) obPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
+  wirePortScope('ob',st,upd);
   $('#ob-camp').oninput=debounce(()=>{st.camp=$('#ob-camp').value; upd();},220);
   $('#ob-export').onclick=()=>exportBidOptimization(S.product, rows.filter(r=>sel.has(r._uid)));
   $('#ob-actionf').onchange=e=>{ st.actionFilter=e.target.value; upd(); };
@@ -4697,7 +4729,7 @@ function renderRebalance(){
   if(st.excludePorts===undefined) st.excludePorts=[];
   let rows=st.hideNoChange? allRows.filter(r=>r.hasChange) : allRows;
   if(st.port) rows=rows.filter(r=>r.portfolioName===st.port);
-  if(st.excludePorts.length) rows=rows.filter(r=>!st.excludePorts.includes(r.portfolioName));
+  if(st.excludePorts.length) rows=rows.filter(r=>!portHidden(st,r.portfolioName));
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   const sel=selFor('rebalance');
   if(!st.initialSelected){ allRows.forEach(r=>{ if(r.hasChange) sel.add(r._uid); }); st.initialSelected=true; }
@@ -4741,11 +4773,11 @@ function renderRebalance(){
       </div>
       <div class="ctrls" style="margin-top:10px;">
         <div class="field"><label>Portfolio</label><select id="rb-port">${portOptions(st.port)}</select></div>
-        <div class="field"><label>Exclude Portfolios (ctrl/cmd-click pentru mai multe)</label><select id="rb-portexclude" multiple size="4" style="min-width:220px;">${portExcludeOptions(st.excludePorts)}</select></div>
+        ${portScopeField('rb',st)}
         <div class="field grow"><label>Campanie</label><input type="text" id="rb-camp" placeholder="Filtrează după nume…" value="${esc(st.camp||'')}"></div>
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:6px;"><input type="checkbox" id="rb-hidenc" ${st.hideNoChange?'checked':''}> Ascunde campaniile fără modificări</label>
       </div>
-      ${st.excludePorts.length?`<div class="hint" style="margin-top:6px;">Excluse ${st.excludePorts.length} portofolii: ${esc(st.excludePorts.join(', '))} <a href="#" id="rb-portexclude-clear" style="margin-left:8px;color:#dc2626;">clear</a></div>`:''}
+      ${portScopeHint(st)}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('Campanii afectate',fInt(allRows.length))}${kpi('Targets enabled (toate)',fInt(allRows.reduce((s,r)=>s+r.targetCount,0)))}${kpi('Afișate',fInt(rows.length))}${kpi('Selectate export',fInt(selCount),'pink')}
@@ -4787,8 +4819,7 @@ function renderRebalance(){
   $('#rb-port').onchange=e=>{st.port=e.target.value; upd();};
   $('#rb-camp').oninput=debounce(()=>{st.camp=$('#rb-camp').value; upd();},220);
   $('#rb-hidenc').onchange=e=>{st.hideNoChange=e.target.checked; upd();};
-  const rbPortExcl=$('#rb-portexclude'); if(rbPortExcl) rbPortExcl.onchange=e=>{ st.excludePorts=Array.from(e.target.selectedOptions).map(o=>o.value); upd(); };
-  const rbPortExclClear=$('#rb-portexclude-clear'); if(rbPortExclClear) rbPortExclClear.onclick=e=>{ e.preventDefault(); st.excludePorts=[]; upd(); };
+  wirePortScope('rb',st,upd);
   $('#rb-export').onclick=()=>exportRebalance(S.product, rows.filter(r=>sel.has(r._uid)));
 }
 function exportRebalance(product, rows){
