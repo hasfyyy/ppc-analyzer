@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-22 11:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-27 18:29</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -652,6 +652,9 @@ const NUMERIC_COL_TYPES=['money','int','num','pct','acos','roas'];
 const FILTER_OPS={eq:(a,b)=>a===b, gt:(a,b)=>a>b, gte:(a,b)=>a>=b, lt:(a,b)=>a<b, lte:(a,b)=>a<=b};
 const FILTER_OP_LABEL={eq:'=', gt:'>', gte:'≥', lt:'<', lte:'≤'};
 const TABLE_SCROLL={}; // per-tab scroll offset of the inner .tablewrap, preserved across re-renders
+// Rows actually put in the DOM per tab. Building a <tr> per target (8-30k on a big account) made every re-render
+// freeze the page for seconds; selection / select-all / export still work on the full list, only the display is capped.
+const TABLE_LIMIT={}, TABLE_PAGE=500;
 function buildTable(opts){
   const {columns, rows, tab, selectable, totals, idKey, sortDef, onChange:rawOnChange} = opts;
   // Every tick of a checkbox re-renders the whole tab, which resets the scroll position to the top. On a long
@@ -715,7 +718,8 @@ function buildTable(opts){
     });
     h+='</tr>';
   }
-  data.forEach(r=>{
+  const limit = onChange ? (TABLE_LIMIT[tab]||TABLE_PAGE) : Infinity;
+  (data.length>limit ? data.slice(0,limit) : data).forEach(r=>{
     const id = idKey? r[idKey] : null;
     h+='<tr>';
     if(selectable) h+=`<td class="cellchk"><input type="checkbox" data-id="${esc(id)}" ${sel.has(id)?'checked':''}></td>`;
@@ -727,11 +731,13 @@ function buildTable(opts){
     h+='</tr>';
   });
   if(!data.length) h+=`<tr><td colspan="${columns.length+(selectable?1:0)}" class="l" style="padding:26px;color:#9aa3af;text-align:center;">No rows match the current filters.</td></tr>`;
+  if(data.length>limit) h+=`<tr class="more-row"><td colspan="${columns.length+(selectable?1:0)}" class="l" style="padding:12px;text-align:center;">Showing ${fInt(limit)} of ${fInt(data.length)} rows — selection and export still cover all of them. <button type="button" class="btn ghost" data-more="page">Show ${fInt(Math.min(TABLE_PAGE,data.length-limit))} more</button> <button type="button" class="btn ghost" data-more="all">Show all ${fInt(data.length)}</button></td></tr>`;
   h+='</tbody></table></div>';
   return {html:h, wire(container){
     const wrap=container.classList && container.classList.contains('tablewrap') ? container : container.querySelector('.tablewrap');
     const keep=TABLE_SCROLL[tab];
     if(wrap && keep){ wrap.scrollTop=keep.top; wrap.scrollLeft=keep.left; }
+    container.querySelectorAll('[data-more]').forEach(b=>b.onclick=()=>{ TABLE_LIMIT[tab]= b.dataset.more==='all' ? Infinity : limit+TABLE_PAGE; onChange&&onChange(); });
     container.querySelectorAll('th.sortable').forEach(th=>th.onclick=(e)=>{
       if(e.target.closest('.th-menu-btn')) return; // menu button handles its own click, below
       const k=th.dataset.sort;
@@ -4175,13 +4181,13 @@ function renderOptBids(){
         </tbody></table>${kwGateSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${kwGateSkipped.length-40} more</div>`:''}</details>`:''}
     </div>`;
   tbl.wire($('#ob-table'));
-  const upd=()=>renderOptBids();
+  const upd=()=>withFocus(renderOptBids);
   wirePortfolioGoalPanel(S.product, upd);
   // Every input change re-renders this whole tab from scratch, which would otherwise reset the <details>
   // settings panel closed each time — track its open/closed state across re-renders instead of losing it.
   const settingsEl=$('#ob-settings'); if(settingsEl) settingsEl.ontoggle=()=>{ st.settingsOpen=settingsEl.open; };
-  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
-  $('#ob-acosgoal').oninput=debounce(()=>{ pst.acosGoal=+$('#ob-acosgoal').value||20; upd(); },300);
+  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },700); };
+  $('#ob-acosgoal').oninput=debounce(()=>{ pst.acosGoal=+$('#ob-acosgoal').value||20; upd(); },700);
   bind('ob-catexact','acosAdjExact',v=>+v||0); bind('ob-catdisc','acosAdjDiscovery',v=>+v||0); bind('ob-catbrand','acosAdjBranded',v=>+v||0);
   bind('ob-brandterms','brandTerms',v=>v);
   // These fields used to be %, typed as 10/15/20 — read a whole number as cents so the old habit lands on
@@ -4590,10 +4596,10 @@ function renderOptPlacements(){
       <div id="op-table">${tbl.html}</div>
     </div>`;
   tbl.wire($('#op-table'));
-  const upd=()=>renderOptPlacements();
+  const upd=()=>withFocus(renderOptPlacements);
   wirePortfolioGoalPanel(S.product, upd);
   const raiseMinOrdEl=$('#op-raiseminord'); if(raiseMinOrdEl) raiseMinOrdEl.oninput=debounce(()=>{st.raiseMinOrders=+raiseMinOrdEl.value||1; renderOptPlacements();},350);
-  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },700); };
   bind('op-raisestep','raiseStep',v=>+v||1);
   $('#op-hidesingle').onchange=e=>{st.hideSingleKw=e.target.checked; upd();};
   $('#op-singleonly').onchange=e=>{st.singleOnly=e.target.checked; upd();};
@@ -4771,8 +4777,8 @@ function renderRebalance(){
     detail.innerHTML=`<td></td><td colspan="${colspan}" class="l" style="background:#fbfaff;padding:10px 14px;"><div style="font-weight:600;margin-bottom:6px;">${entry.targets.length} target(s) în această campanie — fiecare primește propriul bid update:</div>${list}</td>`;
     tr.after(detail);
   });
-  const upd=()=>renderRebalance();
-  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  const upd=()=>withFocus(renderRebalance);
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },700); };
   bind('rb-acosthreshold','acosThreshold',v=>Math.max(0,+v||0));
   bind('rb-pct','reducePct',v=>Math.max(0,Math.min(95,+v||0)));
   $('#rb-top').onchange=e=>{st.protectTop=e.target.checked; upd();};
@@ -4884,8 +4890,8 @@ function renderCpcFlag(){
       <div id="cf-table">${tbl.html}</div>
     </div>`;
   tbl.wire($('#cf-table'));
-  const upd=()=>renderCpcFlag();
-  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  const upd=()=>withFocus(renderCpcFlag);
+  const bind=(id,key,parse)=>{ const el=$('#'+id); if(el) el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },700); };
   bind('cf-maxcpc','maxCpc',v=>+v||0);
   bind('cf-mc','minClicks',v=>+v||1);
   bind('cf-red','reducePct',v=>+v||0);
@@ -5026,8 +5032,8 @@ function renderOptBudget(){
       <div id="obg-table">${tbl.html}</div>
     </div>`;
   tbl.wire($('#obg-table'));
-  const upd=()=>renderOptBudget();
-  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },250); };
+  const upd=()=>withFocus(renderOptBudget);
+  const bind=(id,key,parse)=>{ const el=$('#'+id); el.oninput=debounce(()=>{ st[key]=parse(el.value); upd(); },700); };
   bind('obg-cap','capUtil',v=>+v||0);
   bind('obg-hi1','hi1',v=>+v||0); bind('obg-dec1','dec1',v=>+v||0);
   bind('obg-hi2','hi2',v=>+v||0); bind('obg-dec2','dec2',v=>+v||0);
@@ -5272,6 +5278,16 @@ function exportNewCampaigns(opps, settings){
 
 /* ============================ file loading + IDB ============================ */
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
+// The Optimize tabs rebuild #app from scratch on every change, which destroys the input being typed in:
+// remember which field had focus (and the caret) and put it back after the re-render.
+function withFocus(fn){
+  const a=document.activeElement, id=a&&a.id; let s=null,e=null;
+  try{ s=a.selectionStart; e=a.selectionEnd; }catch(_){}
+  fn();
+  if(!id) return;
+  const n=document.getElementById(id); if(!n) return;
+  try{ n.focus({preventScroll:true}); if(s!=null) n.setSelectionRange(s,e); }catch(_){}
+}
 function loadArrayBuffer(buf,name){
   try{
     // dense:true stores each row as a plain array instead of one object key per cell address
