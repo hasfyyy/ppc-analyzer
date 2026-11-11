@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-11 17:03</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-11 17:26</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1778,6 +1778,7 @@ function renderWaste(){
   $('#ws-csv').onclick=()=>exportCSV(cols, rows, `wasted_spend_${S.product}_by_${st.groupBy}`);
   $('#ws-csv-items').onclick=()=>exportCSV(icols, topItems, `wasted_spend_${S.product}_top_items`);
 }
+let SB_LISTS={port:[],camp:[]};
 function sidebarHtml(stKey='ngram', allPorts=false){
   const ports=new Set(), camps=new Set();
   if(allPorts) allPortfolioNames().forEach(p=>ports.add(p));
@@ -1786,12 +1787,13 @@ function sidebarHtml(stKey='ngram', allPorts=false){
   const st=stFor(stKey);
   const pl=[...ports].filter(Boolean).sort(), cl=[...camps].filter(Boolean).sort();
   const filterList=(arr,q)=>q?arr.filter(x=>x.toLowerCase().includes(q.toLowerCase())):arr;
+  SB_LISTS={port:filterList(pl,st.psearch), camp:filterList(cl,st.csearch)};
   const pItems=filterList(pl,st.psearch).map(p=>`<label class="fitem"><input type="checkbox" data-port="${esc(p)}" ${S.sidebarPortfolios.has(p)?'checked':''}><span>${esc(p)}</span></label>`).join('');
   const cItems=filterList(cl,st.csearch).slice(0,400).map(c=>`<label class="fitem"><input type="checkbox" data-camp="${esc(c)}" ${S.sidebarCampaigns.has(c)?'checked':''}><span>${esc(c)}</span></label>`).join('');
   return `<div class="card" style="padding:4px 0 12px;">
     <div style="padding:12px 14px 6px;font-weight:700;">Filters</div>
-    <div class="fgroup"><div class="fhead">Portfolio Name</div><div class="fsearch"><input class="search" id="sb-psearch" placeholder="Search…" value="${esc(st.psearch||'')}"></div><div class="flist">${pItems||'<div style="padding:8px;color:#9aa3af;">—</div>'}</div></div>
-    <div class="fgroup"><div class="fhead">Campaign Name</div><div class="fsearch"><input class="search" id="sb-csearch" placeholder="Search…" value="${esc(st.csearch||'')}"></div><div class="flist">${cItems||'<div style="padding:8px;color:#9aa3af;">—</div>'}</div></div>
+    <div class="fgroup"><div class="fhead">Portfolio Name <span class="fall" style="font-weight:400;font-size:12px;"><a href="#" id="sb-pall" title="Tick every portfolio in the list (respects the search box)">Select all</a> · <a href="#" id="sb-pnone">None</a></span></div><div class="fsearch"><input class="search" id="sb-psearch" placeholder="Search…" value="${esc(st.psearch||'')}"></div><div class="flist">${pItems||'<div style="padding:8px;color:#9aa3af;">—</div>'}</div></div>
+    <div class="fgroup"><div class="fhead">Campaign Name <span class="fall" style="font-weight:400;font-size:12px;"><a href="#" id="sb-call" title="Tick every campaign matching the search box">Select all</a> · <a href="#" id="sb-cnone">None</a></span></div><div class="fsearch"><input class="search" id="sb-csearch" placeholder="Search…" value="${esc(st.csearch||'')}"></div><div class="flist">${cItems||'<div style="padding:8px;color:#9aa3af;">—</div>'}</div></div>
     <div style="padding:0 12px;"><button class="resetbtn" id="sb-reset">Reset Filters</button></div>
   </div>`;
 }
@@ -1806,6 +1808,11 @@ function wireSidebar(rerender=renderNgram, stKey='ngram'){
   $('#sb-psearch').oninput=debounce(()=>{ st.psearch=$('#sb-psearch').value; rerender(); refocus('sb-psearch'); },300);
   $('#sb-csearch').oninput=debounce(()=>{ st.csearch=$('#sb-csearch').value; rerender(); refocus('sb-csearch'); },300);
   $('#sb-reset').onclick=()=>{ S.sidebarPortfolios.clear(); S.sidebarCampaigns.clear(); st.psearch=''; st.csearch=''; rerender(); };
+  // Select all / None act on what the search box currently shows (so "gummies" + Select all ticks just those),
+  // and with an empty search on the whole list — including campaigns past the 400 that are drawn.
+  const bulk=(id,set,list,on)=>{ const el=$('#'+id); if(el) el.onclick=e=>{ e.preventDefault(); list().forEach(x=>on?set.add(x):set.delete(x)); go(); }; };
+  bulk('sb-pall',S.sidebarPortfolios,()=>SB_LISTS.port,true); bulk('sb-pnone',S.sidebarPortfolios,()=>SB_LISTS.port,false);
+  bulk('sb-call',S.sidebarCampaigns,()=>SB_LISTS.camp,true); bulk('sb-cnone',S.sidebarCampaigns,()=>SB_LISTS.camp,false);
 }
 
 /* ============================ TARGETS (SP + SB) ============================ */
