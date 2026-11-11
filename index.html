@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-10-27 19:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-11 17:03</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3909,6 +3909,7 @@ function renderOptBids(){
   // of the Min Clicks/Min Spend gate above (that gate exists for the ACoS tiers, which need enough volume for
   // ACoS to mean anything — a 0-order target needs the opposite: catching it early is the whole point).
   if(st.wakePct===undefined) st.wakePct=10; if(st.wakeEnabled===undefined) st.wakeEnabled=true;
+  if(st.wakeMaxBid===undefined) st.wakeMaxBid=0; // $; 0 = off. Wake leaves keywords already at/above it alone and never lifts one past it
   // Wake raises a bid to buy more visibility — fine for a small campaign Alex wants to give traction to
   // (single-keyword or a handful of top keywords), wrong for a 100+ keyword catchall/mixed-ASIN campaign
   // deliberately kept cheap, where waking every sleeping keyword would drift it toward bids nobody wanted.
@@ -3972,6 +3973,7 @@ function renderOptBids(){
   const skipNeedle=(st.wakeSkip||'').trim().toLowerCase();
   const isDeliberateLowBid=cid=>skipNeedle? String(DATA.campById[cid]?.name||'').toLowerCase().includes(skipNeedle) : false;
   const wakeSkipped=[];
+  const wakeHighSkipped=[]; // 0 clicks, but the bid is already at/above the Wake max bid
   const kwGateSkipped=[];
   let rows=src.map(t=>{
     const d=derive(agg([t]));
@@ -4043,8 +4045,17 @@ function renderOptBids(){
     // was just extra settings to reason about for a very similar outcome, so it's gone.
     if(action==='none' && st.wakeEnabled && t.clicks===0){
       if(isDeliberateLowBid(t.campaignId)) wakeSkipped.push(t);
+      else if(+st.wakeMaxBid>0 && t.bid>=+st.wakeMaxBid) wakeHighSkipped.push(t);
       else if(!eligibleForRaise(t.campaignId)) kwGateSkipped.push(Object.assign({would:'wake', newBid:+(t.bid*(1+st.wakePct/100)).toFixed(2), kwCount:kwCounts[t.campaignId]||0}, t));
-      else { action='wake'; pct=st.wakePct; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2); reason=t.impressions>0?`${fInt(t.impressions)} impressions, 0 clicks`:`0 impressions, 0 clicks`; }
+      else {
+        action='wake'; newBid=+(t.bid*(1+st.wakePct/100)).toFixed(2);
+        // Below the max but the step would overshoot it: stop at the max instead of skipping, so a keyword
+        // that really is under the going rate still gets lifted — just never past what the user said is too high.
+        const wakeCapped = +st.wakeMaxBid>0 && newBid>+st.wakeMaxBid;
+        if(wakeCapped) newBid=+(+st.wakeMaxBid).toFixed(2);
+        pct = wakeCapped && t.bid>0 ? +(((newBid-t.bid)/t.bid)*100).toFixed(1) : st.wakePct;
+        reason=(t.impressions>0?`${fInt(t.impressions)} impressions, 0 clicks`:`0 impressions, 0 clicks`)+(wakeCapped?` · capped at ${fMoney(+st.wakeMaxBid)}`:'');
+      }
     }
     // A "stuck-bump" step used to sit here: when a TOS/ROS placement in this campaign was already past the
     // push ceiling and still hadn't bought clicks, it nudged the campaign's highest-bid keyword's $ bid instead.
@@ -4177,6 +4188,7 @@ function renderOptBids(){
       <div class="ctrls" style="margin-top:12px;">
         <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;"><input type="checkbox" id="ob-wakeen" ${st.wakeEnabled?'checked':''}> Wake sleeping keywords</label>
         <div class="field"><label>Wake bid by %</label><input type="number" id="ob-wakepct" value="${st.wakePct}" style="width:90px;"></div>
+        <div class="field"><label>Max bid $ (0 = off)</label><input type="number" step="0.05" min="0" id="ob-wakemax" value="${st.wakeMaxBid||''}" placeholder="off" style="width:90px;" title="Keywords with 0 clicks whose bid is already at or above this are left alone (listed below the table). One that is below it is raised, but never past it."></div>
         <div class="field"><label>Skip campaigns named</label><input type="text" id="ob-wakeskip" value="${esc(st.wakeSkip)}" style="width:130px;" title="Campaigns whose name contains this are left alone — a bid parked under the market there is a strategy, not an oversight."></div>
         <div class="hint" style="align-self:center;" title="0 clicks means the bid isn't winning any traffic (or never getting shown at all) — there's no ACoS to judge, so this bumps the bid outright instead of waiting for clicks that will never come at this bid.">Bumps bid for any keyword with 0 clicks, impressions or not — except campaigns named "${esc(st.wakeSkip)}", where a low bid reads as intentional.</div>
       </div>
@@ -4210,6 +4222,11 @@ function renderOptBids(){
         <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Impressions</th></tr></thead><tbody>
         ${wakeSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
         </tbody></table>${wakeSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${wakeSkipped.length-40} more</div>`:''}</details>`:''}
+      ${wakeHighSkipped.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Left alone — bid already at/above Wake max ${fMoney(+st.wakeMaxBid)} (${wakeHighSkipped.length})</summary>
+        <div class="hint" style="margin:8px 0;">0 clicks, but the bid is already ${fMoney(+st.wakeMaxBid)} or more, so Wake doesn't raise it further. Lower the max bid above, or set it to 0, to include these.</div>
+        <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Bid</th><th>Impressions</th></tr></thead><tbody>
+        ${wakeHighSkipped.slice(0,40).map(x=>`<tr><td class="l">${esc(String(x.text).slice(0,40))}</td><td class="l">${esc((DATA.campById[x.campaignId]?.name||'').slice(0,34))}</td><td>${fMoney(x.bid)}</td><td>${fInt(x.impressions)}</td></tr>`).join('')}
+        </tbody></table>${wakeHighSkipped.length>40?`<div class="muted" style="margin-top:6px;">…+${wakeHighSkipped.length-40} more</div>`:''}</details>`:''}
       ${kwGateSkipped.length? `<details style="margin-top:14px;"><summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Left alone — large campaigns, review manually (${kwGateSkipped.length})</summary>
         <div class="hint" style="margin:8px 0;">Would qualify for Wake or Underbid, but sit in a campaign with more than ${st.maxKwForRaise} keywords — often a catchall or mixed-ASIN campaign kept deliberately cheap, so no raise is auto-proposed. Uncheck "Skip Wake/Underbid on campaigns over" in the settings panel above to raise these too.</div>
         <table class="tbl"><thead><tr><th class="l">Target</th><th class="l">Campaign</th><th>Kw in camp</th><th>Would</th><th>Bid</th><th>→ New bid</th><th>Impressions</th></tr></thead><tbody>
@@ -4242,6 +4259,7 @@ function renderOptBids(){
   bind('ob-zerohi2','zeroHi2',v=>+v||0); bind('ob-zerodec2','zeroDec2',parseDecDollar);
   bind('ob-zerohi3','zeroHi3',v=>+v||0); bind('ob-zerodec3','zeroDec3',parseDecDollar);
   bind('ob-wakepct','wakePct',v=>+v||0);
+  bind('ob-wakemax','wakeMaxBid',v=>+v||0);
   $('#ob-wakeen').onchange=e=>{ st.wakeEnabled=e.target.checked; upd(); };
   $('#ob-hidestale').onchange=e=>{ st.hideStale=e.target.checked; upd(); };
   $('#ob-wakeskip').oninput=debounce(()=>{ st.wakeSkip=$('#ob-wakeskip').value; upd(); },350);
