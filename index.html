@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-11 17:26</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-12 16:13</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -3342,6 +3342,13 @@ function exportNegatives(product,rows){
   // not even the other 31 valid rows.
   const seenNeg=new Set();
   rows=rows.filter(r=>{ const k=r.campaignId+'|'+r.adGroupId+'|'+String(r.searchTerm||'').trim().toLowerCase(); if(seenNeg.has(k)) return false; seenNeg.add(k); return true; });
+  // Already negated in this ad group (or campaign-wide) per the loaded bulk: Amazon rejects each such row with
+  // "already exists!" — harmless, but it buries the real errors in the report and marks the whole upload as failed.
+  // The "Hide Negated" filter is off by default, so this can't rely on it.
+  const nBefore=rows.length;
+  rows=rows.filter(r=>!isNegated(r.campaignId, String(r.searchTerm||'').trim(), r.adGroupId));
+  const nAlready=nBefore-rows.length;
+  if(!rows.length){ alert(`Nothing to export — all ${nBefore} selected term(s) are already negated in the loaded bulk.`); return; }
   const out=rows.map(r=>{
     const term=String(r.searchTerm||'').trim();
     if(ASIN_RE.test(term)){
@@ -3352,6 +3359,7 @@ function exportNegatives(product,rows){
   });
   const asinCount=rows.filter(r=>ASIN_RE.test(String(r.searchTerm||'').trim())).length;
   writeBulk(out, (product==='SB'?'sb_':'')+'negatives_bulk.xlsx', product==='SB'?'Sponsored Brands Campaigns':'Sponsored Products Campaigns');
+  if(nAlready) setTimeout(()=>alert(`${nAlready} selected term(s) were already negated in the loaded bulk and were left out of the file.`),0);
   if(asinCount) alert(`Exported ${out.length} row(s). Note: ${asinCount} were ASINs (from auto/product targeting) — exported as Negative product targeting instead of Negative keyword, since Amazon shoppers don't type ASINs as search terms.`);
 }
 function exportTargetsPause(product,rows){
@@ -3389,7 +3397,7 @@ function wasteStAction(r, ctx){
 function exportWasteSearchTerms(product, rows){
   if(!rows.length){ alert('Nimic selectat.'); return; }
   const prod=productLabel(product); const ctx=wasteStContext(product);
-  const out=[]; const seenNeg=new Set(), seenPause=new Set(); let nPause=0, nNeg=0, nSkip=0; const fallbacks=[];
+  const out=[]; const seenNeg=new Set(), seenPause=new Set(); let nPause=0, nNeg=0, nSkip=0, nAlreadyNeg=0; const fallbacks=[];
   rows.forEach(r=>{
     const term=String(r.searchTerm||'').trim(); const a=wasteStAction(r, ctx);
     if(a.action==='skip'){ nSkip++; return; }
@@ -3398,6 +3406,7 @@ function exportWasteSearchTerms(product, rows){
       out.push(bulkRow({'Product':prod,'Entity':'Keyword','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Keyword ID':a.kw.id,'State':'paused'}));
       return;
     }
+    if(isNegated(r.campaignId, term, r.adGroupId)){ nAlreadyNeg++; return; }
     if(a.fallback) fallbacks.push(term);
     const k=r.campaignId+'|'+r.adGroupId+'|'+term.toLowerCase(); if(seenNeg.has(k)) return; seenNeg.add(k); nNeg++;
     if(ASIN_RE.test(term)) out.push(bulkRow({'Product':prod,'Entity':'Negative product targeting','Operation':'Create','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'State':'enabled','Product Targeting Expression':`asin="${term.toUpperCase()}"`}));
@@ -3405,7 +3414,7 @@ function exportWasteSearchTerms(product, rows){
   });
   if(!out.length){ alert(`Nothing to export — ${nSkip} selected term(s) come from keywords that are already paused.`); return; }
   writeBulk(out, productFilePrefix(product)+'wasted_searchterms_bulk.xlsx', productSheetName(product));
-  alert(`Exported ${out.length} row(s): ${nPause} keyword(s) paused (terms from Exact), ${nNeg} Negative Exact (terms from Discovery).${nSkip?`\n\n${nSkip} term(s) skipped — their keyword is already paused.`:''}${fallbacks.length?`\n\n${fallbacks.length} term(s) came from an Exact campaign but matched no keyword text there (variant + several exact keywords in the ad group) — exported as Negative Exact instead: ${fallbacks.slice(0,6).join(', ')}${fallbacks.length>6?'…':''}`:''}`);
+  alert(`Exported ${out.length} row(s): ${nPause} keyword(s) paused (terms from Exact), ${nNeg} Negative Exact (terms from Discovery).${nAlreadyNeg?`\n\n${nAlreadyNeg} term(s) left out — already negated in the loaded bulk.`:''}${nSkip?`\n\n${nSkip} term(s) skipped — their keyword is already paused.`:''}${fallbacks.length?`\n\n${fallbacks.length} term(s) came from an Exact campaign but matched no keyword text there (variant + several exact keywords in the ad group) — exported as Negative Exact instead: ${fallbacks.slice(0,6).join(', ')}${fallbacks.length>6?'…':''}`:''}`);
 }
 
 /* ============================ DUPLICATES (same target, competing across campaigns) ============================ */
