@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:36</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:42</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2557,6 +2557,7 @@ function renderAudit(){
         <div class="field"><button class="btn ghost" id="au-export" ${rows.length?'':'disabled'}>Excel</button></div>
       </div>
       <div class="hint" style="margin-top:8px;line-height:1.5;"><b>How waste is counted</b> (same as the Wasted Spend tab): only targets with at least this many clicks count. <b>No sale</b> → all their spend is waste. <b>Sells but ACoS above break-even</b> → only the spend above what break-even ACoS allows is waste. Targets with fewer clicks are never counted.</div>
+      ${rows.some(r=>!r.haveEcon)?`<div class="banner" style="margin-top:8px;line-height:1.5;"><b>Break-even ACoS</b> = margin before ads. ${rows.filter(r=>!r.haveEcon).length} of ${rows.length} products use the default margin (${f1(+st.margin||30)}%) because no cost data is loaded — that is why they show the same value. Upload Sellerboard or enter price + unit cost under “Price and cost per product” to get a real one per product.</div>`:''}
       <details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:600;">Advanced settings (profit estimate)</summary>
         <div class="ctrls" style="margin-top:8px;">
           ${num('au-margin','Margin % when cost is unknown (= break-even ACoS)',st.margin,110)}
