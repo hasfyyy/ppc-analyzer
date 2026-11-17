@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 15:12</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 15:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2175,6 +2175,45 @@ function auditParentsFromText(txt){
     if(a.length<2) return; const e=map[a[0]]||(map[a[0]]={title:'',kids:[]}); a.slice(1).forEach(c=>{ if(!e.kids.includes(c)) e.kids.push(c); }); });
   return Object.keys(map).length? map : null;
 }
+// ---- Seller Central Business Report "Detail Page Sales and Traffic by Child Item": total ordered sales per ASIN (organic + ads)
+// for a period YOU enter (the file name carries no range), plus the (Parent) ASIN / (Child) ASIN pairs ----
+function auditNum(v){
+  if(typeof v==='number') return isFinite(v)?v:0;
+  let t=String(v==null?'':v).replace(/[^\d.,\-]/g,''); if(!t) return 0;
+  const lc=t.lastIndexOf(','), ld=t.lastIndexOf('.');
+  if(lc>-1&&ld>-1){ t = lc>ld? t.replace(/\./g,'').replace(',','.') : t.replace(/,/g,''); }          // 1.234,56  /  1,234.56
+  else if(lc>-1){ t = /,\d{1,2}$/.test(t)? t.replace(',','.') : t.replace(/,/g,''); }                // 12,5  /  1,234
+  const n=parseFloat(t); return isNaN(n)?0:n;
+}
+function auditParseBusiness(wb,fileName){
+  const ws=wb.Sheets[wb.SheetNames[0]]; if(!ws) return null;
+  const json=XLSX.utils.sheet_to_json(ws,{defval:''}); if(!json.length) return null;
+  const nk=h=>String(h).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const heads=Object.keys(json[0]), H=f=>heads.find(h=>f(nk(h),h));
+  const noB2b=n=>!/b2b/.test(n);
+  const cH=H(n=>/child.*asin/.test(n)), pH=H(n=>/parent.*asin/.test(n)), tH=H(n=>n==='title'||n==='product name');
+  const sesH=H(n=>/^sessions( total)?$/.test(n)&&noB2b(n)) || H(n=>/^sessions/.test(n)&&/total/.test(n)&&noB2b(n));
+  const uH=H(n=>n==='units ordered'), sH=H(n=>n==='ordered product sales'), cvH=H(n=>n==='unit session percentage'), bbH=H(n=>/(featured offer|buy box)/.test(n)&&/percentage/.test(n)&&noB2b(n));
+  if(!cH||!sH) return null;
+  const rows=[], parents={};
+  json.forEach(r=>{ const child=String(r[cH]).trim().toUpperCase(); if(!/^B0[A-Z0-9]{8}$/.test(child)) return;
+    const parent=pH? String(r[pH]).trim().toUpperCase() : '';
+    const o={child,parent:/^B0[A-Z0-9]{8}$/.test(parent)?parent:'',title:tH?String(r[tH]||'').trim():'',sales:auditNum(r[sH]),units:uH?auditNum(r[uH]):0,sessions:sesH?auditNum(r[sesH]):0,buybox:bbH?auditNum(r[bbH]):null};
+    rows.push(o);
+    if(o.parent){ const e=parents[o.parent]||(parents[o.parent]={title:'',kids:[],top:-1}); if(!e.kids.includes(child)) e.kids.push(child); if(o.sales>e.top){ e.top=o.sales; e.title=o.title; } } });
+  if(!rows.length) return null;
+  return {rows,parents,fileName,start:'',end:'',days:null};
+}
+function auditDaysBetween(a,b){ if(!a||!b) return null; const d1=Date.parse(a), d2=Date.parse(b); const n=Math.round((d2-d1)/864e5)+1; return n>0&&n<800? n : null; }
+// total sales for the product's ASINs (children + parent ASIN in the set) for the Business Report period, scaled to 30 days
+function auditBizFor(st,g){
+  const b=st.biz; if(!b||!g.asins) return null;
+  const rows=b.rows.filter(r=>g.asins.has(r.child)); if(!rows.length) return null;
+  const ms=30/Math.max(1,b.days||+st.days||30);
+  const a={sales:0,units:0,sessions:0}; rows.forEach(r=>{ a.sales+=r.sales; a.units+=r.units; a.sessions+=r.sessions; });
+  if(!(a.sales>0)) return null;
+  return {salesMonth:a.sales*ms,unitsMonth:a.units*ms,sessionsMonth:a.sessions*ms,cvr:a.sessions? a.units/a.sessions*100 : null,n:rows.length};
+}
 function auditCompute(st){
   const inp=st.inputs||{};
   const m=30/Math.max(1,+st.days||30);                     // period → month factor
@@ -2185,7 +2224,7 @@ function auditCompute(st){
   st._cskip={};
   // parent mode: each mapped parent = a product made of its children (+ the parent ASIN, which also matches a Sellerboard parent row)
   const parentDefs=[];
-  const pmap=Object.assign({}, (st.sb&&st.sb.parents)||{}, st.parentMap||{});
+  const pmap=Object.assign({}, (st.sb&&st.sb.parents)||{}, (st.biz&&st.biz.parents)||{}, st.parentMap||{});
   st._pmapN=Object.keys(pmap).length;
   if(st.groupBy==='parent') Object.keys(pmap).forEach(p=>{
     const e=pmap[p]; const t=String(e.title||'').trim();
@@ -2238,6 +2277,9 @@ function auditCompute(st){
     const tot=derive(agg(g.camps));
     const gi=inp[g.key]||{};
     const sbm=g.key==='(not in the parent mapping)' ? null : auditSbMatch(st,g,gi);   // leftovers are not a product
+    const bz=g.key==='(not in the parent mapping)' ? null : auditBizFor(st,g);
+    const tBase= bz? bz.salesMonth : (sbm? sbm.salesMonth : 0);
+    const tacos= tBase? tot.spend*m/tBase*100 : null, tacosSrc= bz? 'Business Report' : (sbm? 'Sellerboard' : '');
     const price=+gi.price||(sbm?sbm.price:0), cost=+gi.cost||(sbm?sbm.cost:0);
     const haveEcon = price>0 && cost>0 && cost<price;
     const margin = haveEcon ? (price-cost)/price*100 : defMargin;
@@ -2287,7 +2329,7 @@ function auditCompute(st){
     if(!haveEcon) tips.push('Upload a Sellerboard export (or type price and unit cost) to get a real break-even ACoS and the price test — now using the default margin.');
     out.push({key:g.key,tot,be,margin,haveEcon,price,cost,units,profitPeriod,
       wasteSpend,waste,overBe,overExcess,winners,winSpend,upWaste,upOver,upScale,upBase,
-      campIds:g.camps.map(c=>c.campaignId),asins:g.asins,sbm,scen,baseProfit,pts,verdict,why,wasteShare,terms:g.terms.sort((a,b)=>b.spend-a.spend),plc,badPlc,tips,byProd:g.byProd});
+      campIds:g.camps.map(c=>c.campaignId),asins:g.asins,sbm,bz,tacos,tacosSrc,scen,baseProfit,pts,verdict,why,wasteShare,terms:g.terms.sort((a,b)=>b.spend-a.spend),plc,badPlc,tips,byProd:g.byProd});
   });
   return out.sort((a,b)=>b.tot.spend-a.tot.spend);
 }
@@ -2483,7 +2525,7 @@ function auditReportHtml(ctx){
       <div class="hc"><div class="hc-v">${fM(T.up).replace(/\.\d+$/,'')}</div><div class="hc-l">Extra profit / month</div></div>
     </div></div>`;
   // 1 performance — numbers in the table, actions in words
-  const perf=rows.map(r=>`<tr><td class="name"><span class="${dot(r.verdict)}"></span>${nm(r)}</td><td>${fM(r.tot.spend*m)}</td><td>${fM(r.tot.sales*m)}</td><td class="${acosClass(r.tot.acos)}">${fAcos(r.tot.acos)}</td><td>${f1(r.be)}%${r.haveEcon?'':'*'}</td><td>${fM(r.profitPeriod*m)}</td>${ctx.anySb?`<td>${r.sbm?fAcos(r.sbm.salesMonth?r.tot.spend*m/r.sbm.salesMonth*100:0):'—'}</td>`:''}<td class="l"><span class="${bd(r.verdict)}">${r.verdict}</span></td></tr>`).join('');
+  const perf=rows.map(r=>`<tr><td class="name"><span class="${dot(r.verdict)}"></span>${nm(r)}</td><td>${fM(r.tot.spend*m)}</td><td>${fM(r.tot.sales*m)}</td><td class="${acosClass(r.tot.acos)}">${fAcos(r.tot.acos)}</td><td>${f1(r.be)}%${r.haveEcon?'':'*'}</td><td>${fM(r.profitPeriod*m)}</td>${ctx.anyTacos?`<td>${r.tacos!=null?fAcos(r.tacos):'—'}</td>`:''}<td class="l"><span class="${bd(r.verdict)}">${r.verdict}</span></td></tr>`).join('');
   const actionsFor=r=>{ const a=[];
     if(r.wasteSpend>0) a.push('Pause or negate the targets that spend without selling.');
     if(r.overBe.length) a.push('Lower bids on converting targets that run above break-even.');
@@ -2493,8 +2535,8 @@ function auditReportHtml(ctx){
     return a; };
   const fixes=rows.map(r=>{ const a=actionsFor(r); return `<div class="si ${r.verdict==='Scale'?'g':r.verdict==='Fix first'?'r':'y'}"><h4>${nm(r)}</h4><ul>${a.map(t=>`<li>${t}</li>`).join('')||'<li>No clear issues in this data.</li>'}</ul></div>`; }).join('');
   const s1=`<section id="perf"><div class="sh"><h2>Current PPC performance and improvement potential</h2></div>
-    <div class="tw"><table><thead><tr><th>Product</th><th>Spend</th><th>Ad sales</th><th>ACoS</th><th>Break-even ACoS</th><th>Profit after ads</th>${ctx.anySb?'<th>TACoS</th>':''}<th class="l">Growth</th></tr></thead><tbody>${perf}</tbody></table></div>
-    ${ctx.anySb&&ctx.periodMismatch?'<div class="sub" style="margin-bottom:8px;">TACoS compares '+ctx.periodTxt+'.</div>':''}
+    <div class="tw"><table><thead><tr><th>Product</th><th>Spend</th><th>Ad sales</th><th>ACoS</th><th>Break-even ACoS</th><th>Profit after ads</th>${ctx.anyTacos?'<th>TACoS</th>':''}<th class="l">Growth</th></tr></thead><tbody>${perf}</tbody></table></div>
+    ${ctx.anyTacos&&ctx.periodMismatch?'<div class="sub" style="margin-bottom:8px;">TACoS compares '+ctx.periodTxt+'.</div>':''}
     ${rows.some(r=>!r.haveEcon)?'<div class="sub" style="margin-bottom:12px;">* Break-even uses the default margin of '+f1(+st.margin||30)+'% — product cost data not provided.</div>':''}
     <div class="items">${fixes}</div></section>`;
   // 2 waste — per-product numbers once; the lists only when no appendix view already shows them
@@ -2579,9 +2621,13 @@ function renderAudit(){
   const details=picked.map(d=>({title:d.title,html:st._snap.done[d.id],covers:d.covers}));
   const client=(st.client||'').trim();
   const sbPer=st.sb&&st.sb.start?{start:st.sb.start,end:st.sb.end,days:st.sb.days}:null;
-  const periodMismatch=!!(bulkP&&sbPer&&(bulkP.start!==sbPer.start||bulkP.end!==sbPer.end));
-  const periodTxt=periodMismatch? `ad spend from the bulk (${bulkP.start} → ${bulkP.end}) against Sellerboard sales for a different period (${sbPer.start} → ${sbPer.end})` : '';
-  const reportHtml=rows.length? auditReportHtml({st,rows,m,T,acosT,details,client,anySb:!!st.sb && rows.some(r=>r.sbm),periodMismatch,periodTxt}) : '<div class="ctn"><p class="lead">Tick at least one product.</p></div>';
+  const bizDays=st.biz? auditDaysBetween(st.bizStart,st.bizEnd) : null;
+  if(st.biz) st.biz.days=bizDays;
+  const bizPer=st.biz&&bizDays?{start:st.bizStart,end:st.bizEnd,days:bizDays}:null;
+  const tacosPer= st.biz? bizPer : sbPer, tacosName= st.biz? 'Business Report' : 'Sellerboard';
+  const periodMismatch=!!(bulkP&&tacosPer&&(bulkP.start!==tacosPer.start||bulkP.end!==tacosPer.end));
+  const periodTxt=periodMismatch? `ad spend from the bulk (${bulkP.start} → ${bulkP.end}) against ${tacosName} sales for a different period (${tacosPer.start} → ${tacosPer.end})` : '';
+  const reportHtml=rows.length? auditReportHtml({st,rows,m,T,acosT,details,client,anySb:!!st.sb && rows.some(r=>r.sbm),anyTacos:rows.some(r=>r.tacos!=null),periodMismatch,periodTxt}) : '<div class="ctn"><p class="lead">Tick at least one product.</p></div>';
   const num=(id,label,val,w)=>`<div class="field"><label>${label}</label><input type="number" id="${id}" value="${val}" style="width:${w||80}px;" step="any"></div>`;
   const q=(st.q||'').trim().toLowerCase();
   const list=all.filter(r=>!q || auditNm(r.key).toLowerCase().includes(q) || r.key.toLowerCase().includes(q)).slice(0,400);
@@ -2599,13 +2645,15 @@ function renderAudit(){
     <div class="card pad">
       <h3 class="sectitle">Client audit</h3>
       <div class="hint" style="margin-bottom:10px;line-height:1.5;"><b>Steps:</b> (1) export the Amazon bulk and the Sellerboard “Dashboard → Products (group by parent)” for the <b>same dates and marketplace</b> (e.g. both for the same 60 days); (2) upload the bulk; (3) choose the products; (4) upload Sellerboard (the days are read from the file names); (5) download the PDF. The white report block below is exactly what the client receives.</div>
-      ${(()=>{ const line=(lab,p)=>p? `${lab}: <b>${p.start} → ${p.end}</b> (${p.days} days)` : `${lab}: dates not found in the file name`;
+      ${(()=>{ const line=(lab,p,loaded)=>p? `${lab}: <b>${p.start} → ${p.end}</b> (${p.days} days)` : (loaded? `${lab}: period not set` : '');
+        const loadedSrc=[['Sellerboard',sbPer,!!st.sb],['Business Report',bizPer,!!st.biz]].filter(x=>x[2]);
         let verdict='', ok=false;
-        if(bulkP&&sbPer){ ok=!periodMismatch; verdict= ok? '✓ Same period — spend, TACoS, profit and units compare the same days.' : `⚠ The periods differ — TACoS, profit and units would compare different days. Export Sellerboard for the same dates as the bulk (${bulkP.start} → ${bulkP.end}).`; }
-        else if(!bulkP) verdict='The bulk file name has no dates (Amazon names it bulk-…-YYYYMMDD-YYYYMMDD-…), so set “Days covered by the bulk” by hand and make sure Sellerboard uses the same dates.';
-        else if(!st.sb) verdict='No Sellerboard export loaded yet — export it for exactly these dates.';
-        else verdict='Sellerboard dates not found in its file name — make sure it covers the same dates as the bulk.';
-        return `<div class="banner" style="margin-bottom:10px;line-height:1.55;${ok?'background:#ecfdf5;color:#065f46;border-color:#a7f3d0;':(bulkP&&sbPer?'background:#fff7ed;color:#9a3412;border-color:#fed7aa;':'')}"><b>Data period check</b> — ${line('Bulk',bulkP)} · ${line('Sellerboard',sbPer)}<br>${verdict}</div>`; })()}
+        if(!bulkP) verdict='The bulk file name has no dates (Amazon names it bulk-…-YYYYMMDD-YYYYMMDD-…), so set “Days covered by the bulk” by hand and make sure every other export uses the same dates.';
+        else if(!loadedSrc.length) verdict='No Sellerboard or Business Report loaded yet — export them for exactly the bulk dates.';
+        else { const bad=loadedSrc.filter(x=>!x[1]||x[1].start!==bulkP.start||x[1].end!==bulkP.end);
+          if(!bad.length){ ok=true; verdict='✓ Same period everywhere — spend, TACoS, profit and units compare the same days.'; }
+          else verdict='⚠ '+bad.map(x=>x[1]? x[0]+' covers different dates' : x[0]+': enter its dates').join('; ')+' — TACoS, profit and units would compare different days. Use exactly the bulk dates ('+bulkP.start+' → '+bulkP.end+').'; }
+        return `<div class="banner" style="margin-bottom:10px;line-height:1.55;${ok?'background:#ecfdf5;color:#065f46;border-color:#a7f3d0;':(bulkP&&loadedSrc.length?'background:#fff7ed;color:#9a3412;border-color:#fed7aa;':'')}"><b>Data period check</b> — ${[line('Bulk',bulkP,true),line('Sellerboard',sbPer,!!st.sb),line('Business Report',bizPer,!!st.biz)].filter(Boolean).join(' · ')}<br>${verdict}</div>`; })()}
       <div class="ctrls" style="align-items:end;">
         <div class="field"><label>Client / brand (shown in the title)</label><input type="text" id="au-client" value="${esc(st.client)}" style="width:200px;"></div>
         ${num('au-days','Days covered by the bulk',st.days,90)}
@@ -2631,14 +2679,14 @@ function renderAudit(){
       </details>
     </div>
     ${st.groupBy==='parent'? `<div class="card pad"><h3 class="sectitle">Parent → children mapping</h3>
-      <div class="hint" style="margin-bottom:8px;line-height:1.5;"><b>Easiest: upload the Sellerboard export (Dashboard → Products, group by parent) under “Price and cost per product” — it already contains every parent and its children, so no mapping is needed and the parent's COGS / price come from the parent row.</b> The bulk itself does not say which ASINs belong to which parent. Otherwise use a mapping: Seller Central → Reports → Business Reports → <b>Detail Page Sales and Traffic by Child Item</b> (download CSV, it has the columns “(Parent) ASIN” and “(Child) ASIN”). Any file with a parent-ASIN column and a child-ASIN column works. Or paste it below, one parent per line: <code>PARENT, child1, child2, …</code>. Each parent becomes one product made of its children; campaigns count for a parent when at least half of their ASINs are its children.</div>
+      <div class="hint" style="margin-bottom:8px;line-height:1.5;"><b>Easiest: upload the Business Report (“Detail Page Sales and Traffic by Child Item”) under “Total sales for TACoS”, or the Sellerboard group-by-parent export under “Price and cost per product” — both already contain every parent and its children, so no mapping is needed (Sellerboard's parent row also gives the parent's COGS / price).</b> The bulk itself does not say which ASINs belong to which parent. Otherwise use a mapping: Seller Central → Reports → Business Reports → <b>Detail Page Sales and Traffic by Child Item</b> (download CSV, it has the columns “(Parent) ASIN” and “(Child) ASIN”). Any file with a parent-ASIN column and a child-ASIN column works. Or paste it below, one parent per line: <code>PARENT, child1, child2, …</code>. Each parent becomes one product made of its children; campaigns count for a parent when at least half of their ASINs are its children.</div>
       <div class="ctns ctrls" style="align-items:end;">
         <div class="field"><label>Upload mapping file (.csv / .xlsx)</label><input type="file" id="au-pmap" accept=".csv,.xlsx,.xls,.txt"></div>
         <div class="field grow"><label>…or paste</label><textarea id="au-ppaste" rows="2" style="width:100%;" placeholder="B0PARENT01, B0CHILD001, B0CHILD002"></textarea></div>
         <div class="field"><button class="btn ghost" id="au-ppastego">Use pasted mapping</button></div>
         ${st.parentMap? '<div class="field"><button class="btn ghost" id="au-pclear">Clear mapping</button></div>':''}
       </div>
-      <div class="hint" style="margin-top:6px;">${st._pmapN? `<b>${st._pmapN}</b> parents available${st.sb&&st.sb.parents&&Object.keys(st.sb.parents).length?` (${Object.keys(st.sb.parents).length} from the Sellerboard export${st.parentMap?', your mapping overrides where it overlaps':''})`:' (from your mapping)'}. Campaigns not covered are grouped under “(not in the parent mapping)”.` : '<span style="color:#dc2626;">No parents yet — upload the Sellerboard group-by-parent export (or a mapping below). Until then every campaign is in “(not in the parent mapping)”.</span>'}</div>
+      <div class="hint" style="margin-top:6px;">${st._pmapN? `<b>${st._pmapN}</b> parents available (${[st.sb&&st.sb.parents&&Object.keys(st.sb.parents).length?Object.keys(st.sb.parents).length+' from Sellerboard':'',st.biz&&Object.keys(st.biz.parents).length?Object.keys(st.biz.parents).length+' from the Business Report':'',st.parentMap?'your mapping overrides where it overlaps':''].filter(Boolean).join(', ')||'from your mapping'}). Campaigns not covered are grouped under “(not in the parent mapping)”.` : '<span style="color:#dc2626;">No parents yet — upload the Sellerboard group-by-parent export (or a mapping below). Until then every campaign is in “(not in the parent mapping)”.</span>'}</div>
     </div>`:''}
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Products in the audit (${rows.length} of ${all.length})</h3><div class="spacer"></div>
@@ -2665,6 +2713,14 @@ function renderAudit(){
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:0 18px;">${toolPick}</div>
       </details>
     </div>
+    <div class="card pad"><details ${st.biz?'open':''}><summary style="cursor:pointer;font-weight:600;">Total sales for TACoS — Business Report${st.biz?' (loaded)':''}</summary>
+      <div class="hint" style="margin:8px 0;line-height:1.5;">Seller Central → Reports → Business Reports → <b>Detail Page Sales and Traffic by Child Item</b>, for <b>exactly the bulk dates</b> (download CSV). It gives total ordered sales (organic + ads) per ASIN, so <b>TACoS = ad spend ÷ these sales</b>, and it also carries the parent / child ASIN pairs for the Parent ASIN grouping. The file name has no dates, so enter the period you exported.</div>
+      <div class="ctrls" style="align-items:end;">
+        <div class="field"><label>Business Report (.csv / .xlsx)</label><input type="file" id="au-biz" accept=".csv,.xlsx,.xls"></div>
+        ${st.biz? `<div class="field"><label>From</label><input type="date" id="au-bz1" value="${esc(st.bizStart||'')}"></div><div class="field"><label>To</label><input type="date" id="au-bz2" value="${esc(st.bizEnd||'')}"></div><div class="field"><button class="btn ghost" id="au-bzclear">Clear</button></div>` : ''}
+      </div>
+      <div class="hint" style="margin-top:6px;">${st.biz? `<b>${esc(st.biz.fileName)}</b> — ${st.biz.rows.length} child ASINs, ${Object.keys(st.biz.parents).length} parents.${bizDays?` Period ${bizDays} days.`:' <span style="color:#dc2626;">Enter the From / To dates of the period you exported.</span>'}` : 'Not loaded — TACoS then uses the Sellerboard sales (if loaded).'}</div>
+    </details></div>
     <div class="card pad"><details><summary style="cursor:pointer;font-weight:600;">Price and cost per product (Sellerboard or manual)</summary>
       <div class="ctrls" style="margin:8px 0;align-items:end;">
         <div class="field"><label>Upload Sellerboard export (Dashboard → Products, group by parent) — .xlsx / .csv</label><input type="file" id="au-sb" accept=".xlsx,.xls,.csv"></div>
@@ -2718,6 +2774,12 @@ function renderAudit(){
         if(!sb.rows.length){ alert('No rows with an ASIN found. Use the Sellerboard export “Dashboard → Products” (columns Product, ASIN, Units, Sales, Ads, Net profit…).'); return; }
         st.sb=sb; st.sbDays=sb.days||''; rer(); }catch(err){ alert('Cannot read the file: '+err.message); } };
     r.readAsArrayBuffer(f); };
+  $('#au-biz').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+    r.onload=ev=>{ try{ const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'}); const b=auditParseBusiness(wb,f.name);
+        if(!b){ alert('This does not look like the Business Report. Use “Detail Page Sales and Traffic by Child Item” (columns (Parent) ASIN, (Child) ASIN, Units Ordered, Ordered Product Sales).'); return; }
+        st.biz=b; if(!st.bizStart&&bulkP){ st.bizStart=bulkP.start; st.bizEnd=bulkP.end; } rer(); }catch(err){ alert('Cannot read the file: '+err.message); } };
+    r.readAsArrayBuffer(f); };
+  if($('#au-bz1')){ $('#au-bz1').onchange=e=>{ st.bizStart=e.target.value; rer(); }; $('#au-bz2').onchange=e=>{ st.bizEnd=e.target.value; rer(); }; $('#au-bzclear').onclick=()=>{ st.biz=null; st.bizStart=st.bizEnd=''; rer(); }; }
   if($('#au-sbdays')) $('#au-sbdays').onchange=e=>{ st.sbDays=+e.target.value||''; rer(); };
   if($('#au-sbclear')) $('#au-sbclear').onclick=()=>{ st.sb=null; st.sbDays=''; rer(); };
   // client file: build any appendix view still pending, then wrap the report as one standalone page
@@ -2725,7 +2787,7 @@ function renderAudit(){
   const buildDoc=autoPrint=>{
     picked.forEach(d=>auditBuildOne(st,d,scope));
     const det=picked.filter(d=>st._snap.done[d.id]).map(d=>({title:d.title,html:st._snap.done[d.id],covers:d.covers}));
-    const body=auditReportHtml({st,rows,m,T,acosT,details:det,client,anySb:!!st.sb && rows.some(r=>r.sbm),periodMismatch,periodTxt});
+    const body=auditReportHtml({st,rows,m,T,acosT,details:det,client,anySb:!!st.sb && rows.some(r=>r.sbm),anyTacos:rows.some(r=>r.tacos!=null),periodMismatch,periodTxt});
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${fileBase}</title><style>body{margin:0;background:#0a1518}${INSR_CSS}</style></head><body><div class="insr" style="border-radius:0"><table class="pgwrap"><thead><tr><td><div style="height:11mm"></div></td></tr></thead><tfoot><tr><td><div style="height:11mm"></div></td></tr></tfoot><tbody><tr><td>${body}</td></tr></tbody></table></div>${autoPrint?'<script>addEventListener("load",function(){setTimeout(function(){print()},900)})<\/script>':''}</body></html>`;
   };
   $('#au-html').onclick=()=>{
