@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 16:53</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 18:42</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -845,6 +845,7 @@ const TABS=[
   {id:'duplicates',label:'Duplicates',ic:''},
   {id:'pausecamp',label:'Pause Campaigns',ic:''},
   {id:'minspend',label:'Off-Amazon Spend',ic:''},
+  {id:'oosasin',label:'OOS ASINs',ic:''},
   {id:'movecamp',label:'Move Campaigns',ic:''},
 ];
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
@@ -854,7 +855,7 @@ const OPT_TABS=new Set(['cpcflag','rebalance','optbids','optplacements','optbudg
 // Tabs whose product is fixed by the tab itself (Negatives vs Negatives – SB, Targets SP/SB/SD) — the
 // SP/SB/SD toggle bar doesn't do anything there (clicking it doesn't change what's shown), so showing it
 // only implies a choice that isn't real. Hidden entirely on these instead of just being inert.
-const FIXED_PRODUCT_TABS=new Set(['audit','minspend','movecamp','negatives','negatives-sb','targets','targets-sb','targets-sd']);
+const FIXED_PRODUCT_TABS=new Set(['audit','minspend','oosasin','movecamp','negatives','negatives-sb','targets','targets-sb','targets-sd']);
 function renderNav(){
   const visTabs = S.focusMode ? TABS.filter(t=>FOCUS_TABS.has(t.id)) : TABS;
   if(S.focusMode && !FOCUS_TABS.has(S.tab)) S.tab='optbids';
@@ -887,7 +888,7 @@ function renderTab(){
   const app=$('#app');
   if(!DATA.loaded){ app.innerHTML=`<div class="card pad"><div class="empty"><div class="ic"></div><p>Upload an Amazon Bulk Operations file to begin.</p></div></div>`; return; }
   ({overview:renderOverview, placement:renderPlacement, negatives:()=>renderNegatives('SP'), 'negatives-sb':()=>renderNegatives('SB'),
-    ngram:renderNgram, isolation:renderIsolation, waste:renderWaste, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns, minspend:renderMinSpend, audit:renderAudit, movecamp:renderMoveCampaigns}[S.tab])();
+    ngram:renderNgram, isolation:renderIsolation, waste:renderWaste, targets:()=>renderTargets('SP'), 'targets-sb':()=>renderTargets('SB'), 'targets-sd':()=>renderTargets('SD'), harvesting:renderHarvesting, topst:renderTopStDetector, ngroots:renderNgRoots, kwcheck:renderKwCheck, products:renderProducts, cpcflag:renderCpcFlag, rebalance:renderRebalance, optbids:renderOptBids, optplacements:renderOptPlacements, optbudget:renderOptBudget, duplicates:renderDuplicates, pausecamp:renderPauseCampaigns, minspend:renderMinSpend, oosasin:renderOosAsins, audit:renderAudit, movecamp:renderMoveCampaigns}[S.tab])();
 }
 
 /* ============================ KPI helper ============================ */
@@ -2086,6 +2087,76 @@ function renderMinSpend(){
     offAmzFile(rows,val,'sp_off_amazon_limit_'+new Date().toISOString().slice(0,10)+'.xlsx');
     alert(`Exported ${rows.length} SP campaigns → Off-Amazon ad serving = "${val}".`);
   };
+}
+
+/* ============================ OOS ASINs → PAUSE PRODUCT ADS ============================ */
+// Paste the ASINs that are out of stock; every ENABLED product ad carrying one of them (in an enabled campaign +
+// enabled ad group, SP and SD) gets a Product Ad Update row with State=paused. Campaigns / ad groups / other ads
+// are untouched. Ad groups that would be left with no enabled ad are flagged (nothing else is paused for them).
+function oosParseAsins(txt){
+  const out=[], seen=new Set();
+  String(txt||'').toUpperCase().split(/[\s,;|]+/).forEach(t=>{ t=t.trim(); if(/^[A-Z0-9]{10}$/.test(t) && !seen.has(t)){ seen.add(t); out.push(t); } });
+  return out;
+}
+function oosCompute(asins){
+  const set=new Set(asins);
+  const agName=new Map(); DATA.adGroups.forEach(g=>agName.set(g.product+'|'+g.adGroupId,g.adGroupName));
+  const agEnabled=new Map(); DATA.adGroups.forEach(g=>agEnabled.set(g.product+'|'+g.adGroupId,g.state==='enabled'));
+  const live=DATA.productAds.filter(p=>(p.product==='SP'||p.product==='SD') && p.state==='enabled' && DATA.campById[p.campaignId]
+    && (!agEnabled.has(p.product+'|'+p.adGroupId) || agEnabled.get(p.product+'|'+p.adGroupId)));
+  const liveBy=new Map(); live.forEach(p=>{ const k=p.product+'|'+p.adGroupId; liveBy.set(k,(liveBy.get(k)||0)+1); });
+  const hits=live.filter(p=>set.has(String(p.asin||'').trim().toUpperCase()));
+  const hitBy=new Map(); hits.forEach(p=>{ const k=p.product+'|'+p.adGroupId; hitBy.set(k,(hitBy.get(k)||0)+1); });
+  const rows=hits.map((p,i)=>{ const k=p.product+'|'+p.adGroupId, cm=DATA.campById[p.campaignId]||{};
+    return {_uid:(p.adId||'')+'|'+p.adGroupId+'|'+i, product:p.product, asin:String(p.asin||'').toUpperCase(), sku:p.sku, campaignId:p.campaignId, adGroupId:p.adGroupId, adId:p.adId,
+      campaignName:cm.name||'', portfolioName:cm.portfolio||'', adGroupName:agName.get(k)||'',
+      left:(liveBy.get(k)||0)-(hitBy.get(k)||0)}; });
+  const found=new Set(rows.map(r=>r.asin));
+  return {rows, notFound:asins.filter(a=>!found.has(a)), emptyGroups:new Set(rows.filter(r=>r.left<=0).map(r=>r.product+'|'+r.adGroupId)).size, camps:new Set(rows.map(r=>r.campaignId)).size};
+}
+function oosExport(rows){
+  if(!rows.length){ alert('No product ads to pause.'); return; }
+  const out=rows.map(r=>bulkRow({'Product':productLabel(r.product),'Entity':'Product Ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Ad ID':r.adId,'State':'paused'}));
+  writeBulk(out,'oos_asins_pause_ads_'+new Date().toISOString().slice(0,10)+'.xlsx','Sponsored Products Campaigns');
+  alert(`Exported ${out.length} product ad pause row(s) (${new Set(rows.map(r=>r.asin)).size} ASINs).`);
+}
+function renderOosAsins(){
+  const st=stFor('oosasin'); if(st.txt===undefined) st.txt='';
+  $('#app').innerHTML=`<div class="content" style="max-width:1400px;">
+    <div class="card pad">
+      <h3 class="sectitle">Out-of-stock ASINs — pause their product ads</h3>
+      <div class="field grow"><label>Paste ASINs (one per line, or separated by spaces / commas)</label>
+        <textarea id="oos-txt" rows="5" style="width:100%;font-family:monospace;" placeholder="B0XXXXXXXX&#10;B0YYYYYYYY">${esc(st.txt)}</textarea></div>
+      <div class="hint" style="margin-top:6px;">Looks in <b>all enabled campaigns</b> (SP + SD, any portfolio) and pauses the <b>product ad</b> of each ASIN only — campaigns, ad groups and the other ASINs keep running. Ads that are already paused are skipped.</div>
+    </div>
+    <div id="oos-res"></div>
+  </div>`;
+  const draw=()=>{
+    const asins=oosParseAsins(st.txt), r=oosCompute(asins);
+    const cols=[
+      {key:'asin',label:'ASIN',l:true,type:'text'},
+      {key:'sku',label:'SKU',l:true,type:'text'},
+      {key:'product',label:'Type',l:true,type:'text'},
+      {key:'campaignName',label:'Campaign',l:true,type:'text'},
+      {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:x=>esc(x.portfolioName||'(No Portfolio)')},
+      {key:'adGroupName',label:'Ad group',l:true,type:'text'},
+      {key:'left',label:'Other active ads left in ad group',type:'int',cell:x=>x.left<=0?'<span class="badge nt">0 — ad group left empty</span>':fInt(x.left)},
+    ];
+    const tbl=buildTable({columns:cols,rows:r.rows,tab:'oosasin',selectable:false,idKey:'_uid',sortDef:{key:'asin',dir:1},onChange:draw});
+    $('#oos-res').innerHTML=`<div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+        ${kpi('ASINs pasted',fInt(asins.length))}${kpi('Product ads to pause',fInt(r.rows.length),'pink')}${kpi('Campaigns touched',fInt(r.camps))}${kpi('Ad groups left empty',fInt(r.emptyGroups),r.emptyGroups?'red':'')}
+      </div>
+      ${r.notFound.length?`<div class="card pad"><div class="hint" style="color:#c2760a;">Not found as an enabled product ad (${r.notFound.length}): ${esc(r.notFound.join(', '))}</div></div>`:''}
+      <div class="card pad">
+        <div class="rowbar"><h3 class="sectitle" style="margin:0;">Product ads (${fInt(r.rows.length)})</h3><div class="spacer"></div>
+          <button class="btn grad" id="oos-export" ${r.rows.length?'':'disabled'}>Export pause (${fInt(r.rows.length)})</button></div>
+        <div id="oos-table">${r.rows.length? tbl.html : `<div class="empty"><p>${asins.length?'None of these ASINs is an enabled product ad.':'Paste the out-of-stock ASINs above.'}</p></div>`}</div>
+      </div>`;
+    if(r.rows.length) tbl.wire($('#oos-table'));
+    $('#oos-export').onclick=()=>oosExport(r.rows);
+  };
+  $('#oos-txt').oninput=debounce(()=>{ st.txt=$('#oos-txt').value; draw(); },250);
+  draw();
 }
 
 /* ============================ AUDIT ============================ */
