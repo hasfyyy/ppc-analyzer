@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 13:51</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 13:54</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2201,36 +2201,67 @@ function auditClean(html){
 }
 function auditSnapshot(fn, product, tab, patch){
   const real=document.getElementById('app'); if(!real) return '';
-  const saved=real.innerHTML, prevProduct=S.product;
+  const kids=[...real.childNodes], prevProduct=S.product, y=window.scrollY, act=document.activeElement;
   const st=tab? stFor(tab):null, old={};
   if(st && patch) Object.keys(patch).forEach(k=>{ old[k]=st[k]; st[k]=patch[k]; });
-  real.id='app__real'; real.innerHTML='';                      // document-wide queries must only see the snapshot
+  real.id='app__real'; real.replaceChildren();                 // document-wide queries must only see the snapshot
   const tmp=document.createElement('div'); tmp.id='app'; real.parentNode.insertBefore(tmp,real);
   S.product=product; let html='';
   try{ fn(); html=auditClean(tmp.innerHTML); }catch(e){ html=`<div class="hint">Section could not be built: ${esc(e.message)}</div>`; }
-  S.product=prevProduct; tmp.remove(); real.id='app'; real.innerHTML=saved;
+  S.product=prevProduct; tmp.remove(); real.id='app'; real.replaceChildren(...kids);
   if(st && patch) Object.keys(old).forEach(k=>{ if(old[k]===undefined) delete st[k]; else st[k]=old[k]; });
+  window.scrollTo(0,y); try{ if(act && act.focus && document.body.contains(act)) act.focus({preventScroll:true}); }catch(_){}
   return html;
 }
-function auditToolViews(st){
-  const prod=st.tprod||'SP', N=Math.max(1,+st.minClicks||10);
-  const key=[prod,N,[...S.sidebarPortfolios].join(','),[...S.sidebarCampaigns].join(','),DATA.campaigns.length,DATA.targets.length,DATA.searchTerms.length,DATA.fileName].join('|');
-  if(st._snap && st._snap.key===key) return st._snap.list;
-  const negTab=prod==='SB'?'negatives-sb':'negatives', tgTab=prod==='SB'?'targets-sb':'targets';
-  const defs=[
-    ['Overview — by match type',()=>renderOverview(),'overview',{group:'match',portfolio:''}],
-    ['Overview — by portfolio',()=>renderOverview(),'overview',{group:'portfolio',portfolio:''}],
-    ['Placements',()=>renderPlacement(),'placement',{port:'',excludePorts:[]}],
-    [`Negatives — search terms with ≥${N} clicks and no sale / high ACoS`,()=>renderNegatives(prod),negTab,{clicks:N}],
-    [`Negative Phrase — word roots with ≥${N} clicks`,()=>renderNgram(),'ngram',{mc:N}],
-    [`Wasted Spend — targets (≥${N} clicks)`,()=>renderWaste(),'waste',{minClicks:N,source:'targets',excludePorts:[],showZeroGroups:false}],
-    [`Wasted Spend — search terms (≥${N} clicks)`,()=>renderWaste(),'waste',{minClicks:N,source:'searchterms',excludePorts:[],showZeroGroups:false}],
-    [`Targets that waste spend (≥${N} clicks)`,()=>renderTargets(prod),tgTab,{clicks:N}],
-    ['Harvesting — new opportunities',()=>renderHarvesting(),'harvesting',{}],
-  ];
-  const list=defs.map(([title,fn,tab,patch])=>({title,html:auditSnapshot(fn,prod,tab,patch)}));
-  st._snap={key,list};
-  return list;
+// Every tab of the tool as an audit section. Fixed-product tabs once, the rest for SP + SB (SD only where the tool supports it).
+function auditToolDefs(st){
+  const N=Math.max(1,+st.minClicks||10), defs=[];
+  const add=(title,tab,prod,fn,patch)=>defs.push({id:tab+'|'+prod+'|'+title,title:`[${prod}] ${title}`,tab,prod,fn,patch});
+  ['SP','SB'].forEach(p=>{
+    add('Overview — by match type','overview',p,()=>renderOverview(),{group:'match',portfolio:''});
+    add('Overview — by portfolio','overview',p,()=>renderOverview(),{group:'portfolio',portfolio:''});
+    add('Placements','placement',p,()=>renderPlacement(),{port:'',excludePorts:[]});
+    add(`Negative Phrase — word roots with ≥${N} clicks`,'ngram',p,()=>renderNgram(),{mc:N});
+    add(`Wasted Spend — targets (≥${N} clicks)`,'waste',p,()=>renderWaste(),{minClicks:N,source:'targets',excludePorts:[],showZeroGroups:false});
+    add(`Wasted Spend — search terms (≥${N} clicks)`,'waste',p,()=>renderWaste(),{minClicks:N,source:'searchterms',excludePorts:[],showZeroGroups:false});
+    add('Harvesting — new opportunities','harvesting',p,()=>renderHarvesting(),{});
+    add('Top ST Detector','topst',p,()=>renderTopStDetector(),{});
+    add('Low ACOS Roots','ngroots',p,()=>renderNgRoots(),{});
+    add('Products','products',p,()=>renderProducts(),{});
+    add('Duplicates','duplicates',p,()=>renderDuplicates(),{});
+  });
+  add(`Negatives — search terms with ≥${N} clicks, no sale / high ACoS`,'negatives','SP',()=>renderNegatives('SP'),{clicks:N});
+  add(`Negatives — search terms with ≥${N} clicks, no sale / high ACoS`,'negatives-sb','SB',()=>renderNegatives('SB'),{clicks:N});
+  add(`Targets that waste spend (≥${N} clicks)`,'targets','SP',()=>renderTargets('SP'),{clicks:N});
+  add(`Targets that waste spend (≥${N} clicks)`,'targets-sb','SB',()=>renderTargets('SB'),{clicks:N});
+  add(`Targets that waste spend (≥${N} clicks)`,'targets-sd','SD',()=>renderTargets('SD'),{clicks:N});
+  add('Isolation','isolation','SP',()=>renderIsolation(),{});
+  [['CPC Flag','cpcflag',renderCpcFlag],['Bid Rebalance','rebalance',renderRebalance],['Bid Optimizer','optbids',renderOptBids],['Placement Optimizer','optplacements',renderOptPlacements],['Budget Rebalancing','optbudget',renderOptBudget],['Pause Campaigns','pausecamp',renderPauseCampaigns]]
+    .forEach(([t,tab,f])=>['SP','SB','SD'].forEach(p=>add(t,tab,p,()=>f(),{})));
+  return defs;
+}
+function auditToolKey(st){
+  return [Math.max(1,+st.minClicks||10),[...S.sidebarPortfolios].join(','),[...S.sidebarCampaigns].join(','),DATA.campaigns.length,DATA.targets.length,DATA.searchTerms.length,DATA.fileName].join('|');
+}
+// Builds the sections one by one (each one runs a real tab renderer) so the page stays usable; cached per key.
+function auditBuildViews(st, defs){
+  const tok=window.__auditTok=(window.__auditTok||0)+1;
+  const pending=defs.map((d,i)=>i).filter(i=>st._snap.done[defs[i].id]===undefined);
+  let n=0;
+  const prog=()=>{ const el=document.getElementById('au-prog'); if(el) el.textContent = n<pending.length ? `Building tool views… ${defs.length-pending.length+n}/${defs.length}` : `${defs.length} tool views built`; };
+  prog();
+  const step=()=>{
+    if(window.__auditTok!==tok || S.tab!=='audit') return;
+    if(n>=pending.length){ prog(); return; }
+    const i=pending[n++], d=defs[i];
+    const html=auditSnapshot(d.fn,d.prod,d.tab,d.patch);
+    const empty=(()=>{ const t=document.createElement('div'); t.innerHTML=html; return t.innerText.trim().length<60 && !t.querySelector('table'); })();
+    st._snap.done[d.id]= empty? '' : html;
+    const box=document.getElementById('au-snap-'+i);
+    if(box){ const wrap=box.closest('details'); if(empty) wrap.remove(); else box.innerHTML=st._snap.done[d.id]; }
+    prog(); setTimeout(step,10);
+  };
+  setTimeout(step,30);
 }
 function renderAudit(){
   const st=stFor('audit');
@@ -2239,7 +2270,11 @@ function renderAudit(){
     st.inputs=auditLoadInputs();
   }
   if(st.tprod===undefined) st.tprod='SP';
-  const tools=auditToolViews(st);
+  const toolDefs=auditToolDefs(st), toolKey=auditToolKey(st);
+  if(!st._snap || st._snap.key!==toolKey) st._snap={key:toolKey,done:{}};
+  if(st.hidden===undefined){ try{ st.hidden=JSON.parse(localStorage.getItem('ppc_audit_hidden_v1')||'{}')||{}; }catch(_){ st.hidden={}; } }
+  const hs=id=>st.hidden[id]?'style="display:none"':'';
+  const xb=id=>`<button class="btn ghost" data-hide="${esc(id)}" title="Remove this section from the audit" style="position:absolute;top:8px;right:8px;padding:2px 9px;">✕</button>`;
   const all=auditCompute(st);
   const rows=all.slice(0,Math.max(1,+st.top||6));
   const m=30/Math.max(1,+st.days||30);
@@ -2275,32 +2310,44 @@ function renderAudit(){
   const overall = rows.length ? `Across the ${rows.length} product(s) analysed, ad spend is ${fMoney(T.spend*m)}/mo at ${fAcos(acosT)} ACoS; ${fMoney(T.waste*m)}/mo (${f1(T.spend? T.waste/T.spend*100:0)}%) goes to targets with ≥${st.minClicks} clicks and no sale. A realistic base-case improvement is about ${fMoney(T.up)}/mo of extra profit after ads (conservative ${fMoney(T.up*0.5)}/mo): ${fMoney(T.upW)} from cutting waste, ${fMoney(T.upO)} from fixing over-break-even bids, ${fMoney(T.upS)} from scaling winners. Growth verdict: ${nScale} product(s) ready to scale, ${rows.length-nScale-nFix} to optimize first, ${nFix} needing fixes before more spend${best? `; the biggest lever is ${best.key} (${fMoney(best.upBase)}/mo)`:''}.` : 'No campaigns match the current filters.';
   $('#app').innerHTML=`<div class="cols"><div class="sidebar">${sidebarHtml('audit',true,true)}</div><div class="content">
     <div class="card pad">
-      <h3 class="sectitle">Audit — assumptions</h3>
+      <h3 class="sectitle">Audit</h3>
+      <div class="hint" style="margin-bottom:10px;line-height:1.5;"><b>Ce ai de făcut:</b> (1) încarci bulk-ul; (2) spui mai jos câte zile acoperă raportul din bulk (de ex. 60); (3) derulezi în jos și citești auditul. Restul setărilor au valori implicite și nu trebuie atinse.</div>
       <div class="ctrls">
-        <div class="field"><label>Group products by</label><select id="au-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portfolio</option><option value="asin" ${st.groupBy==='asin'?'selected':''}>ASIN (first ASIN of campaign)</option></select></div>
-        <div class="field"><label>Tool views for</label><select id="au-tprod"><option value="SP" ${st.tprod==='SP'?'selected':''}>Sponsored Products</option><option value="SB" ${st.tprod==='SB'?'selected':''}>Sponsored Brands</option></select></div>${num('au-top','Show top N products',st.top,70)}${num('au-days','Report period (days)',st.days,80)}${num('au-margin','Default margin % (= break-even ACoS)',st.margin,90)}${num('au-clicks','Waste: min clicks, 0 sales',st.minClicks,80)}
+        ${num('au-days','Câte zile acoperă bulk-ul (7 / 14 / 30 / 60)',st.days,110)}
+        ${num('au-clicks','Prag clickuri: ≥ atâtea clickuri și 0 vânzări = waste',st.minClicks,110)}
+        <div class="field"><label>Produsele = </label><select id="au-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portofolii</option><option value="asin" ${st.groupBy==='asin'?'selected':''}>ASIN</option></select></div>
+        ${num('au-top','Câte produse arăt (cele cu cel mai mare spend)',st.top,90)}
       </div>
-      <div class="ctrls" style="margin-top:8px;">
-        ${num('au-rw','Waste recovered %',st.recWaste,70)}${num('au-ro','Over-break-even recovered %',st.recOver,70)}${num('au-sc','Scale winners by %',st.scale,70)}${num('au-dg','ACoS worsens on scaled spend %',st.degr,70)}${num('au-el','Price elasticity (assumed)',st.elast,70)}
-      </div>
-      <div class="hint" style="margin-top:6px;">The bulk has no prices or costs, so break-even ACoS = margin %; set price and unit cost per product below for a real one. Recovery / scaling / elasticity are <b>assumptions</b>, not measurements — a price change needs a real test to confirm. Only enabled campaigns from the bulk are counted, and sales are ad-attributed only.</div>
+      <details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:600;">Setări avansate (opțional — pentru estimarea de profit)</summary>
+        <div class="ctrls" style="margin-top:8px;">
+          ${num('au-margin','Marja % când nu știi prețul/costul (= ACoS la care nu pierzi bani)',st.margin,110)}
+          ${num('au-rw','Din waste, cât % presupun că recuperez',st.recWaste,90)}
+          ${num('au-ro','Din bid-urile prea mari, cât % presupun că recuperez',st.recOver,90)}
+          ${num('au-sc','Cu cât % cresc bugetul pe câștigători',st.scale,90)}
+          ${num('au-dg','Cu cât % se strică ACoS când scalez',st.degr,90)}
+          ${num('au-el','Cum reacționează vânzările la preț (−1.5 = preț +10% → vânzări ≈ −13%)',st.elast,110)}
+        </div>
+        <div class="hint" style="margin-top:6px;">Aceste valori sunt <b>presupuneri</b>, nu date din bulk (bulk-ul nu are prețuri sau costuri). Dacă completezi prețul și costul fiecărui produs în tabelul de mai jos, break-even-ul devine real.</div>
+      </details>
     </div>
     <div class="card pad"><h3 class="sectitle">Per-product economics (optional inputs)</h3>
+      <div class="hint" style="margin-bottom:8px;">Opțional. Dacă știi prețul de vânzare și costul total pe unitate (produs + FBA + comisioane), completează-le și auditul calculează break-even real și testul de preț. Dacă le lași goale, nu se strică nimic — se folosește marja implicită.</div>
       <div class="tablewrap"><table><thead><tr><th style="text-align:left;">Product</th><th>Selling price</th><th>Unit cost (COGS + FBA + fees)</th><th>Units / month (blank = ad orders)</th><th>Margin</th></tr></thead><tbody>${econ}</tbody></table></div></div>
     <div class="kpis" style="grid-template-columns:repeat(5,1fr);margin-top:14px;">
       ${kpi('Ad spend / month',fMoney(T.spend*m))}${kpi('Ad sales / month',fMoney(T.sales*m))}${kpi('ACoS',fAcos(acosT))}${kpi('Wasted / month',fMoney(T.waste*m),'red')}${kpi('Extra profit / month (base)',fMoney(T.up),'pink')}
     </div>
-    <div class="card pad"><h3 class="sectitle">Overall assessment</h3><p style="line-height:1.55;margin:0;">${esc(overall)}</p></div>
-    <div class="card pad"><h3 class="sectitle">1 · PPC performance per product (monthly)</h3>
+    <div class="card pad" data-sec="overall" ${hs('overall')} style="position:relative;">${xb('overall')}<h3 class="sectitle">Overall assessment</h3><p style="line-height:1.55;margin:0;">${esc(overall)}</p></div>
+    <div class="card pad" data-sec="perf" ${hs('perf')} style="position:relative;">${xb('perf')}<h3 class="sectitle">1 · PPC performance per product (monthly)</h3>
       <div class="tablewrap"><table><thead><tr><th style="text-align:left;">Product</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Break-even</th><th>ROAS</th><th>CPC</th><th>CVR</th><th>Profit after ads</th><th>Wasted</th><th>Growth</th></tr></thead><tbody>${perf}</tbody></table></div>
       ${detail}</div>
-    <div class="card pad"><h3 class="sectitle">2 · Realistic extra profit after ads (per month)</h3>
+    <div class="card pad" data-sec="opp" ${hs('opp')} style="position:relative;">${xb('opp')}<h3 class="sectitle">2 · Realistic extra profit after ads (per month)</h3>
       <div class="tablewrap"><table><thead><tr><th style="text-align:left;">Product</th><th>Cut waste</th><th>Fix over-break-even</th><th>Scale winners</th><th>Base total</th><th>Conservative (50%)</th></tr></thead><tbody>${opp}<tr><td style="text-align:left;"><b>Total</b></td><td><b>${fMoney(T.upW)}</b></td><td><b>${fMoney(T.upO)}</b></td><td><b>${fMoney(T.upS)}</b></td><td><b>${fMoney(T.up)}</b></td><td><b>${fMoney(T.up*0.5)}</b></td></tr></tbody></table></div></div>
-    <div class="card pad"><h3 class="sectitle">3 · Price test — monthly profit after ads (ad spend held constant, elasticity ${st.elast})</h3>
+    <div class="card pad" data-sec="price" ${hs('price')} style="position:relative;">${xb('price')}<h3 class="sectitle">3 · Price test — monthly profit after ads (ad spend held constant, elasticity ${st.elast})</h3>
       <div class="tablewrap"><table><thead><tr><th style="text-align:left;">Product</th><th>Current</th><th>−10%</th><th>−5%</th><th>+5%</th><th>+10%</th><th>Best option</th></tr></thead><tbody>${price}</tbody></table></div></div>
-    <div class="card pad"><h3 class="sectitle">4 · Tool views — same tabs, same logic, threshold ≥${st.minClicks} clicks (${st.tprod})</h3>
-      <div class="hint" style="margin-bottom:8px;">Read-only snapshots of the Overview, Placement, Negatives, Negative Phrase, Wasted Spend, Targets and Harvesting tabs, built from this bulk with the click threshold above. Change the threshold in the assumptions box to see how each list changes. Sidebar filters apply to Negative Phrase; the other views cover the whole account.</div>
-      ${tools.map((t,i)=>`<details ${i<3?'open':''} style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-top:8px;"><summary style="cursor:pointer;font-weight:700;">${esc(t.title)}</summary><div style="margin-top:8px;">${t.html}</div></details>`).join('')}
+    <div class="card pad"><h3 class="sectitle">4 · Tool views — every tab of the tool, same logic, threshold ≥${st.minClicks} clicks</h3>
+      <div class="hint" style="margin-bottom:8px;"><span id="au-prog"></span> · Read-only snapshots of the tabs, built from this bulk (Sponsored Products, Brands and — where the tool supports it — Display). Remove what you don't need with ✕; <a href="#" id="au-unhide">restore removed (${Object.keys(st.hidden).length})</a>. Sidebar filters apply to Negative Phrase; the other views cover the whole account.</div>
+      ${toolDefs.map((d,i)=>{ const done=st._snap.done[d.id]; if(done==='') return '';
+        return `<details data-sec="${esc(d.id)}" ${hs(d.id)} style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-top:8px;"><summary style="cursor:pointer;font-weight:700;display:flex;align-items:center;gap:8px;"><span style="flex:1;">${esc(d.title)}</span><button class="btn ghost" data-hide="${esc(d.id)}" title="Remove this section from the audit" style="padding:2px 9px;">✕</button></summary><div id="au-snap-${i}" style="margin-top:8px;">${done!==undefined?done:'<div class="hint">Building…</div>'}</div></details>`; }).join('')}
     </div>
     <div class="card pad"><div class="rowbar"><div class="hint">Excel with all sections (summary, waste, opportunities, price test, assumptions).</div><div class="spacer"></div><button class="btn grad" id="au-export" ${rows.length?'':'disabled'}>Download audit (.xlsx)</button></div></div>
   </div></div>`;
@@ -2309,10 +2356,17 @@ function renderAudit(){
   bindNum('au-top','top'); bindNum('au-days','days'); bindNum('au-margin','margin'); bindNum('au-clicks','minClicks');
   bindNum('au-rw','recWaste'); bindNum('au-ro','recOver'); bindNum('au-sc','scale'); bindNum('au-dg','degr'); bindNum('au-el','elast');
   $('#au-group').onchange=e=>{ st.groupBy=e.target.value; renderAudit(); };
-  $('#au-tprod').onchange=e=>{ st.tprod=e.target.value; renderAudit(); };
   document.querySelectorAll('[data-aud]').forEach(el=>el.onchange=()=>{
     const k=decodeURIComponent(el.dataset.k); st.inputs[k]=st.inputs[k]||{}; st.inputs[k][el.dataset.aud]=el.value; auditSaveInputs(st.inputs); renderAudit();
   });
+  document.querySelectorAll('[data-hide]').forEach(b=>b.onclick=ev=>{
+    ev.preventDefault(); ev.stopPropagation();
+    const id=b.dataset.hide; st.hidden[id]=1; try{ localStorage.setItem('ppc_audit_hidden_v1',JSON.stringify(st.hidden)); }catch(_){}
+    const w=b.closest('[data-sec]'); if(w) w.style.display='none';
+    const u=$('#au-unhide'); if(u) u.textContent='restore removed ('+Object.keys(st.hidden).length+')';
+  });
+  $('#au-unhide').onclick=e=>{ e.preventDefault(); st.hidden={}; try{ localStorage.removeItem('ppc_audit_hidden_v1'); }catch(_){} renderAudit(); };
+  auditBuildViews(st,toolDefs);
   $('#au-export').onclick=()=>{
     const wb=XLSX.utils.book_new(); const add=(n,a)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(a),n);
     add('Summary',[['Product','Spend/mo','Sales/mo','Orders/mo','ACoS %','Break-even %','ROAS','CPC','CVR %','Profit after ads/mo','Wasted/mo','Wasted %','Growth verdict','Why'],
