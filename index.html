@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 12:17</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 12:18</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2033,12 +2033,12 @@ function offAmzFile(rows,val,filename){
 function renderMinSpend(){
   S.product='SP';
   const st=stFor('minspend');
-  if(st.val===undefined) st.val=OFFAMZ_DEFAULT; if(st.onlyMissing===undefined) st.onlyMissing=true;
-  const val=String(st.val||OFFAMZ_DEFAULT).trim()||OFFAMZ_DEFAULT;
+  if(st.apply===undefined) st.apply=false;
+  const val=OFFAMZ_DEFAULT;
   const scoped=moveCampaignPool().filter(c=>c.product==='SP' && c.state==='enabled' && passesSidebar(c));
   scoped.forEach(r=>Object.assign(r,derive(r)));
   const isSet=r=>String(r.offAmazon||'').trim().toLowerCase()===val.toLowerCase();
-  const rows=st.onlyMissing? scoped.filter(r=>!isSet(r)) : scoped;
+  const rows=st.apply? scoped.filter(r=>!isSet(r)) : [];
   const nAlready=scoped.filter(isSet).length;
   const totals=agg(rows);
   const noPf=rows.filter(r=>!r.portfolioId).length;
@@ -2062,26 +2062,24 @@ function renderMinSpend(){
     <div class="card pad">
       <h3 class="sectitle">Off-Amazon spend — Sponsored Products</h3>
       <div class="ctrls">
-        <div class="field grow"><label>Valoare scrisă în coloana „Off-Amazon ad serving"</label><input type="text" id="ms-val" value="${esc(val)}" style="width:100%;max-width:320px;"></div>
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ms-only" ${st.onlyMissing?'checked':''}> Doar campaniile care nu o au deja</label>
+        <label class="fitem" style="flex-direction:row;gap:8px;font-size:14px;font-weight:600;"><input type="checkbox" id="ms-apply" ${st.apply?'checked':''}> Pune „${esc(val)}" în toate campaniile SP active</label>
       </div>
       <div class="hint" style="margin-top:6px;">${scopeTxt}<br>Acum în cele ${fInt(scoped.length)} campanii SP active: ${valChips||'—'}<br>
         Fiecare rând păstrează Portfolio ID și End Date (campaniile nu ies din portofolii); se schimbă doar setarea Off-Amazon.${noPf?`<br>${noPf} campanii nu au portofoliu în bulk (rămân fără).`:''}</div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('SP active (în filtru)',fInt(scoped.length))}${kpi('Au deja setarea',fInt(nAlready))}${kpi('De modificat',fInt(rows.length),'pink')}${kpi('Spend (period)',fMoney(totals.spend))}
+      ${kpi('SP active (în filtru)',fInt(scoped.length))}${kpi('Au deja setarea',fInt(nAlready))}${kpi('De modificat',fInt(st.apply?rows.length:scoped.length-nAlready),'pink')}${kpi('Spend (period)',fMoney(totals.spend))}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campanii (${fInt(rows.length)})</h3><div class="spacer"></div>
         <button class="btn grad" id="ms-export" ${rows.length?'':'disabled'}>Export (${fInt(rows.length)})</button>
       </div>
-      <div id="ms-table">${rows.length? tbl.html : '<div class="empty"><p>Nimic de modificat — toate campaniile SP din filtru au deja setarea.</p></div>'}</div>
+      <div id="ms-table">${rows.length? tbl.html : '<div class="empty"><p>Bifează căsuța de sus ca să se pregătească exportul (campaniile care au deja setarea sunt sărite).</p></div>'}</div>
     </div>
   </div></div>`;
   if(rows.length) tbl.wire($('#ms-table'));
   wireSidebar(()=>withFocus(renderMinSpend),'minspend');
-  $('#ms-val').onchange=e=>{ st.val=e.target.value; renderMinSpend(); };
-  $('#ms-only').onchange=e=>{ st.onlyMissing=e.target.checked; renderMinSpend(); };
+  $('#ms-apply').onchange=e=>{ st.apply=e.target.checked; renderMinSpend(); };
   $('#ms-export').onclick=()=>{
     if(!rows.length) return;
     offAmzFile(rows,val,'sp_off_amazon_limit_'+new Date().toISOString().slice(0,10)+'.xlsx');
