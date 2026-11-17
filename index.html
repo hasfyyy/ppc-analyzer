@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:52</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2527,7 +2527,7 @@ function auditReportHtml(ctx){
     <div class="actions"><h4>Next steps</h4><ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>
     <div class="basis">Basis of estimates: waste = targets with ≥${st.minClicks} clicks and no sale; ${st.recWaste}% of waste assumed recoverable; ${st.recOver}% of spend above break-even assumed recoverable; winners (≥2 orders, ACoS ≤70% of break-even) scaled by ${st.scale}% with ACoS worsening by ${st.degr}%. Break-even ACoS = margin before ads. Sales are ad-attributed; only enabled campaigns are included. All projections are estimates.</div></section>`;
   const apx=details.map((d,i)=>`<section><h2 class="sh-plain">${esc(d.title)}</h2><div class="tw" id="au-snap-${i}">${d.html!==undefined?d.html:'<div class="sub" style="padding:14px">Building…</div>'}</div></section>`).join('');
-  return `<div class="ctn"><button class="noprint" onclick="window.print()">Save as PDF / Print</button>${hdr}${s1}${s2}${s3}${s4}${s5}${details.length?'<h2 class="sh-plain" style="margin:10px 0 8px;font-size:24px">Appendix — detailed data</h2><p class="lead" style="margin-bottom:18px">Supporting detail from the analysis tool: the top rows of each view, worst first. It adds rows beyond the summary above and does not repeat it.</p>'+apx:''}</div>`;
+  return `<div class="ctn"><button class="noprint" onclick="window.print()">Save as PDF / Print</button>${hdr}${s1}${s2}${s3}${s4}${s5}${apx}</div>`;
 }
 
 function renderAudit(){
