@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 18:42</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 18:51</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2116,7 +2116,7 @@ function oosCompute(asins){
 }
 function oosExport(rows){
   if(!rows.length){ alert('No product ads to pause.'); return; }
-  const out=rows.map(r=>bulkRow({'Product':productLabel(r.product),'Entity':'Product Ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Ad ID':r.adId,'State':'paused'}));
+  const out=rows.map(r=>bulkRow({'Product':productLabel(r.product),'Entity':'Product ad','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Ad ID':r.adId,'SKU':r.sku,'State':'paused'}));
   writeBulk(out,'oos_asins_pause_ads_'+new Date().toISOString().slice(0,10)+'.xlsx','Sponsored Products Campaigns');
   alert(`Exported ${out.length} product ad pause row(s) (${new Set(rows.map(r=>r.asin)).size} ASINs).`);
 }
