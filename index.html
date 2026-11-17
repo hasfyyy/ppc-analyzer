@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:11</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:15</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2147,14 +2147,22 @@ function auditCompute(st){
   const defMargin=Math.max(1,+st.margin||30);
   const asinOf=new Map();
   if(st.groupBy==='asin') DATA.productAds.forEach(a=>{ if(a.campaignId && a.asin && !asinOf.has(a.campaignId)) asinOf.set(a.campaignId,String(a.asin).toUpperCase()); });
+  st._cskip={};
   const adAsinsBy=new Map(); DATA.productAds.forEach(a=>{ if(a.campaignId && a.asin){ if(!adAsinsBy.has(a.campaignId)) adAsinsBy.set(a.campaignId,new Set()); adAsinsBy.get(a.campaignId).add(String(a.asin).toUpperCase()); } });
   const campKey=new Map(), groups=new Map();
   moveCampaignPool().filter(c=>c.state==='enabled').forEach(c=>{
-    const k= st.groupBy==='asin' ? (asinOf.get(c.campaignId)||'(no ASIN)') : (c.portfolioName||'(No Portfolio)');
+    // a manually defined product (name + ASINs) claims every campaign that advertises any of its ASINs
+    const cAsins=new Set([...(adAsinsBy.get(c.campaignId)||[]), ...((String(c.campaignName).match(/B0[A-Z0-9]{8}/ig)||[]).map(a=>a.toUpperCase()))]);
+    // only campaigns dedicated to the product: at least half of the ASINs the campaign advertises must be the product's.
+    // A catch-all campaign over dozens of ASINs can't be split per product at campaign level, so it is left out (counted).
+    const cu=(st.custom||[]).find(x=>cAsins.size && x.asins.filter(a=>cAsins.has(a)).length/cAsins.size>=0.5);
+    if(!cu) (st.custom||[]).forEach(x=>{ if(x.asins.some(a=>cAsins.has(a))) st._cskip[x.name]=(st._cskip[x.name]||0)+1; });
+    const k= cu ? cu.name : (st.groupBy==='asin' ? (asinOf.get(c.campaignId)||'(no ASIN)') : (c.portfolioName||'(No Portfolio)'));
     campKey.set(c.campaignId,k);
     if(!groups.has(k)) groups.set(k,{key:k,camps:[],byProd:{SP:0,SB:0,SD:0},targets:[],terms:[],plc:{},asins:new Set()});
     const g=groups.get(k); g.camps.push(c); g.byProd[c.product]=(g.byProd[c.product]||0)+c.spend;
     (adAsinsBy.get(c.campaignId)||[]).forEach(a=>g.asins.add(a));
+    if(cu) cu.asins.forEach(a=>g.asins.add(a));
     (String(k+' '+c.campaignName).match(/B0[A-Z0-9]{8}/ig)||[]).forEach(a=>g.asins.add(a.toUpperCase()));
   });
   // targets: SB campaigns can sit on two sheets → same keyword twice; keep one
@@ -2461,6 +2469,7 @@ function renderAudit(){
   if(!st.init){
     Object.assign(st,{init:true,groupBy:'portfolio',days:30,margin:30,minClicks:10,recWaste:60,recOver:40,scale:25,degr:25,elast:-1.5,client:'',q:''});
     st.inputs=auditLoadInputs();
+    try{ st.custom=JSON.parse(localStorage.getItem('ppc_audit_custom_v1')||'[]')||[]; }catch(_){ st.custom=[]; }
     try{ st.sel=JSON.parse(localStorage.getItem('ppc_audit_sel_v1')||'null'); }catch(_){ st.sel=null; }
     try{ st.pick=JSON.parse(localStorage.getItem('ppc_audit_pick_v1')||'null'); }catch(_){ st.pick=null; }
     if(!st.pick) st.pick={'negatives|SP|Negatives — search terms with ≥N clicks, no sale / high ACoS':1,'waste|SP|Wasted Spend — targets (≥N clicks)':1};
@@ -2472,6 +2481,7 @@ function renderAudit(){
   // first run, or a saved choice from another account (none of its products exist here) → the 6 biggest; an explicit empty choice stays empty
   if(!st.sel || (Object.keys(st.sel).length && !Object.keys(st.sel).some(k=>keys.has(k)))){ st.sel={}; all.slice(0,6).forEach(r=>{ st.sel[r.key]=1; }); }
   const saveSel=()=>{ try{ localStorage.setItem('ppc_audit_sel_v1',JSON.stringify(st.sel)); }catch(_){} };
+  const saveCustom=()=>{ try{ localStorage.setItem('ppc_audit_custom_v1',JSON.stringify(st.custom)); }catch(_){} };
   const savePick=()=>{ try{ localStorage.setItem('ppc_audit_pick_v1',JSON.stringify(st.pick)); }catch(_){} };
   const rows=all.filter(r=>st.sel[r.key]);
   const m=30/Math.max(1,+st.days||30);
@@ -2490,7 +2500,7 @@ function renderAudit(){
   const num=(id,label,val,w)=>`<div class="field"><label>${label}</label><input type="number" id="${id}" value="${val}" style="width:${w||80}px;" step="any"></div>`;
   const q=(st.q||'').trim().toLowerCase();
   const list=all.filter(r=>!q || auditNm(r.key).toLowerCase().includes(q) || r.key.toLowerCase().includes(q)).slice(0,400);
-  const pickRows=list.map(r=>`<label class="fitem" style="display:flex;gap:8px;align-items:center;padding:3px 0;"><input type="checkbox" data-selk="${encodeURIComponent(r.key)}" ${st.sel[r.key]?'checked':''}><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.key)}">${esc(auditNm(r.key))}</span><span style="color:#6b7280;font-size:11px;">${fMoney(r.tot.spend*m)}/mo · ${fAcos(r.tot.acos)}</span></label>`).join('');
+  const pickRows=list.map(r=>`<label class="fitem" style="display:flex;gap:8px;align-items:center;padding:3px 0;"><input type="checkbox" data-selk="${encodeURIComponent(r.key)}" ${st.sel[r.key]?'checked':''}><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.key)}">${esc(auditNm(r.key))}${st.custom.some(c=>c.name===r.key)?' <span style="color:#4a9e8e;font-size:11px;">(personalizat)</span>':''}</span><span style="color:#6b7280;font-size:11px;">${fMoney(r.tot.spend*m)}/mo · ${fAcos(r.tot.acos)}</span></label>`).join('');
   const toolPick=defs.map(d=>`<label class="fitem" style="display:flex;gap:6px;align-items:center;padding:2px 0;font-size:12px;"><input type="checkbox" data-pickd="${encodeURIComponent(d.id)}" ${st.pick[d.id]?'checked':''}><span>${esc(d.title)}</span></label>`).join('');
   const sbOpts=st.sb? st.sb.rows.slice().sort((x,y)=>y.sales-x.sales).map(x=>`<option value="${x.asin}">${x.asin} — ${esc((x.title||x.sku||'').slice(0,40))}</option>`).join('') : '';
   const econ=rows.map(r=>{ const gi=(st.inputs||{})[r.key]||{}; const ik=encodeURIComponent(r.key); const sb=r.sbm;
@@ -2532,6 +2542,15 @@ function renderAudit(){
         <div class="field grow"><label>Sau lipește ASIN-uri / cuvinte (separate prin virgulă sau rând nou) — clientul zice „vrem doar astea"</label><textarea id="au-paste" rows="2" style="width:100%;" placeholder="B09TLDV2K8, B0HFDDRRSS, finger paint…"></textarea></div>
         <div class="field"><button class="btn ghost" id="au-pastego">Bifează potrivirile</button></div>
       </div>
+      <details style="margin:8px 0;" ${st.custom.length?'open':''}><summary style="cursor:pointer;font-weight:600;">+ Produs personalizat (nume + ASIN-uri adăugate manual)${st.custom.length?' — '+st.custom.length:''}</summary>
+        <div class="ctrls" style="margin:8px 0;align-items:end;">
+          <div class="field"><label>Nume produs</label><input type="text" id="au-cname" placeholder="ex. Finger Paint Set" style="width:200px;"></div>
+          <div class="field grow"><label>ASIN-uri (părinte + copii, separate prin virgulă / spațiu / rând nou)</label><textarea id="au-casins" rows="2" style="width:100%;" placeholder="B09PLBL4VR, B09PLCWCJR, B0CH33TK65"></textarea></div>
+          <div class="field"><button class="btn ghost" id="au-cadd">Adaugă produsul</button></div>
+        </div>
+        <div class="hint">Produsul adună campaniile dedicate lui (cel puțin jumătate din ASIN-urile campaniei sunt ale produsului); campaniile mixte, cu zeci de produse, nu pot fi împărțite pe produs și rămân pe dinafară — numărul lor apare mai jos. Apare în listă, bifat. Merge și pentru potrivirea cu Sellerboard (ASIN-ul părinte).</div>
+        ${st.custom.map((c,i)=>{ const g=all.find(r=>r.key===c.name); return `<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-size:12.5px;"><b>${esc(c.name)}</b><span style="color:#6b7280;flex:1;">${esc(c.asins.join(', '))} — ${g? g.campIds.length+' campanii dedicate':'<span style="color:#dc2626;">0 campanii: ASIN-urile nu apar în campaniile active</span>'}${(st._cskip&&st._cskip[c.name])?` · <span style="color:#c2760a;">${st._cskip[c.name]} campanii mixte (multe produse) lăsate pe dinafară</span>`:''}</span><button class="btn ghost" data-cdel="${i}" style="padding:2px 9px;">✕</button></div>`; }).join('')}
+      </details>
       <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;">${pickRows||'<div class="hint">Niciun produs.</div>'}</div>
     </div>
     <div class="card pad">
@@ -2558,6 +2577,13 @@ function renderAudit(){
   $('#au-group').onchange=e=>{ st.groupBy=e.target.value; st.sel=null; rer(); };
   $('#au-q').oninput=debounce(()=>{ st.q=$('#au-q').value; rer(); const el=$('#au-q'); el.focus(); el.setSelectionRange(el.value.length,el.value.length); },300);
   document.querySelectorAll('[data-selk]').forEach(cb=>cb.onchange=()=>{ const k=decodeURIComponent(cb.dataset.selk); if(cb.checked) st.sel[k]=1; else delete st.sel[k]; saveSel(); rer(); });
+  $('#au-cadd').onclick=()=>{
+    const asins=[...new Set((($('#au-casins').value||'').toUpperCase().match(/B0[A-Z0-9]{8}/g))||[])];
+    if(!asins.length){ alert('Nu am găsit niciun ASIN valid (format B0XXXXXXXX).'); return; }
+    const name=($('#au-cname').value||'').trim()||asins[0];
+    st.custom=st.custom.filter(c=>c.name!==name); st.custom.push({name,asins}); saveCustom();
+    st.sel=st.sel||{}; st.sel[name]=1; saveSel(); rer(); };
+  document.querySelectorAll('[data-cdel]').forEach(b=>b.onclick=()=>{ const c=st.custom[+b.dataset.cdel]; if(!c) return; delete st.sel[c.name]; st.custom.splice(+b.dataset.cdel,1); saveCustom(); saveSel(); rer(); });
   $('#au-top6').onclick=()=>{ st.sel={}; all.slice(0,6).forEach(r=>{ st.sel[r.key]=1; }); saveSel(); rer(); };
   $('#au-selshown').onclick=()=>{ list.forEach(r=>{ st.sel[r.key]=1; }); saveSel(); rer(); };
   $('#au-selnone').onclick=()=>{ st.sel={}; saveSel(); rer(); };
