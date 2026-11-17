@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:52</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 15:12</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2100,7 +2100,7 @@ function auditSaveInputs(o){ try{ localStorage.setItem(AUDIT_LS,JSON.stringify(o
 // Per row: price = Sales/Units; profit BEFORE ads = Net profit + |Ads|; unit cost = (Sales − profit before ads)/Units
 // (COGS + Amazon fees + refunds + shipping + other costs, everything except Amazon ads); margin = profit before ads / Sales.
 function auditParseSellerboard(wb,fileName){
-  const ws=wb.Sheets[wb.SheetNames[0]]; if(!ws) return {rows:[],days:null,fileName,parents:{}};
+  const ws=wb.Sheets[wb.SheetNames[0]]; if(!ws) return {rows:[],days:null,fileName,parents:{},start:null,end:null};
   const raw=XLSX.utils.sheet_to_json(ws,{defval:''}), rows=[], parents={}; let curParent='';
   raw.forEach(r=>{
     const o={}; Object.keys(r).forEach(k=>{ o[String(k).replace(/\s+/g,' ').trim().toLowerCase()]=r[k]; });
@@ -2116,8 +2116,15 @@ function auditParseSellerboard(wb,fileName){
   });
   Object.keys(parents).forEach(k=>{ if(!parents[k].kids.length) delete parents[k]; });
   const m=String(fileName).match(/(\d{2})_(\d{2})_(\d{4})-(\d{2})_(\d{2})_(\d{4})/);
-  let days=null; if(m){ const d1=Date.UTC(+m[3],+m[2]-1,+m[1]), d2=Date.UTC(+m[6],+m[5]-1,+m[4]); const n=Math.round((d2-d1)/864e5)+1; if(n>0&&n<800) days=n; }
-  return {rows,days,fileName,parents};
+  let days=null, start=null, end=null;
+  if(m){ const d1=Date.UTC(+m[3],+m[2]-1,+m[1]), d2=Date.UTC(+m[6],+m[5]-1,+m[4]); const n=Math.round((d2-d1)/864e5)+1; if(n>0&&n<800){ days=n; start=new Date(d1).toISOString().slice(0,10); end=new Date(d2).toISOString().slice(0,10); } }
+  return {rows,days,fileName,parents,start,end};
+}
+// Amazon bulk download names carry the report range: bulk-<account>-YYYYMMDD-YYYYMMDD-<id>.xlsx
+function auditBulkPeriod(name){
+  const m=String(name||'').match(/(\d{4})(\d{2})(\d{2})-(\d{4})(\d{2})(\d{2})/); if(!m) return null;
+  const d1=Date.UTC(+m[1],+m[2]-1,+m[3]), d2=Date.UTC(+m[4],+m[5]-1,+m[6]); const n=Math.round((d2-d1)/864e5)+1;
+  if(!(n>0&&n<800)) return null; return {start:new Date(d1).toISOString().slice(0,10),end:new Date(d2).toISOString().slice(0,10),days:n};
 }
 const AUDIT_STOP=new Set(['budget','catch','all','auto','the','and','for','with','sku','asin','mix','mixed','other','others']);
 function auditTokens(t){ return new Set(String(t||'').toLowerCase().replace(/b0[a-z0-9]{8}/g,' ').split(/[^a-z0-9äöüß]+/).filter(w=>w.length>=3 && !/^\d+$/.test(w) && !AUDIT_STOP.has(w))); }
@@ -2487,6 +2494,7 @@ function auditReportHtml(ctx){
   const fixes=rows.map(r=>{ const a=actionsFor(r); return `<div class="si ${r.verdict==='Scale'?'g':r.verdict==='Fix first'?'r':'y'}"><h4>${nm(r)}</h4><ul>${a.map(t=>`<li>${t}</li>`).join('')||'<li>No clear issues in this data.</li>'}</ul></div>`; }).join('');
   const s1=`<section id="perf"><div class="sh"><h2>Current PPC performance and improvement potential</h2></div>
     <div class="tw"><table><thead><tr><th>Product</th><th>Spend</th><th>Ad sales</th><th>ACoS</th><th>Break-even ACoS</th><th>Profit after ads</th>${ctx.anySb?'<th>TACoS</th>':''}<th class="l">Growth</th></tr></thead><tbody>${perf}</tbody></table></div>
+    ${ctx.anySb&&ctx.periodMismatch?'<div class="sub" style="margin-bottom:8px;">TACoS compares '+ctx.periodTxt+'.</div>':''}
     ${rows.some(r=>!r.haveEcon)?'<div class="sub" style="margin-bottom:12px;">* Break-even uses the default margin of '+f1(+st.margin||30)+'% — product cost data not provided.</div>':''}
     <div class="items">${fixes}</div></section>`;
   // 2 waste — per-product numbers once; the lists only when no appendix view already shows them
@@ -2541,6 +2549,8 @@ function renderAudit(){
     try{ st.pick=JSON.parse(localStorage.getItem('ppc_audit_pick_v1')||'null'); }catch(_){ st.pick=null; }
     if(!st.pick) st.pick={};
   }
+  const bulkP=auditBulkPeriod(DATA.fileName);
+  if(st._daysFile!==DATA.fileName){ st._daysFile=DATA.fileName; if(bulkP) st.days=bulkP.days; }
   if(!document.getElementById('insr-style')){ const el=document.createElement('style'); el.id='insr-style'; el.textContent=INSR_CSS; document.head.appendChild(el); }
   const all=auditCompute(st);
   // which products are in the audit: saved choice, else the 6 biggest by spend
@@ -2568,7 +2578,10 @@ function renderAudit(){
   const picked=defs.filter(d=>st.pick[d.id] && st._snap.done[d.id]!=='');
   const details=picked.map(d=>({title:d.title,html:st._snap.done[d.id],covers:d.covers}));
   const client=(st.client||'').trim();
-  const reportHtml=rows.length? auditReportHtml({st,rows,m,T,acosT,details,client,anySb:!!st.sb && rows.some(r=>r.sbm)}) : '<div class="ctn"><p class="lead">Tick at least one product.</p></div>';
+  const sbPer=st.sb&&st.sb.start?{start:st.sb.start,end:st.sb.end,days:st.sb.days}:null;
+  const periodMismatch=!!(bulkP&&sbPer&&(bulkP.start!==sbPer.start||bulkP.end!==sbPer.end));
+  const periodTxt=periodMismatch? `ad spend from the bulk (${bulkP.start} → ${bulkP.end}) against Sellerboard sales for a different period (${sbPer.start} → ${sbPer.end})` : '';
+  const reportHtml=rows.length? auditReportHtml({st,rows,m,T,acosT,details,client,anySb:!!st.sb && rows.some(r=>r.sbm),periodMismatch,periodTxt}) : '<div class="ctn"><p class="lead">Tick at least one product.</p></div>';
   const num=(id,label,val,w)=>`<div class="field"><label>${label}</label><input type="number" id="${id}" value="${val}" style="width:${w||80}px;" step="any"></div>`;
   const q=(st.q||'').trim().toLowerCase();
   const list=all.filter(r=>!q || auditNm(r.key).toLowerCase().includes(q) || r.key.toLowerCase().includes(q)).slice(0,400);
@@ -2585,7 +2598,14 @@ function renderAudit(){
   $('#app').innerHTML=`<div class="content" style="max-width:1400px;">
     <div class="card pad">
       <h3 class="sectitle">Client audit</h3>
-      <div class="hint" style="margin-bottom:10px;line-height:1.5;"><b>Steps:</b> (1) upload the bulk; (2) choose the products for the audit; (3) set how many days the bulk covers; (4) optionally upload Sellerboard for cost / price; (5) download the PDF. The white report block below is exactly what the client receives.</div>
+      <div class="hint" style="margin-bottom:10px;line-height:1.5;"><b>Steps:</b> (1) export the Amazon bulk and the Sellerboard “Dashboard → Products (group by parent)” for the <b>same dates and marketplace</b> (e.g. both for the same 60 days); (2) upload the bulk; (3) choose the products; (4) upload Sellerboard (the days are read from the file names); (5) download the PDF. The white report block below is exactly what the client receives.</div>
+      ${(()=>{ const line=(lab,p)=>p? `${lab}: <b>${p.start} → ${p.end}</b> (${p.days} days)` : `${lab}: dates not found in the file name`;
+        let verdict='', ok=false;
+        if(bulkP&&sbPer){ ok=!periodMismatch; verdict= ok? '✓ Same period — spend, TACoS, profit and units compare the same days.' : `⚠ The periods differ — TACoS, profit and units would compare different days. Export Sellerboard for the same dates as the bulk (${bulkP.start} → ${bulkP.end}).`; }
+        else if(!bulkP) verdict='The bulk file name has no dates (Amazon names it bulk-…-YYYYMMDD-YYYYMMDD-…), so set “Days covered by the bulk” by hand and make sure Sellerboard uses the same dates.';
+        else if(!st.sb) verdict='No Sellerboard export loaded yet — export it for exactly these dates.';
+        else verdict='Sellerboard dates not found in its file name — make sure it covers the same dates as the bulk.';
+        return `<div class="banner" style="margin-bottom:10px;line-height:1.55;${ok?'background:#ecfdf5;color:#065f46;border-color:#a7f3d0;':(bulkP&&sbPer?'background:#fff7ed;color:#9a3412;border-color:#fed7aa;':'')}"><b>Data period check</b> — ${line('Bulk',bulkP)} · ${line('Sellerboard',sbPer)}<br>${verdict}</div>`; })()}
       <div class="ctrls" style="align-items:end;">
         <div class="field"><label>Client / brand (shown in the title)</label><input type="text" id="au-client" value="${esc(st.client)}" style="width:200px;"></div>
         ${num('au-days','Days covered by the bulk',st.days,90)}
@@ -2705,7 +2725,7 @@ function renderAudit(){
   const buildDoc=autoPrint=>{
     picked.forEach(d=>auditBuildOne(st,d,scope));
     const det=picked.filter(d=>st._snap.done[d.id]).map(d=>({title:d.title,html:st._snap.done[d.id],covers:d.covers}));
-    const body=auditReportHtml({st,rows,m,T,acosT,details:det,client,anySb:!!st.sb && rows.some(r=>r.sbm)});
+    const body=auditReportHtml({st,rows,m,T,acosT,details:det,client,anySb:!!st.sb && rows.some(r=>r.sbm),periodMismatch,periodTxt});
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${fileBase}</title><style>body{margin:0;background:#0a1518}${INSR_CSS}</style></head><body><div class="insr" style="border-radius:0"><table class="pgwrap"><thead><tr><td><div style="height:11mm"></div></td></tr></thead><tfoot><tr><td><div style="height:11mm"></div></td></tr></tfoot><tbody><tr><td>${body}</td></tr></tbody></table></div>${autoPrint?'<script>addEventListener("load",function(){setTimeout(function(){print()},900)})<\/script>':''}</body></html>`;
   };
   $('#au-html').onclick=()=>{
