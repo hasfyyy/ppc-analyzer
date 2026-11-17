@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-16 13:50</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 12:17</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -300,6 +300,7 @@ const MATCH = {
   biddingStrategy: t=>t.join(' ')==='bidding strategy',
   state: t=>t.join(' ')==='state',
   endDate: t=>t[0]==='end'&&t[1]==='date',
+  offAmazon: t=>t.join(' ')==='off amazon ad serving',
   dailyBudget: t=>(t.includes('daily')&&t.includes('budget'))||t.join(' ')==='budget',
   sku: t=>t.join(' ')==='sku',
   asin: t=>t.includes('asin'),
@@ -404,7 +405,7 @@ function ingestDataRow(row, c, sheetProduct, campState){
   if(ent==='campaign'){
     const cn=String(g('campaignName')||'');
     const bidStrat=String(g('biddingStrategy')||'');
-    DATA.campaigns.push(Object.assign({product, sheet:CUR_SHEET, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget')), endDate:String(g('endDate')===undefined||g('endDate')===null?'':g('endDate')).trim()},met));
+    DATA.campaigns.push(Object.assign({product, sheet:CUR_SHEET, campaignId, campaignName:cn, portfolioName:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, state:String(g('state')||'').toLowerCase(), dailyBudget:toNum(g('dailyBudget')), endDate:String(g('endDate')===undefined||g('endDate')===null?'':g('endDate')).trim(), offAmazon:String(g('offAmazon')===undefined||g('offAmazon')===null?'':g('offAmazon')).trim()},met));
     DATA.campById[campaignId]={name:cn, portfolio:String(g('portfolioName')||''), portfolioId:String(g('portfolioId')||'').trim(), product, targetingType:String(g('targetingType')||''), biddingStrategy:bidStrat, budget:toNum(g('dailyBudget'))};
   } else if(ent==='ad group'){
     DATA.adGroups.push(Object.assign({product,campaignId,adGroupId,adGroupName:String(g('adGroupName')||''),state:String(g('state')||'').toLowerCase()},met));
@@ -842,7 +843,7 @@ const TABS=[
   {id:'optbudget',label:'Budget Rebalancing',ic:''},
   {id:'duplicates',label:'Duplicates',ic:''},
   {id:'pausecamp',label:'Pause Campaigns',ic:''},
-  {id:'minspend',label:'Minimize Spend',ic:''},
+  {id:'minspend',label:'Off-Amazon Spend',ic:''},
   {id:'movecamp',label:'Move Campaigns',ic:''},
 ];
 // Tabs where Sponsored Display has real support — the 3 Optimize sub-tabs (bid/placement/budget), plus Pause
@@ -2011,101 +2012,80 @@ function exportCampaignsPause(product,rows,setBudget1){
   alert(`Exported ${out.length} campaign pause update(s)${setBudget1?` — ${budgetCol} set to 1 on each`:''}.`);
 }
 
-/* ============================ MINIMIZE SPEND ============================ */
-// "Kill switch" for a whole account (or a filtered slice of it — sidebar): every enabled campaign gets its daily
-// budget dropped to a floor ($1 by default), and in OFF mode it is also paused. One Campaign Update row per campaign,
-// always carrying the campaign's real Portfolio ID (and End Date when it has one) — blank on an Update row would
-// strip the campaign out of its portfolio / clear the date. A RESTORE file (original budget, state enabled) is built
-// from the same loaded bulk, because after upload the next export will already show the minimized values.
-function minSpendRow(r, mode, budget){
-  const sb=r.product==='SB';
-  const f={'Product':productLabel(r.product),'Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId};
-  if(r.portfolioId) f['Portfolio ID']=r.portfolioId;
-  if(r.endDate) f['End Date']=r.endDate;
-  if(mode==='off') f['State']='paused'; else if(mode==='restore') f['State']='enabled';
-  if(budget>0){ if(r.product==='SP') f['Daily Budget']=budget; else { f['Budget']=budget; f['Budget Type']='Daily'; } }
-  if(sb){
-    const sh=r.multi?'SB Multi Ad Group Campaigns':'Sponsored Brands Campaigns';
-    return {sheet:sh, row:SB_MOVE_HEADERS.map(h=>f[h]!==undefined?f[h]:'')};
-  }
-  return {sheet:productSheetName(r.product), row:bulkRow(f)};
-}
-function writeMinSpendFile(rows, mode, budget, filename){
-  const sheets=new Map();
-  rows.forEach(r=>{ const o=minSpendRow(r,mode,mode==='restore'?r.dailyBudget:budget); if(!sheets.has(o.sheet)) sheets.set(o.sheet,[]); sheets.get(o.sheet).push(o.row); });
+/* ============================ LIMIT OFF-AMAZON SPEND (SP) ============================ */
+// Sets the SP campaign column "Off-Amazon ad serving" (bulk id off_amazon_budget_control_strategy) to
+// "Limit off-Amazon spend" on every enabled Sponsored Products campaign that does not have it yet. One Campaign
+// Update row per campaign, always carrying the real Portfolio ID (and End Date when there is one) — blank on an
+// Update row would pull the campaign out of its portfolio / clear the date. Nothing else on the campaign changes.
+const OFFAMZ_DEFAULT='Limit off-Amazon spend';
+function offAmzFile(rows,val,filename){
+  const OFFAMZ_HEADERS=[...BULK_HEADERS,'Off-Amazon ad serving'];
+  const out=rows.map(r=>{
+    const f={'Product':'Sponsored Products','Entity':'Campaign','Operation':'Update','Campaign ID':r.campaignId,'Off-Amazon ad serving':val};
+    if(r.portfolioId) f['Portfolio ID']=r.portfolioId;
+    if(r.endDate) f['End Date']=r.endDate;
+    return OFFAMZ_HEADERS.map(h=>f[h]!==undefined?f[h]:'');
+  });
   const wb=XLSX.utils.book_new();
-  sheets.forEach((rr,name)=>{ const hdr=/brands|^sb /i.test(name)? SB_MOVE_HEADERS : BULK_HEADERS; XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([hdr,...rr]), name); });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([OFFAMZ_HEADERS,...out]), 'Sponsored Products Campaigns');
   XLSX.writeFile(wb, filename);
 }
 function renderMinSpend(){
+  S.product='SP';
   const st=stFor('minspend');
-  if(st.mode===undefined) st.mode='min'; if(st.val===undefined) st.val=1; if(st.prods===undefined) st.prods=['SP','SB','SD']; if(st.restore===undefined) st.restore=true;
-  const val=Math.max(0.01, +st.val||1);
-  const scoped=moveCampaignPool().filter(c=>c.state==='enabled' && st.prods.includes(c.product) && passesSidebar(c));
+  if(st.val===undefined) st.val=OFFAMZ_DEFAULT; if(st.onlyMissing===undefined) st.onlyMissing=true;
+  const val=String(st.val||OFFAMZ_DEFAULT).trim()||OFFAMZ_DEFAULT;
+  const scoped=moveCampaignPool().filter(c=>c.product==='SP' && c.state==='enabled' && passesSidebar(c));
   scoped.forEach(r=>Object.assign(r,derive(r)));
-  // Minimize mode leaves a campaign alone when its budget is already at/below the floor; OFF always pauses.
-  const rows=st.mode==='off'? scoped : scoped.filter(r=>!(r.dailyBudget>0 && r.dailyBudget<=val));
-  const nSkipped=scoped.length-rows.length;
+  const isSet=r=>String(r.offAmazon||'').trim().toLowerCase()===val.toLowerCase();
+  const rows=st.onlyMissing? scoped.filter(r=>!isSet(r)) : scoped;
+  const nAlready=scoped.filter(isSet).length;
   const totals=agg(rows);
-  const curBudget=rows.reduce((s,r)=>s+(r.dailyBudget>0?r.dailyBudget:0),0);
-  const newBudget=rows.length*val;
-  const cnt={SP:0,SB:0,SD:0}; rows.forEach(r=>cnt[r.product]++);
   const noPf=rows.filter(r=>!r.portfolioId).length;
-  rows.forEach(r=>{ r._uid=r.campaignId; r.newBudget=val; });
+  const byVal={}; scoped.forEach(r=>{ const k=String(r.offAmazon||'').trim()||'(not set)'; byVal[k]=(byVal[k]||0)+1; });
+  const valChips=Object.entries(byVal).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<span class="badge">${esc(k)} · ${n}</span>`).join(' ');
+  rows.forEach(r=>{ r._uid=r.campaignId; r.offNow=String(r.offAmazon||'').trim()||'(not set)'; });
   const cols=[
     {key:'campaignName',label:'Campaign',l:true,type:'text'},
-    {key:'product',label:'Type',l:true,type:'text'},
     {key:'portfolioName',label:'Portfolio',l:true,type:'text',cell:r=>esc(r.portfolioName||'(No Portfolio)')},
-    {key:'dailyBudget',label:'Budget now',type:'money',fmtTotal:()=>fMoney(curBudget)},
-    {key:'newBudget',label:'Budget after',type:'money',fmtTotal:()=>fMoney(newBudget)},
+    {key:'offNow',label:'Off-Amazon now',l:true,type:'text'},
+    {key:'dailyBudget',label:'Budget',type:'money'},
     {key:'spend',label:'Spend (period)',type:'money',fmtTotal:t=>fMoney(t.spend)},
     {key:'sales',label:'Sales',type:'money',cls:()=>'num-green',fmtTotal:t=>fMoney(t.sales)},
     {key:'acos',label:'ACoS',type:'acos',cls:r=>acosClass(r.acos),fmtTotal:t=>fAcos(derive(t).acos)},
   ];
-  const tbl=buildTable({columns:cols,rows,tab:'minspend',selectable:false,idKey:'_uid',totals,sortDef:{key:'dailyBudget',dir:-1},onChange:renderMinSpend});
+  const tbl=buildTable({columns:cols,rows,tab:'minspend',selectable:false,idKey:'_uid',totals,sortDef:{key:'spend',dir:-1},onChange:renderMinSpend});
   const scopeTxt=(S.sidebarPortfolios.size||S.sidebarCampaigns.size)
     ? `<span style="color:#c2760a;">Filtru activ în sidebar: ${S.sidebarPortfolios.size} portofolii, ${S.sidebarCampaigns.size} campanii — doar acestea se modifică.</span>`
-    : 'Fără filtru în sidebar → toate campaniile active.';
-  $('#app').innerHTML=`<div class="cols"><div class="sidebar">${sidebarHtml('minspend',true,true)}</div><div class="content">
+    : 'Fără filtru în sidebar → toate campaniile SP active.';
+  $('#app').innerHTML=`<div class="cols"><div class="sidebar">${sidebarHtml('minspend',true)}</div><div class="content">
     <div class="card pad">
-      <h3 class="sectitle">Minimize Spend</h3>
+      <h3 class="sectitle">Off-Amazon spend — Sponsored Products</h3>
       <div class="ctrls">
-        <div class="field"><label>Mod</label><select id="ms-mode">
-          <option value="min" ${st.mode==='min'?'selected':''}>Minimize — buget la minim, campaniile rămân enabled</option>
-          <option value="off" ${st.mode==='off'?'selected':''}>OFF — pauză + buget la minim</option></select></div>
-        <div class="field"><label>Buget minim (daily)</label><input type="number" id="ms-val" min="0.01" step="0.5" value="${val}" style="width:90px;"></div>
-        ${['SP','SB','SD'].map(p=>`<label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" data-msp="${p}" ${st.prods.includes(p)?'checked':''}> ${p}</label>`).join('')}
-        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ms-restore" ${st.restore?'checked':''}> Descarcă și fișierul RESTORE</label>
+        <div class="field grow"><label>Valoare scrisă în coloana „Off-Amazon ad serving"</label><input type="text" id="ms-val" value="${esc(val)}" style="width:100%;max-width:320px;"></div>
+        <label class="fitem" style="flex-direction:row;gap:6px;font-size:12.5px;align-self:end;padding-bottom:8px;"><input type="checkbox" id="ms-only" ${st.onlyMissing?'checked':''}> Doar campaniile care nu o au deja</label>
       </div>
-      <div class="hint" style="margin-top:6px;">${scopeTxt}<br>
-        Fiecare rând păstrează Portfolio ID și End Date (nu scoate campaniile din portofolii). Fișierul RESTORE are bugetul original + state enabled — salvează-l acum, după upload exportul va arăta deja valorile minime.
-        ${noPf?`<br>${noPf} campanii nu au portofoliu în bulk (rămân fără).`:''}${nSkipped?`<br>${nSkipped} campanii au deja bugetul ≤ ${fMoney(val)} și sunt sărite.`:''}</div>
+      <div class="hint" style="margin-top:6px;">${scopeTxt}<br>Acum în cele ${fInt(scoped.length)} campanii SP active: ${valChips||'—'}<br>
+        Fiecare rând păstrează Portfolio ID și End Date (campaniile nu ies din portofolii); se schimbă doar setarea Off-Amazon.${noPf?`<br>${noPf} campanii nu au portofoliu în bulk (rămân fără).`:''}</div>
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
-      ${kpi('Campanii modificate',fInt(rows.length))}${kpi('SP / SB / SD',cnt.SP+' / '+cnt.SB+' / '+cnt.SD)}${kpi('Buget zilnic acum',fMoney(curBudget))}${kpi('Buget zilnic după',fMoney(newBudget),'pink')}
+      ${kpi('SP active (în filtru)',fInt(scoped.length))}${kpi('Au deja setarea',fInt(nAlready))}${kpi('De modificat',fInt(rows.length),'pink')}${kpi('Spend (period)',fMoney(totals.spend))}
     </div>
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Campanii (${fInt(rows.length)})</h3><div class="spacer"></div>
-        <button class="btn ghost" id="ms-restore-btn" ${rows.length?'':'disabled'}>Doar RESTORE (${fInt(rows.length)})</button>
-        <button class="btn grad" id="ms-export" ${rows.length?'':'disabled'}>Export ${st.mode==='off'?'OFF':'Minimize'} (${fInt(rows.length)})</button>
+        <button class="btn grad" id="ms-export" ${rows.length?'':'disabled'}>Export (${fInt(rows.length)})</button>
       </div>
-      <div id="ms-table">${rows.length? tbl.html : '<div class="empty"><p>Nicio campanie de modificat cu filtrele curente.</p></div>'}</div>
+      <div id="ms-table">${rows.length? tbl.html : '<div class="empty"><p>Nimic de modificat — toate campaniile SP din filtru au deja setarea.</p></div>'}</div>
     </div>
   </div></div>`;
   if(rows.length) tbl.wire($('#ms-table'));
   wireSidebar(()=>withFocus(renderMinSpend),'minspend');
-  $('#ms-mode').onchange=e=>{ st.mode=e.target.value; renderMinSpend(); };
-  $('#ms-val').onchange=e=>{ st.val=+e.target.value||1; renderMinSpend(); };
-  document.querySelectorAll('[data-msp]').forEach(cb=>cb.onchange=()=>{ st.prods=[...document.querySelectorAll('[data-msp]')].filter(x=>x.checked).map(x=>x.dataset.msp); renderMinSpend(); });
-  $('#ms-restore').onchange=e=>{ st.restore=e.target.checked; };
-  const stamp=new Date().toISOString().slice(0,10);
-  $('#ms-restore-btn').onclick=()=>{ writeMinSpendFile(rows,'restore',0,'minimize_spend_RESTORE_'+stamp+'.xlsx'); };
+  $('#ms-val').onchange=e=>{ st.val=e.target.value; renderMinSpend(); };
+  $('#ms-only').onchange=e=>{ st.onlyMissing=e.target.checked; renderMinSpend(); };
   $('#ms-export').onclick=()=>{
     if(!rows.length) return;
-    const lbl=st.mode==='off'?'OFF (pauză + buget '+fMoney(val)+')':'Minimize (buget '+fMoney(val)+')';
-    if(!confirm(`${lbl} pe ${rows.length} campanii (SP ${cnt.SP} · SB ${cnt.SB} · SD ${cnt.SD}).\nBuget zilnic total: ${fMoney(curBudget)} → ${fMoney(newBudget)}.\n\nContinui cu exportul?`)) return;
-    writeMinSpendFile(rows, st.mode, val, (st.mode==='off'?'off_spend_':'minimize_spend_')+stamp+'.xlsx');
-    if(st.restore) setTimeout(()=>writeMinSpendFile(rows,'restore',0,'minimize_spend_RESTORE_'+stamp+'.xlsx'),800);
+    offAmzFile(rows,val,'sp_off_amazon_limit_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    alert(`Exportat ${rows.length} campanii SP → Off-Amazon ad serving = "${val}".`);
   };
 }
 
