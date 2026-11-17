@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 16:47</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 16:53</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2286,10 +2286,13 @@ function auditCompute(st){
     const be=margin;                                         // break-even ACoS %
     const rows=g.targets.map(t=>Object.assign({},t,derive(t)));
     const waste=rows.filter(t=>t.orders===0 && t.clicks>=minClicks && t.spend>0).sort((a,b)=>b.spend-a.spend);
-    const overBe=rows.filter(t=>t.orders>0 && t.clicks>=minClicks && t.acos!==Infinity && t.acos>be);
+    // Only targets CLEARLY above target count as waste (default 2× break-even): at 30% break-even a 45% target that sells is
+    // a bid to trim, not wasted spend. Excess is measured above the same threshold, so it is a conservative number.
+    const thr=be*Math.max(1,+st.overMult||2);
+    const overBe=rows.filter(t=>t.orders>0 && t.clicks>=minClicks && t.acos!==Infinity && t.acos>thr);
     const winners=rows.filter(t=>t.orders>=2 && t.acos<=be*0.7);
     const wasteSpend=waste.reduce((s,t)=>s+t.spend,0);
-    const overExcess=overBe.reduce((s,t)=>s+Math.max(0,t.spend-t.sales*be/100),0);
+    const overExcess=overBe.reduce((s,t)=>s+Math.max(0,t.spend-t.sales*thr/100),0);
     const winSpend=winners.reduce((s,t)=>s+t.spend,0), winSales=winners.reduce((s,t)=>s+t.sales,0);
     const winAcos= winSales? winSpend/winSales*100 : 0;
     // upside per MONTH (all assumed rates are editable)
@@ -2311,25 +2314,39 @@ function auditCompute(st){
     const baseProfit = haveEcon ? units*(price-cost)-adM : null;
     // growth verdict (transparent point rule)
     const wasteShare = tot.spend? wasteSpend/tot.spend*100 : 0;
+    // Four levels so products do not all collapse into "Fix first": ACoS vs break-even (−2…+3), total waste share
+    // (no-sale + far-above-break-even, −1…+2) and the share of spend already in winning targets (0…+2).
     let pts=0; const why=[];
-    if(tot.acos!==Infinity && tot.acos<=be){ pts+=2; why.push(`ACoS ${fAcos(tot.acos)} ≤ break-even ${f1(be)}%`); } else if(tot.acos!==Infinity && tot.acos<=be*1.3){ pts+=1; why.push(`ACoS ${fAcos(tot.acos)} slightly above break-even ${f1(be)}%`); } else why.push(`ACoS ${fAcos(tot.acos)} well above break-even ${f1(be)}%`);
-    if(wasteShare<=10){ pts+=2; why.push(`waste only ${f1(wasteShare)}% of spend`); } else if(wasteShare<=25){ pts+=1; why.push(`waste ${f1(wasteShare)}% of spend`); } else why.push(`waste ${f1(wasteShare)}% of spend`);
-    if(tot.spend && winSpend/tot.spend>=0.15){ pts+=1; why.push(`${f1(winSpend/tot.spend*100)}% of spend already in winning targets`); }
-    if(tot.acos!==Infinity && tot.acos<=be*0.8){ pts+=1; why.push('clear efficiency headroom to scale'); }
-    const verdict = pts>=5?'Scale':pts>=3?'Optimize, then scale':'Fix first';
+    const rAcos = tot.acos===Infinity ? 99 : tot.acos/be;      // ACoS as a multiple of break-even
+    const wasteAllShare = tot.spend? (wasteSpend+overExcess)/tot.spend*100 : 0;
+    const winShare = tot.spend? winSpend/tot.spend*100 : 0;
+    if(rAcos<=0.8){ pts+=3; why.push(`ACoS ${fAcos(tot.acos)} comfortably below break-even ${f1(be)}%`); }
+    else if(rAcos<=1){ pts+=2; why.push(`ACoS ${fAcos(tot.acos)} ≤ break-even ${f1(be)}%`); }
+    else if(rAcos<=1.3){ pts+=1; why.push(`ACoS ${fAcos(tot.acos)} slightly above break-even ${f1(be)}%`); }
+    else if(rAcos<=1.7){ why.push(`ACoS ${fAcos(tot.acos)} well above break-even ${f1(be)}%`); }
+    else { pts-=2; why.push(`ACoS ${fAcos(tot.acos)} far above break-even ${f1(be)}%`); }
+    if(wasteAllShare<=10){ pts+=2; why.push(`waste only ${f1(wasteAllShare)}% of spend`); }
+    else if(wasteAllShare<=25){ pts+=1; why.push(`waste ${f1(wasteAllShare)}% of spend`); }
+    else if(wasteAllShare<=40){ why.push(`waste ${f1(wasteAllShare)}% of spend`); }
+    else { pts-=1; why.push(`waste ${f1(wasteAllShare)}% of spend`); }
+    if(winShare>=30){ pts+=2; why.push(`${f1(winShare)}% of spend already in winning targets`); }
+    else if(winShare>=15){ pts+=1; why.push(`${f1(winShare)}% of spend already in winning targets`); }
+    else if(winShare<5) why.push('almost no winning targets yet');
+    const verdict = pts>=5?'Scale' : pts>=3?'Optimize, then scale' : pts>=0?'Fix first' : 'Restructure';
+    const lever = (()=>{ const a=[['wasted spend',upWaste],['bids far above break-even',upOver],['scaling the winners',upScale]].sort((x,y)=>y[1]-x[1]); return a[0][1]>0? a[0][0] : ''; })();
     // placements & improvement bullets
     const plc=Object.values(g.plc).map(e=>Object.assign({},e,{acos:e.sales? e.spend/e.sales*100 : (e.spend>0?Infinity:0)}));
     const badPlc=plc.filter(e=>e.spend>=tot.spend*0.03 && (e.acos===Infinity || e.acos>be*1.3)).sort((a,b)=>b.spend-a.spend);
     const tips=[];
     if(wasteSpend>0) tips.push(`Cut ${fInt(waste.length)} targets with ≥${minClicks} clicks and no sale — ${fMoney(wasteSpend*m)}/mo of spend (${f1(wasteShare)}% of this product's ad spend).`);
-    if(overBe.length) tips.push(`${fInt(overBe.length)} converting targets run above break-even (${f1(be)}%) — lower their bids; ${fMoney(overExcess*m)}/mo sits above break-even.`);
+    if(overBe.length) tips.push(`${fInt(overBe.length)} converting targets run far above break-even (over ${f1(thr)}%) — lower their bids; ${fMoney(overExcess*m)}/mo sits above that line.`);
     if(winners.length) tips.push(`${fInt(winners.length)} targets convert at ≤${f1(be*0.7)}% ACoS (${fMoney(winSpend*m)}/mo) — room to raise bids/budget.`);
     badPlc.slice(0,2).forEach(e=>tips.push(`Placement "${e.placement}" spends ${fMoney(e.spend*m)}/mo at ACoS ${fAcos(e.acos)} — reduce its modifier.`));
     if(g.terms.length) tips.push(`${fInt(g.terms.length)} search terms with ≥${minClicks} clicks and no sale are not negated yet.`);
     if(!haveEcon) tips.push('Upload a Sellerboard export (or type price and unit cost) to get a real break-even ACoS and the price test — now using the default margin.');
     out.push({key:g.key,tot,be,margin,haveEcon,price,cost,units,profitPeriod,
       wasteSpend,waste,overBe,overExcess,winners,winSpend,upWaste,upOver,upScale,upBase,
-      campIds:g.camps.map(c=>c.campaignId),asins:g.asins,sbm,bz,tacos,tacosSrc,scen,baseProfit,pts,verdict,why,wasteShare,terms:g.terms.sort((a,b)=>b.spend-a.spend),plc,badPlc,tips,byProd:g.byProd});
+      campIds:g.camps.map(c=>c.campaignId),asins:g.asins,sbm,bz,tacos,tacosSrc,scen,baseProfit,pts,verdict,why,wasteShare,wasteAllShare,winShare,rAcos,lever,terms:g.terms.sort((a,b)=>b.spend-a.spend),plc,badPlc,tips,byProd:g.byProd});
   });
   return out.sort((a,b)=>b.tot.spend-a.tot.spend);
 }
@@ -2411,6 +2428,12 @@ function auditClean(html){
   const cap=Math.max(1,+window.__auditCap||20);
   html=html.replace(/Top 200 ([a-z ]+?) după waste/g,'Top '+cap+' $1 by waste').replace(/din (\d+) peste praguri/g,'of $1 above thresholds').replace(/Acțiune la export/g,'Export action');
   const d=document.createElement('div'); d.innerHTML=html;
+  // per-campaign bid-adjustment list (Placements tab): operational detail, not for the client
+  d.querySelectorAll('.sectitle').forEach(h=>{ if(/^Bid Adjustments by Campaign/i.test(h.textContent.trim())){ const c=h.closest('.card'); if(c) c.remove(); } });
+  // "Export action" (Negative Exact / Pause keyword) is a workflow hint for us, not for the client
+  d.querySelectorAll('table').forEach(tb=>{ const hr=tb.rows[0]; if(!hr) return; const i=[...hr.cells].findIndex(c=>/^(Export action|Acțiune la export)/i.test(c.textContent.trim())); if(i>=0) [...tb.rows].forEach(r=>{ if(r.cells[i] && r.cells.length>1) r.cells[i].remove(); }); });
+  // empty leading column (selection toggle in Harvesting)
+  d.querySelectorAll('table').forEach(tb=>{ const hr=tb.rows[0]; if(hr && hr.cells.length>2 && hr.cells[0].textContent.trim()==='' && !hr.cells[0].querySelector('input')) [...tb.rows].forEach(r=>{ if(r.cells[0] && r.cells.length>2) r.cells[0].remove(); }); });
   d.querySelectorAll('tr').forEach(tr=>{ const c=tr.firstElementChild; if(c && c.querySelector && c.querySelector('input[type=checkbox]')) c.remove(); });
   d.querySelectorAll('.more-row,.sidebar,.field,.seg,.rowbar button,button,select,input,textarea,.spacer,.sort-ind,.th-menu-btn').forEach(e=>e.remove());
   d.querySelectorAll('[style]').forEach(e=>{ if(/color:#9aa3af/.test(e.getAttribute('style'))) e.removeAttribute('style'); });
@@ -2449,25 +2472,26 @@ function auditSnapshot(fn, product, tab, patch, scope){
 }
 // Every tab of the tool as an optional appendix view. Ids are stable (the click number is not part of them).
 function auditToolDefs(st){
-  const N=Math.max(1,+st.minClicks||10), defs=[];
+  const N=Math.max(1,+st.minClicks||10), defs=[], TH=Math.max(1,+st._apxThr||60), BRW=(st.brandWords||'').trim()||(st.client||'').trim().toLowerCase();   // TH = "clearly above target" ACoS for the appendix lists
   const add=(title,tab,prod,fn,patch,covers,x)=>defs.push({id:tab+'|'+prod+'|'+title.replace(/≥\d+/g,'≥N'),title:`[${prod}] ${title}`,tab,prod,fn,patch,covers,x:x?x+'|'+prod:''});
   ['SP','SB'].forEach(p=>{
     add('Overview — by match type','overview',p,()=>renderOverview(),{group:'match',portfolio:''});
     add('Placements','placement',p,()=>renderPlacement(),{port:'',excludePorts:[]});
     add(`Negative Phrase — word roots with ≥${N} clicks`,'ngram',p,()=>renderNgram(),{mc:N});
-    add(`Wasted Spend — targets (≥${N} clicks)`,'waste',p,()=>renderWaste(),{minClicks:N,source:'targets',excludePorts:[],showZeroGroups:false},'targets','wt');
-    add(`Wasted Spend — search terms (≥${N} clicks)`,'waste',p,()=>renderWaste(),{minClicks:N,source:'searchterms',excludePorts:[],showZeroGroups:false},'terms','ws');
-    add('Harvesting — new opportunities','harvesting',p,()=>renderHarvesting(),{});
+    add(`Wasted Spend — targets (≥${N} clicks)`,'waste',p,()=>renderWaste(),{minClicks:N,source:'targets',excludePorts:[],showZeroGroups:false,acosThr:TH},'targets','wt');
+    add(`Wasted Spend — search terms (≥${N} clicks)`,'waste',p,()=>renderWaste(),{minClicks:N,source:'searchterms',excludePorts:[],showZeroGroups:false,acosThr:100000},'terms','ws');   // search terms: only real no-sale terms (negation candidates)
+    // only terms NOT yet targeted as Exact (= real new opportunities), brand words left out
+    add('Harvesting — new opportunities','harvesting',p,()=>renderHarvesting(),{exStat:'not',phStat:'all',brStat:'all',ptStat:'all',hvAsinMode:'exclude',hvExclude:BRW});
     add('Top ST Detector','topst',p,()=>renderTopStDetector(),{});
     add('Low ACOS Roots','ngroots',p,()=>renderNgRoots(),{});
     add('Products','products',p,()=>renderProducts(),{});
     add('Duplicates','duplicates',p,()=>renderDuplicates(),{});
   });
-  add(`Negatives — search terms with ≥${N} clicks, no sale / high ACoS`,'negatives','SP',()=>renderNegatives('SP'),{clicks:N},'terms','ws');
-  add(`Negatives — search terms with ≥${N} clicks, no sale / high ACoS`,'negatives-sb','SB',()=>renderNegatives('SB'),{clicks:N},'terms','ws');
-  add(`Targets that waste spend (≥${N} clicks)`,'targets','SP',()=>renderTargets('SP'),{clicks:N},'targets','wt');
-  add(`Targets that waste spend (≥${N} clicks)`,'targets-sb','SB',()=>renderTargets('SB'),{clicks:N},'targets','wt');
-  add(`Targets that waste spend (≥${N} clicks)`,'targets-sd','SD',()=>renderTargets('SD'),{clicks:N},'targets','wt');
+  add(`Negatives — search terms with ≥${N} clicks, no sale / high ACoS`,'negatives','SP',()=>renderNegatives('SP'),{clicks:N,acos:TH,orders:'0'},'terms','ws');
+  add(`Negatives — search terms with ≥${N} clicks, no sale / high ACoS`,'negatives-sb','SB',()=>renderNegatives('SB'),{clicks:N,acos:TH,orders:'0'},'terms','ws');
+  add(`Targets that waste spend (≥${N} clicks)`,'targets','SP',()=>renderTargets('SP'),{clicks:N,acos:TH},'targets','wt');
+  add(`Targets that waste spend (≥${N} clicks)`,'targets-sb','SB',()=>renderTargets('SB'),{clicks:N,acos:TH},'targets','wt');
+  add(`Targets that waste spend (≥${N} clicks)`,'targets-sd','SD',()=>renderTargets('SD'),{clicks:N,acos:TH},'targets','wt');
   [['CPC Flag','cpcflag',renderCpcFlag],['Bid Rebalance','rebalance',renderRebalance],['Bid Optimizer','optbids',renderOptBids],['Placement Optimizer','optplacements',renderOptPlacements],['Budget Rebalancing','optbudget',renderOptBudget],['Pause Campaigns','pausecamp',renderPauseCampaigns]]
     .forEach(([t,tab,f])=>['SP','SB','SD'].forEach(p=>add(t,tab,p,()=>f(),{})));
   return defs;
@@ -2505,16 +2529,19 @@ function auditReportHtml(ctx){
   // Every figure lives in ONE place: headline numbers in the header, per-product numbers in the tables, the prose only
   // says what to do. Appendix views that cover the same data as a short list replace that list (see cover).
   const cover={}; details.forEach(d=>{ if(d.covers) cover[d.covers]=true; });
-  const dot=v=>v==='Scale'?'dot-g':v==='Fix first'?'dot-r':'dot-y';
-  const bd=v=>v==='Scale'?'b-k':v==='Fix first'?'b-c':'b-m';
+  const dot=v=>v==='Scale'?'dot-g':v==='Optimize, then scale'?'dot-y':'dot-r';
+  const bd=v=>v==='Scale'?'b-k':v==='Optimize, then scale'?'b-m':'b-c';
   const nm=r=>esc(auditNm(r.key));
   const wasteTotPct=T.spend? T.wasteAll/T.spend*100 : 0;
-  const nScale=rows.filter(r=>r.verdict==='Scale').length, nFix=rows.filter(r=>r.verdict==='Fix first').length;
+  const nScale=rows.filter(r=>r.verdict==='Scale').length, nFix=rows.filter(r=>r.verdict==='Fix first').length, nRes=rows.filter(r=>r.verdict==='Restructure').length;
+  const nOpt=rows.length-nScale-nFix-nRes;
+  const sc=v=>v==='Scale'?'g':v==='Optimize, then scale'?'y':'r';
   const top=rows.slice().sort((a,b)=>b.upBase-a.upBase)[0];
-  const whyTxt=r=>{ const a=r.tot.acos,b=r.be,w=[];
-    w.push(a!==Infinity&&a<=b ? (a<=b*0.8?'ACoS comfortably below break-even':'ACoS at or below break-even') : (a!==Infinity&&a<=b*1.3?'ACoS slightly above break-even':'ACoS well above break-even'));
-    w.push(r.wasteShare<=10?'little wasted spend':r.wasteShare<=25?'moderate wasted spend':'high wasted spend');
-    if(r.tot.spend && r.winSpend/r.tot.spend>=0.15) w.push('winning targets already carry a meaningful share of spend');
+  const whyTxt=r=>{ const x=r.rAcos,w=[];
+    w.push(x<=0.8?'ACoS comfortably below break-even':x<=1?'ACoS at or below break-even':x<=1.3?'ACoS slightly above break-even':x<=1.7?'ACoS well above break-even':'ACoS far above break-even');
+    w.push(r.wasteAllShare<=10?'little wasted spend':r.wasteAllShare<=25?'moderate wasted spend':r.wasteAllShare<=40?'high wasted spend':'very high wasted spend');
+    w.push(r.winShare>=30?'winning targets already carry a large share of spend':r.winShare>=15?'winning targets already carry a meaningful share of spend':r.winShare<5?'almost no winning targets yet':'few winning targets so far');
+    if(r.lever) w.push('biggest lever: '+r.lever);
     return w.join(' · '); };
   const hdr=`<div class="hdr-block"><div class="hdr-left"><h1>PPC Audit${client?'<br>'+esc(client):''}</h1>
       <div class="sub">${rows.length} product${rows.length===1?'':'s'} analysed · figures per month (report period ${+st.days||30} days, scaled to 30) · enabled campaigns, ad-attributed sales<br>Prepared ${new Date().toISOString().slice(0,10)}</div></div>
@@ -2528,12 +2555,12 @@ function auditReportHtml(ctx){
   const perf=rows.map(r=>`<tr><td class="name"><span class="${dot(r.verdict)}"></span>${nm(r)}</td><td>${fM(r.tot.spend*m)}</td><td>${fM(r.tot.sales*m)}</td><td class="${acosClass(r.tot.acos)}">${fAcos(r.tot.acos)}</td><td>${f1(r.be)}%${r.haveEcon?'':'*'}</td><td>${fM(r.profitPeriod*m)}</td>${ctx.anyTacos?`<td>${r.tacos!=null?fAcos(r.tacos):'—'}</td>`:''}<td class="l"><span class="${bd(r.verdict)}">${r.verdict}</span></td></tr>`).join('');
   const actionsFor=r=>{ const a=[];
     if(r.wasteSpend>0) a.push('Pause or negate the targets that spend without selling.');
-    if(r.overBe.length) a.push('Lower bids on converting targets that run above break-even.');
+    if(r.overBe.length) a.push('Lower bids on converting targets that run far above break-even.');
     if(r.winners.length) a.push('Raise bids / budget on the targets converting well below break-even.');
     r.badPlc.slice(0,2).forEach(e=>a.push(`Reduce the “${esc(e.placement)}” placement modifier.`));
     if(r.terms.length) a.push('Negate the search terms that spend without selling.');
     return a; };
-  const fixes=rows.map(r=>{ const a=actionsFor(r); return `<div class="si ${r.verdict==='Scale'?'g':r.verdict==='Fix first'?'r':'y'}"><h4>${nm(r)}</h4><ul>${a.map(t=>`<li>${t}</li>`).join('')||'<li>No clear issues in this data.</li>'}</ul></div>`; }).join('');
+  const fixes=rows.map(r=>{ const a=actionsFor(r); return `<div class="si ${sc(r.verdict)}"><h4>${nm(r)}</h4><ul>${a.map(t=>`<li>${t}</li>`).join('')||'<li>No clear issues in this data.</li>'}</ul></div>`; }).join('');
   const s1=`<section id="perf"><div class="sh"><h2>Current PPC performance and improvement potential</h2></div>
     <div class="tw"><table><thead><tr><th>Product</th><th>Spend</th><th>Ad sales</th><th>ACoS</th><th>Break-even ACoS</th><th>Profit after ads</th>${ctx.anyTacos?'<th>TACoS</th>':''}<th class="l">Growth</th></tr></thead><tbody>${perf}</tbody></table></div>
     ${ctx.anyTacos&&ctx.periodMismatch?'<div class="sub" style="margin-bottom:8px;">TACoS compares '+ctx.periodTxt+'.</div>':''}
@@ -2546,8 +2573,8 @@ function auditReportHtml(ctx){
   const allT=rows.flatMap(r=>r.terms.slice(0,5).map(t=>({r,t}))).sort((a,b)=>b.t.spend-a.t.spend).slice(0,10);
   const allP=rows.flatMap(r=>r.badPlc.slice(0,2).map(e=>({r,e})));
   const s2=`<section id="waste"><div class="sh"><h2>Where advertising spend is wasted</h2></div>
-    <div class="totals-line">Waste is counted two ways, for targets with at least ${st.minClicks} clicks: <strong>no sale</strong> — all of their spend; <strong>above break-even</strong> — targets that do sell but at an ACoS over break-even, only the part of their spend that exceeds what break-even allows. Together they are <strong>${f1(wasteTotPct)}%</strong> of ad spend.</div>
-    <div class="tw"><table><thead><tr><th>Product</th><th>Targets, no sale</th><th>Spend, no sale</th><th>Spend above break-even</th><th>Total waste</th><th>Search terms, no sale</th></tr></thead><tbody>${wrow}</tbody></table></div>
+    <div class="totals-line">Waste is counted two ways, for targets with at least ${st.minClicks} clicks: <strong>no sale</strong> — all of their spend; <strong>far above break-even</strong> — targets that do sell but at an ACoS more than ${f1(+st.overMult||2)}× break-even, only the part of their spend above that line (a target slightly over break-even is a bid to trim, not wasted spend). Together they are <strong>${f1(wasteTotPct)}%</strong> of ad spend.</div>
+    <div class="tw"><table><thead><tr><th>Product</th><th>Targets, no sale</th><th>Spend, no sale</th><th>Spend far above break-even</th><th>Total waste</th><th>Search terms, no sale</th></tr></thead><tbody>${wrow}</tbody></table></div>
     ${!cover.targets&&allW.length?`<div class="sh-plain" style="font-size:16px;margin-top:18px">Top wasted targets</div><div class="tw"><table><thead><tr><th>Product</th><th class="l">Target</th><th class="l">Match</th><th>Clicks</th><th>Spend / month</th></tr></thead><tbody>${allW.map(x=>`<tr><td class="name">${nm(x.r)}</td><td class="l">${esc(String(x.t.text).slice(0,52))}</td><td class="l">${esc(String(x.t.matchType||'').slice(0,12))}</td><td>${fInt(x.t.clicks*m)}</td><td>${fM(x.t.spend*m)}</td></tr>`).join('')}</tbody></table></div>`:''}
     ${!cover.terms&&allT.length?`<div class="sh-plain" style="font-size:16px;margin-top:18px">Search terms to negate</div><div class="tw"><table><thead><tr><th>Product</th><th class="l">Search term</th><th>Clicks</th><th>Spend / month</th></tr></thead><tbody>${allT.map(x=>`<tr><td class="name">${nm(x.r)}</td><td class="l">${esc(x.t.term.slice(0,52))}</td><td>${fInt(x.t.clicks*m)}</td><td>${fM(x.t.spend*m)}</td></tr>`).join('')}</tbody></table></div>`:''}
     ${allP.length?`<div class="sh-plain" style="font-size:16px;margin-top:18px">Placements to review</div><div class="tw"><table><thead><tr><th>Product</th><th class="l">Placement</th><th>Spend / month</th><th>ACoS</th></tr></thead><tbody>${allP.map(x=>`<tr><td class="name">${nm(x.r)}</td><td class="l">${esc(x.e.placement)}</td><td>${fM(x.e.spend*m)}</td><td class="${acosClass(x.e.acos)}">${fAcos(x.e.acos)}</td></tr>`).join('')}</tbody></table></div>`:''}</section>`;
@@ -2555,7 +2582,7 @@ function auditReportHtml(ctx){
   const orow=rows.map(r=>`<tr><td class="name">${nm(r)}</td><td>${fM(r.upWaste)}</td><td>${fM(r.upOver)}</td><td>${fM(r.upScale)}</td><td class="num-green">${fM(r.upBase)}</td><td>${fM(r.upBase*0.5)}</td></tr>`).join('');
   const s3=`<section id="profit"><div class="sh"><h2>Realistic additional monthly profit after advertising</h2></div>
     <p class="lead">Three sources: stopping spend that produces no sales, bringing over-break-even bids back to break-even, and scaling the targets that convert well below break-even. “Cautious” assumes only half of the estimate materialises.</p>
-    <div class="tw"><table><thead><tr><th>Product</th><th>Stop wasted spend</th><th>Fix bids above break-even</th><th>Scale winners</th><th>Estimate / month</th><th>Cautious (50%)</th></tr></thead><tbody>${orow}<tr class="totals"><td class="name">Total</td><td>${fM(T.upW)}</td><td>${fM(T.upO)}</td><td>${fM(T.upS)}</td><td>${fM(T.up)}</td><td>${fM(T.up*0.5)}</td></tr></tbody></table></div></section>`;
+    <div class="tw"><table><thead><tr><th>Product</th><th>Stop wasted spend</th><th>Fix bids far above break-even</th><th>Scale winners</th><th>Estimate / month</th><th>Cautious (50%)</th></tr></thead><tbody>${orow}<tr class="totals"><td class="name">Total</td><td>${fM(T.upW)}</td><td>${fM(T.upO)}</td><td>${fM(T.upS)}</td><td>${fM(T.up)}</td><td>${fM(T.up*0.5)}</td></tr></tbody></table></div></section>`;
   // 4 price
   const econ=rows.filter(r=>r.haveEcon);
   const prow=econ.map(r=>{ const best=r.scen.reduce((b,x)=>x.profit>b.profit?x:b,{profit:r.baseProfit,d:0});
@@ -2565,17 +2592,18 @@ function auditReportHtml(ctx){
     <div class="tw"><table><thead><tr><th>Product</th><th>Price</th><th>Profit now</th><th>−10%</th><th>−5%</th><th>+5%</th><th>+10%</th><th class="l">Best option</th></tr></thead><tbody>${prow}</tbody></table></div>`
     : `<p class="lead">A price recommendation needs each product's selling price and unit cost (COGS, Amazon fees, shipping). They were not provided for this audit, so the price effect is not modelled here — it is the next thing to add.</p>`}</section>`;
   // 5 growth — verdicts and reasons in words, no figures repeated
-  const gro=rows.map(r=>`<div class="si ${r.verdict==='Scale'?'g':r.verdict==='Fix first'?'r':'y'}"><h4>${nm(r)} — ${r.verdict}</h4><p>${esc(whyTxt(r))}.</p></div>`).join('');
+  const gro=rows.map(r=>`<div class="si ${sc(r.verdict)}"><h4>${nm(r)} — ${r.verdict}</h4><p>${esc(whyTxt(r))}.</p></div>`).join('');
   const steps=[];
   if(T.waste>0) steps.push('Pause or negate the wasted targets and search terms.');
   if(T.upO>0) steps.push('Lower bids on converting targets that run above break-even ACoS.');
   if(T.upS>0) steps.push(`Raise bids/budget on the targets already converting well below break-even${top?`, starting with ${esc(auditNm(top.key))}`:''}.`);
   steps.push(econ.length? 'Run a controlled price test on the products where the model shows a profit gain.' : 'Add product cost data to evaluate price changes and tighten break-even per product.');
   const s5=`<section id="growth"><h2 class="sh-plain">Overall assessment — growth potential</h2>
-    <p class="lead">${nScale} of ${rows.length} product${rows.length===1?'':'s'} ${nScale===1?'is':'are'} ready to scale, ${rows.length-nScale-nFix} need${rows.length-nScale-nFix===1?'s':''} optimising first and ${nFix} ${nFix===1?'needs':'need'} fixing before more spend is added${top?`; the largest single lever is ${esc(auditNm(top.key))}`:''}.</p>
+    <p class="lead">${nScale} of ${rows.length} product${rows.length===1?'':'s'} ${nScale===1?'is':'are'} ready to scale, ${nOpt} need${nOpt===1?'s':''} optimising first, ${nFix} ${nFix===1?'needs':'need'} fixing before more spend is added${nRes?` and ${nRes} ${nRes===1?'needs':'need'} restructuring (ACoS far above break-even with almost no winners)`:''}${top?`; the largest single lever is ${esc(auditNm(top.key))}`:''}.</p>
     <div class="items">${gro}</div>
+    ${rows.some(r=>!r.haveEcon)?`<div class="sub" style="margin:6px 0 10px;">Ratings use the default break-even of ${f1(+st.margin||30)}% where product cost data was not provided — treat them as preliminary for those products.</div>`:''}
     <div class="actions"><h4>Next steps</h4><ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>
-    <div class="basis">Basis of estimates: waste = targets with ≥${st.minClicks} clicks and no sale; ${st.recWaste}% of waste assumed recoverable; ${st.recOver}% of spend above break-even assumed recoverable; winners (≥2 orders, ACoS ≤70% of break-even) scaled by ${st.scale}% with ACoS worsening by ${st.degr}%. Break-even ACoS = margin before ads. Sales are ad-attributed; only enabled campaigns are included. All projections are estimates.</div></section>`;
+    <div class="basis">Basis of estimates: waste = targets with ≥${st.minClicks} clicks and no sale; ${st.recWaste}% of waste assumed recoverable; ${st.recOver}% of spend far above break-even (over ${f1(+st.overMult||2)}× break-even ACoS) assumed recoverable; winners (≥2 orders, ACoS ≤70% of break-even) scaled by ${st.scale}% with ACoS worsening by ${st.degr}%. Break-even ACoS = margin before ads. Sales are ad-attributed; only enabled campaigns are included. All projections are estimates.</div></section>`;
   const apx=details.map((d,i)=>`<section><h2 class="sh-plain">${esc(d.title)}</h2><div class="tw" id="au-snap-${i}">${d.html!==undefined?d.html:'<div class="sub" style="padding:14px">Building…</div>'}</div></section>`).join('');
   return `<div class="ctn"><button class="noprint" onclick="window.print()">Save as PDF / Print</button>${hdr}${s1}${s2}${s3}${s4}${s5}${apx}</div>`;
 }
@@ -2583,7 +2611,7 @@ function auditReportHtml(ctx){
 function renderAudit(){
   const st=stFor('audit');
   if(!st.init){
-    Object.assign(st,{init:true,apxRows:20,groupBy:'portfolio',days:30,margin:30,minClicks:10,recWaste:60,recOver:40,scale:25,degr:25,elast:-1.5,client:'',q:''});
+    Object.assign(st,{init:true,apxRows:20,groupBy:'portfolio',days:30,margin:30,minClicks:10,overMult:2,recWaste:60,recOver:40,scale:25,degr:25,elast:-1.5,client:'',q:''});
     st.inputs=auditLoadInputs();
     try{ st.custom=JSON.parse(localStorage.getItem('ppc_audit_custom_v1')||'[]')||[]; }catch(_){ st.custom=[]; }
     try{ st.parentMap=JSON.parse(localStorage.getItem('ppc_audit_parents_v1')||'null'); }catch(_){ st.parentMap=null; }
@@ -2614,7 +2642,9 @@ function renderAudit(){
   const acosT=T.sales? T.spend/T.sales*100 : 0;
   // appendix views scoped to the chosen products
   const scope= rows.length && rows.length<all.length ? new Set(rows.flatMap(r=>r.campIds)) : null;
-  const sig=[rows.map(r=>r.key).sort().join('~'),Math.max(1,+st.minClicks||10),Math.max(1,+st.apxRows||20),DATA.campaigns.length,DATA.targets.length,DATA.searchTerms.length,DATA.fileName].join('|');
+  // appendix lists: "clearly above target" ACoS = spend-weighted break-even × multiplier
+  { const sp=rows.reduce((s,r)=>s+r.tot.spend,0)||1, avgBe=rows.reduce((s,r)=>s+r.be*r.tot.spend,0)/sp; st._apxThr=Math.round(avgBe*Math.max(1,+st.overMult||2)); }
+  const sig=[st._apxThr,(st.brandWords||'')+'/'+(st.client||''),rows.map(r=>r.key).sort().join('~'),Math.max(1,+st.minClicks||10),Math.max(1,+st.apxRows||20),DATA.campaigns.length,DATA.targets.length,DATA.searchTerms.length,DATA.fileName].join('|');
   if(!st._snap || st._snap.key!==sig) st._snap={key:sig,done:{}};
   const defs=auditToolDefs(st);
   const picked=defs.filter(d=>st.pick[d.id] && st._snap.done[d.id]!=='');
@@ -2656,6 +2686,7 @@ function renderAudit(){
         return `<div class="banner" style="margin-bottom:10px;line-height:1.55;${ok?'background:#ecfdf5;color:#065f46;border-color:#a7f3d0;':(bulkP&&loadedSrc.length?'background:#fff7ed;color:#9a3412;border-color:#fed7aa;':'')}"><b>Data period check</b> — ${[line('Bulk',bulkP,true),line('Sellerboard',sbPer,!!st.sb),line('Business Report',bizPer,!!st.biz)].filter(Boolean).join(' · ')}<br>${verdict}</div>`; })()}
       <div class="ctrls" style="align-items:end;">
         <div class="field"><label>Client / brand (shown in the title)</label><input type="text" id="au-client" value="${esc(st.client)}" style="width:200px;"></div>
+        <div class="field"><label>Brand words to leave out of Harvesting (comma-separated; empty = client name)</label><input type="text" id="au-brand" value="${esc(st.brandWords||'')}" placeholder="${esc((st.client||'').trim().toLowerCase())||'e.g. lieberge'}" style="width:260px;"></div>
         ${num('au-days','Days covered by the bulk',st.days,90)}
         ${num('au-clicks','Min clicks to count as waste',st.minClicks,110)}
         ${picked.length? num('au-apx','Rows per appendix table (top N, worst first)',st.apxRows,90) : ''}
@@ -2664,11 +2695,12 @@ function renderAudit(){
         <div class="field"><button class="btn ghost" id="au-html" ${rows.length?'':'disabled'}>.html</button></div>
         <div class="field"><button class="btn ghost" id="au-export" ${rows.length?'':'disabled'}>Excel</button></div>
       </div>
-      <div class="hint" style="margin-top:8px;line-height:1.5;"><b>How waste is counted</b> (same as the Wasted Spend tab): only targets with at least this many clicks count. <b>No sale</b> → all their spend is waste. <b>Sells but ACoS above break-even</b> → only the spend above what break-even ACoS allows is waste. Targets with fewer clicks are never counted.</div>
+      <div class="hint" style="margin-top:8px;line-height:1.5;"><b>How waste is counted</b> (same as the Wasted Spend tab): only targets with at least this many clicks count. <b>No sale</b> → all their spend is waste. <b>Sells but ACoS far above break-even</b> (more than the multiplier in Advanced settings, default 2×) → only the spend above that line is waste; a target at 45% when break-even is 30% is not waste. Targets with fewer clicks are never counted.</div>
       ${rows.some(r=>!r.haveEcon)?`<div class="banner" style="margin-top:8px;line-height:1.5;"><b>Break-even ACoS</b> = margin before ads. ${rows.filter(r=>!r.haveEcon).length} of ${rows.length} products use the default margin (${f1(+st.margin||30)}%) because no cost data is loaded — that is why they show the same value. Upload Sellerboard or enter price + unit cost under “Price and cost per product” to get a real one per product.</div>`:''}
       <details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:600;">Advanced settings (profit estimate)</summary>
         <div class="ctrls" style="margin-top:8px;">
           ${num('au-margin','Margin % when cost is unknown (= break-even ACoS)',st.margin,110)}
+          ${num('au-om','Selling targets count as waste only above (× break-even ACoS)',st.overMult,110)}
           ${num('au-rw','Share of waste assumed recoverable %',st.recWaste,90)}
           ${num('au-ro','Share of excess bids assumed recoverable %',st.recOver,90)}
           ${num('au-sc','Scale winners by %',st.scale,90)}
@@ -2734,8 +2766,9 @@ function renderAudit(){
   const rer=()=>renderAudit();
   const bindNum=(id,key)=>{ $('#'+id).onchange=e=>{ st[key]=+e.target.value; rer(); }; };
   bindNum('au-days','days'); bindNum('au-margin','margin'); bindNum('au-clicks','minClicks'); if($('#au-apx')) bindNum('au-apx','apxRows');
-  bindNum('au-rw','recWaste'); bindNum('au-ro','recOver'); bindNum('au-sc','scale'); bindNum('au-dg','degr'); bindNum('au-el','elast');
+  bindNum('au-om','overMult'); bindNum('au-rw','recWaste'); bindNum('au-ro','recOver'); bindNum('au-sc','scale'); bindNum('au-dg','degr'); bindNum('au-el','elast');
   $('#au-client').onchange=e=>{ st.client=e.target.value; rer(); };
+  $('#au-brand').onchange=e=>{ st.brandWords=e.target.value; rer(); };
   $('#au-group').onchange=e=>{ st.groupBy=e.target.value; st.sel=null; rer(); };
   $('#au-q').oninput=debounce(()=>{ st.q=$('#au-q').value; rer(); const el=$('#au-q'); el.focus(); el.setSelectionRange(el.value.length,el.value.length); },300);
   document.querySelectorAll('[data-selk]').forEach(cb=>cb.onchange=()=>{ const k=decodeURIComponent(cb.dataset.selk); st.selAuto=false; if(cb.checked) st.sel[k]=1; else delete st.sel[k]; saveSel(); rer(); });
