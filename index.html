@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:32</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:36</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2550,7 +2550,7 @@ function renderAudit(){
         <div class="field"><label>Client / brand (shown in the title)</label><input type="text" id="au-client" value="${esc(st.client)}" style="width:200px;"></div>
         ${num('au-days','Days covered by the bulk',st.days,90)}
         ${num('au-clicks','Min clicks to count as waste',st.minClicks,110)}
-        ${num('au-apx','Rows per appendix table (top N)',st.apxRows,90)}
+        ${picked.length? num('au-apx','Rows per appendix table (top N, worst first)',st.apxRows,90) : ''}
         <div class="field"><label>Products =</label><select id="au-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portfolios</option><option value="asin" ${st.groupBy==='asin'?'selected':''}>ASIN</option></select></div>
         <div class="field"><button class="btn grad" id="au-pdf" ${rows.length?'':'disabled'}>Download PDF for client</button></div>
         <div class="field"><button class="btn ghost" id="au-html" ${rows.length?'':'disabled'}>.html</button></div>
@@ -2606,7 +2606,7 @@ function renderAudit(){
   </div>`;
   const rer=()=>renderAudit();
   const bindNum=(id,key)=>{ $('#'+id).onchange=e=>{ st[key]=+e.target.value; rer(); }; };
-  bindNum('au-days','days'); bindNum('au-margin','margin'); bindNum('au-clicks','minClicks'); bindNum('au-apx','apxRows');
+  bindNum('au-days','days'); bindNum('au-margin','margin'); bindNum('au-clicks','minClicks'); if($('#au-apx')) bindNum('au-apx','apxRows');
   bindNum('au-rw','recWaste'); bindNum('au-ro','recOver'); bindNum('au-sc','scale'); bindNum('au-dg','degr'); bindNum('au-el','elast');
   $('#au-client').onchange=e=>{ st.client=e.target.value; rer(); };
   $('#au-group').onchange=e=>{ st.groupBy=e.target.value; st.sel=null; rer(); };
