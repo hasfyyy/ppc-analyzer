@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:42</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-17 14:46</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -2100,19 +2100,24 @@ function auditSaveInputs(o){ try{ localStorage.setItem(AUDIT_LS,JSON.stringify(o
 // Per row: price = Sales/Units; profit BEFORE ads = Net profit + |Ads|; unit cost = (Sales − profit before ads)/Units
 // (COGS + Amazon fees + refunds + shipping + other costs, everything except Amazon ads); margin = profit before ads / Sales.
 function auditParseSellerboard(wb,fileName){
-  const ws=wb.Sheets[wb.SheetNames[0]]; if(!ws) return {rows:[],days:null,fileName};
-  const raw=XLSX.utils.sheet_to_json(ws,{defval:''}), rows=[];
+  const ws=wb.Sheets[wb.SheetNames[0]]; if(!ws) return {rows:[],days:null,fileName,parents:{}};
+  const raw=XLSX.utils.sheet_to_json(ws,{defval:''}), rows=[], parents={}; let curParent='';
   raw.forEach(r=>{
     const o={}; Object.keys(r).forEach(k=>{ o[String(k).replace(/\s+/g,' ').trim().toLowerCase()]=r[k]; });
     const asin=String(o['asin']||'').trim().toUpperCase(); if(!/^B0[A-Z0-9]{8}$/.test(asin)) return;
     const units=toNum(o['units']), sales=toNum(o['sales']), ads=Math.abs(toNum(o['ads']));
     const net=(o['net profit']!==undefined&&o['net profit']!=='')? toNum(o['net profit']) : toNum(o['gross profit']);
     let title=String(o['product']||'').split('\n')[0].trim(); if(/^\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4}$/.test(title)) title='';
-    rows.push({asin,sku:String(o['sku']||''),title,units,sales,ads,net,pba:net+ads});
+    // "Group by parent" export: a row without SKU is a PARENT (already the sum of its children); the SKU rows after it are its children
+    const sku=String(o['sku']||'').trim(), isParent=!sku;
+    if(isParent){ curParent=asin; parents[asin]=parents[asin]||{title:'',kids:[],top:0}; }
+    else if(curParent){ const e=parents[curParent]; if(!e.kids.includes(asin)) e.kids.push(asin); if(sales>e.top){ e.top=sales; e.title=title; } }
+    rows.push({asin,sku,title,units,sales,ads,net,pba:net+ads,isParent,parent:isParent?asin:curParent});
   });
+  Object.keys(parents).forEach(k=>{ if(!parents[k].kids.length) delete parents[k]; });
   const m=String(fileName).match(/(\d{2})_(\d{2})_(\d{4})-(\d{2})_(\d{2})_(\d{4})/);
   let days=null; if(m){ const d1=Date.UTC(+m[3],+m[2]-1,+m[1]), d2=Date.UTC(+m[6],+m[5]-1,+m[4]); const n=Math.round((d2-d1)/864e5)+1; if(n>0&&n<800) days=n; }
-  return {rows,days,fileName};
+  return {rows,days,fileName,parents};
 }
 const AUDIT_STOP=new Set(['budget','catch','all','auto','the','and','for','with','sku','asin','mix','mixed','other','others']);
 function auditTokens(t){ return new Set(String(t||'').toLowerCase().replace(/b0[a-z0-9]{8}/g,' ').split(/[^a-z0-9äöüß]+/).filter(w=>w.length>=3 && !/^\d+$/.test(w) && !AUDIT_STOP.has(w))); }
@@ -2127,18 +2132,41 @@ function auditSbMatch(st,g,gi){
   const sb=st.sb; if(!sb||!sb.rows.length) return null;
   const ms=30/Math.max(1,+st.sbDays||sb.days||+st.days||30);
   if(gi.sbAsin==='none') return null;
-  if(gi.sbAsin){ const r=sb.rows.filter(x=>x.asin===gi.sbAsin); const a=auditSbAgg(r,ms); if(a){ a.method='manual'; return a; } }
+  if(gi.sbAsin){ const pr=sb.rows.filter(x=>x.isParent&&x.asin===gi.sbAsin); const r=pr.length? pr : sb.rows.filter(x=>x.asin===gi.sbAsin); const a=auditSbAgg(r,ms); if(a){ a.method='manual'; return a; } }
+  if(g.parentAsin){ const pr=sb.rows.filter(x=>x.isParent && x.asin===g.parentAsin); if(pr.length){ const a=auditSbAgg(pr,ms); if(a){ a.method='parent'; return a; } } }
   const hit=sb.rows.filter(x=>g.asins.has(x.asin));
-  if(hit.length){ const a=auditSbAgg(hit,ms); if(a){ a.method='ASIN'; return a; } }
+  const kidsHit=hit.filter(x=>!x.isParent);
+  if(hit.length){ const a=auditSbAgg(kidsHit.length?kidsHit:hit,ms); if(a){ a.method='ASIN'; return a; } }
   // words of the product's own name (portfolio / ASIN label) first; only if that has too few, add its campaign names
   let kt=auditTokens(g.key); if(kt.size<2) kt=auditTokens(g.key+' '+g.camps.slice(0,5).map(c=>c.campaignName).join(' '));
   const same=(a,b)=>a===b || (Math.min(a.length,b.length)>=4 && (a.startsWith(b)||b.startsWith(a)));   // brush ~ brushes
   if(kt.size){
-    const sc=sb.rows.map(x=>{ const tt=[...auditTokens(x.title)]; let c=0; kt.forEach(w=>{ if(tt.some(t=>same(w,t))) c++; }); return {x,c,score:c/kt.size}; }).sort((a,b)=>b.score-a.score);
+    const sc=sb.rows.filter(x=>!x.isParent).map(x=>{ const tt=[...auditTokens(x.title)]; let c=0; kt.forEach(w=>{ if(tt.some(t=>same(w,t))) c++; }); return {x,c,score:c/kt.size}; }).sort((a,b)=>b.score-a.score);
     const b=sc[0], b2=sc[1];
     if(b && b.c>=2 && b.score>=0.5 && (!b2 || b.score>b2.score)){ const a=auditSbAgg([b.x],ms); if(a){ a.method='name'; return a; } }
   }
   return null;
+}
+// ---- parent → children mapping (the bulk has none): Seller Central "Detail Page Sales and Traffic by Child Item" report
+// ((Parent) ASIN / (Child) ASIN columns), any file with a parent-ASIN and a child-ASIN column, or pasted lines ----
+function auditParentsFromRows(json){
+  if(!json.length) return null;
+  const heads=Object.keys(json[0]);
+  const pH=heads.find(h=>/parent/i.test(h)&&/asin/i.test(h)) || heads.find(h=>/parent/i.test(h));
+  const cH=heads.find(h=>/child/i.test(h)&&/asin/i.test(h)) || heads.find(h=>/^\W*asin\W*$/i.test(h));
+  const tH=heads.find(h=>/title|product name|item name/i.test(h));
+  if(!pH||!cH||pH===cH) return null;
+  const map={};
+  json.forEach(r=>{ const p=String(r[pH]).trim().toUpperCase(), c=String(r[cH]).trim().toUpperCase();
+    if(!/^B0[A-Z0-9]{8}$/.test(p)||!/^B0[A-Z0-9]{8}$/.test(c)) return;
+    const e=map[p]||(map[p]={title:tH?String(r[tH]||'').trim():'',kids:[]}); if(!e.kids.includes(c)) e.kids.push(c); });
+  return Object.keys(map).length? map : null;
+}
+function auditParentsFromText(txt){
+  const map={};
+  String(txt||'').split(/\r?\n/).forEach(line=>{ const a=(line.toUpperCase().match(/B0[A-Z0-9]{8}/g)||[]).filter((x,i,arr)=>arr.indexOf(x)===i);
+    if(a.length<2) return; const e=map[a[0]]||(map[a[0]]={title:'',kids:[]}); a.slice(1).forEach(c=>{ if(!e.kids.includes(c)) e.kids.push(c); }); });
+  return Object.keys(map).length? map : null;
 }
 function auditCompute(st){
   const inp=st.inputs||{};
@@ -2148,6 +2176,13 @@ function auditCompute(st){
   const asinOf=new Map();
   if(st.groupBy==='asin') DATA.productAds.forEach(a=>{ if(a.campaignId && a.asin && !asinOf.has(a.campaignId)) asinOf.set(a.campaignId,String(a.asin).toUpperCase()); });
   st._cskip={};
+  // parent mode: each mapped parent = a product made of its children (+ the parent ASIN, which also matches a Sellerboard parent row)
+  const parentDefs=[];
+  const pmap=Object.assign({}, (st.sb&&st.sb.parents)||{}, st.parentMap||{});
+  st._pmapN=Object.keys(pmap).length;
+  if(st.groupBy==='parent') Object.keys(pmap).forEach(p=>{
+    const e=pmap[p]; const t=String(e.title||'').trim();
+    parentDefs.push({name:(t? t.slice(0,55)+' — ':'')+p, asins:[p,...e.kids], parent:p}); });
   const adAsinsBy=new Map(); DATA.productAds.forEach(a=>{ if(a.campaignId && a.asin){ if(!adAsinsBy.has(a.campaignId)) adAsinsBy.set(a.campaignId,new Set()); adAsinsBy.get(a.campaignId).add(String(a.asin).toUpperCase()); } });
   const campKey=new Map(), groups=new Map();
   moveCampaignPool().filter(c=>c.state==='enabled').forEach(c=>{
@@ -2155,14 +2190,17 @@ function auditCompute(st){
     const cAsins=new Set([...(adAsinsBy.get(c.campaignId)||[]), ...((String(c.campaignName).match(/B0[A-Z0-9]{8}/ig)||[]).map(a=>a.toUpperCase()))]);
     // only campaigns dedicated to the product: at least half of the ASINs the campaign advertises must be the product's.
     // A catch-all campaign over dozens of ASINs can't be split per product at campaign level, so it is left out (counted).
-    const cu=(st.custom||[]).find(x=>cAsins.size && x.asins.filter(a=>cAsins.has(a)).length/cAsins.size>=0.5);
-    if(!cu) (st.custom||[]).forEach(x=>{ if(x.asins.some(a=>cAsins.has(a))) st._cskip[x.name]=(st._cskip[x.name]||0)+1; });
-    const k= cu ? cu.name : (st.groupBy==='asin' ? (asinOf.get(c.campaignId)||'(no ASIN)') : (c.portfolioName||'(No Portfolio)'));
+    const frac=x=>cAsins.size? x.asins.filter(a=>cAsins.has(a)).length/cAsins.size : 0;
+    const defsAll=(st.custom||[]).concat(parentDefs);
+    const cu=defsAll.find(x=>frac(x)>=0.5);
+    if(!cu) defsAll.forEach(x=>{ if(x.asins.some(a=>cAsins.has(a))) st._cskip[x.name]=(st._cskip[x.name]||0)+1; });
+    const k= cu ? cu.name : (st.groupBy==='parent' ? '(not in the parent mapping)' : st.groupBy==='asin' ? (asinOf.get(c.campaignId)||'(no ASIN)') : (c.portfolioName||'(No Portfolio)'));
     campKey.set(c.campaignId,k);
     if(!groups.has(k)) groups.set(k,{key:k,camps:[],byProd:{SP:0,SB:0,SD:0},targets:[],terms:[],plc:{},asins:new Set()});
     const g=groups.get(k); g.camps.push(c); g.byProd[c.product]=(g.byProd[c.product]||0)+c.spend;
     (adAsinsBy.get(c.campaignId)||[]).forEach(a=>g.asins.add(a));
     if(cu) cu.asins.forEach(a=>g.asins.add(a));
+    if(cu && cu.parent) g.parentAsin=cu.parent;
     (String(k+' '+c.campaignName).match(/B0[A-Z0-9]{8}/ig)||[]).forEach(a=>g.asins.add(a.toUpperCase()));
   });
   // targets: SB campaigns can sit on two sheets → same keyword twice; keep one
@@ -2192,7 +2230,7 @@ function auditCompute(st){
   groups.forEach(g=>{
     const tot=derive(agg(g.camps));
     const gi=inp[g.key]||{};
-    const sbm=auditSbMatch(st,g,gi);
+    const sbm=g.key==='(not in the parent mapping)' ? null : auditSbMatch(st,g,gi);   // leftovers are not a product
     const price=+gi.price||(sbm?sbm.price:0), cost=+gi.cost||(sbm?sbm.cost:0);
     const haveEcon = price>0 && cost>0 && cost<price;
     const margin = haveEcon ? (price-cost)/price*100 : defMargin;
@@ -2498,6 +2536,7 @@ function renderAudit(){
     Object.assign(st,{init:true,apxRows:20,groupBy:'portfolio',days:30,margin:30,minClicks:10,recWaste:60,recOver:40,scale:25,degr:25,elast:-1.5,client:'',q:''});
     st.inputs=auditLoadInputs();
     try{ st.custom=JSON.parse(localStorage.getItem('ppc_audit_custom_v1')||'[]')||[]; }catch(_){ st.custom=[]; }
+    try{ st.parentMap=JSON.parse(localStorage.getItem('ppc_audit_parents_v1')||'null'); }catch(_){ st.parentMap=null; }
     try{ st.sel=JSON.parse(localStorage.getItem('ppc_audit_sel_v1')||'null'); }catch(_){ st.sel=null; }
     try{ st.pick=JSON.parse(localStorage.getItem('ppc_audit_pick_v1')||'null'); }catch(_){ st.pick=null; }
     if(!st.pick) st.pick={};
@@ -2514,6 +2553,7 @@ function renderAudit(){
   }
   const saveSel=()=>{ try{ localStorage.setItem('ppc_audit_sel_v1',JSON.stringify(st.sel)); }catch(_){} };
   const saveCustom=()=>{ try{ localStorage.setItem('ppc_audit_custom_v1',JSON.stringify(st.custom)); }catch(_){} };
+  const saveParents=()=>{ try{ if(st.parentMap) localStorage.setItem('ppc_audit_parents_v1',JSON.stringify(st.parentMap)); else localStorage.removeItem('ppc_audit_parents_v1'); }catch(_){} };
   const savePick=()=>{ try{ localStorage.setItem('ppc_audit_pick_v1',JSON.stringify(st.pick)); }catch(_){} };
   const rows=all.filter(r=>st.sel[r.key]);
   const m=30/Math.max(1,+st.days||30);
@@ -2551,7 +2591,7 @@ function renderAudit(){
         ${num('au-days','Days covered by the bulk',st.days,90)}
         ${num('au-clicks','Min clicks to count as waste',st.minClicks,110)}
         ${picked.length? num('au-apx','Rows per appendix table (top N, worst first)',st.apxRows,90) : ''}
-        <div class="field"><label>Products =</label><select id="au-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portfolios</option><option value="asin" ${st.groupBy==='asin'?'selected':''}>ASIN</option></select></div>
+        <div class="field"><label>Products =</label><select id="au-group"><option value="portfolio" ${st.groupBy==='portfolio'?'selected':''}>Portfolios</option><option value="asin" ${st.groupBy==='asin'?'selected':''}>ASIN</option><option value="parent" ${st.groupBy==='parent'?'selected':''}>Parent ASIN</option></select></div>
         <div class="field"><button class="btn grad" id="au-pdf" ${rows.length?'':'disabled'}>Download PDF for client</button></div>
         <div class="field"><button class="btn ghost" id="au-html" ${rows.length?'':'disabled'}>.html</button></div>
         <div class="field"><button class="btn ghost" id="au-export" ${rows.length?'':'disabled'}>Excel</button></div>
@@ -2570,6 +2610,16 @@ function renderAudit(){
         <div class="hint" style="margin-top:6px;">These values are <b>assumptions</b>, not data from the bulk.</div>
       </details>
     </div>
+    ${st.groupBy==='parent'? `<div class="card pad"><h3 class="sectitle">Parent → children mapping</h3>
+      <div class="hint" style="margin-bottom:8px;line-height:1.5;"><b>Easiest: upload the Sellerboard export (Dashboard → Products, group by parent) under “Price and cost per product” — it already contains every parent and its children, so no mapping is needed and the parent's COGS / price come from the parent row.</b> The bulk itself does not say which ASINs belong to which parent. Otherwise use a mapping: Seller Central → Reports → Business Reports → <b>Detail Page Sales and Traffic by Child Item</b> (download CSV, it has the columns “(Parent) ASIN” and “(Child) ASIN”). Any file with a parent-ASIN column and a child-ASIN column works. Or paste it below, one parent per line: <code>PARENT, child1, child2, …</code>. Each parent becomes one product made of its children; campaigns count for a parent when at least half of their ASINs are its children.</div>
+      <div class="ctns ctrls" style="align-items:end;">
+        <div class="field"><label>Upload mapping file (.csv / .xlsx)</label><input type="file" id="au-pmap" accept=".csv,.xlsx,.xls,.txt"></div>
+        <div class="field grow"><label>…or paste</label><textarea id="au-ppaste" rows="2" style="width:100%;" placeholder="B0PARENT01, B0CHILD001, B0CHILD002"></textarea></div>
+        <div class="field"><button class="btn ghost" id="au-ppastego">Use pasted mapping</button></div>
+        ${st.parentMap? '<div class="field"><button class="btn ghost" id="au-pclear">Clear mapping</button></div>':''}
+      </div>
+      <div class="hint" style="margin-top:6px;">${st._pmapN? `<b>${st._pmapN}</b> parents available${st.sb&&st.sb.parents&&Object.keys(st.sb.parents).length?` (${Object.keys(st.sb.parents).length} from the Sellerboard export${st.parentMap?', your mapping overrides where it overlaps':''})`:' (from your mapping)'}. Campaigns not covered are grouped under “(not in the parent mapping)”.` : '<span style="color:#dc2626;">No parents yet — upload the Sellerboard group-by-parent export (or a mapping below). Until then every campaign is in “(not in the parent mapping)”.</span>'}</div>
+    </div>`:''}
     <div class="card pad">
       <div class="rowbar"><h3 class="sectitle" style="margin:0;">Products in the audit (${rows.length} of ${all.length})</h3><div class="spacer"></div>
         <button class="btn ghost" id="au-top6">Top 6 by spend</button><button class="btn ghost" id="au-selshown">Tick shown</button><button class="btn ghost" id="au-selnone">None</button></div>
@@ -2600,7 +2650,7 @@ function renderAudit(){
         <div class="field"><label>Upload Sellerboard export (Dashboard → Products, group by parent) — .xlsx / .csv</label><input type="file" id="au-sb" accept=".xlsx,.xls,.csv"></div>
         ${st.sb? `<div class="field"><label>Days in the Sellerboard export</label><input type="number" id="au-sbdays" value="${+st.sbDays||st.sb.days||''}" placeholder="${st.sb.days||'?'}" style="width:90px;"></div><div class="field"><button class="btn ghost" id="au-sbclear">Clear Sellerboard</button></div>` : ''}
       </div>
-      <div class="hint" style="margin-bottom:8px;">${st.sb? `<b>${esc(st.sb.fileName)}</b> — ${st.sb.rows.length} products, ${st.sb.days?st.sb.days+' days (from the file name)':'period not in the file name — enter the days'}. Automatic match: ASIN from the campaigns / portfolio name, then words from the name; otherwise choose manually. Price = Sales/Units, cost = everything except ads / Units. Manual entries take priority.` : 'Without an export, the default margin or your manual entries are used.'}</div>
+      <div class="hint" style="margin-bottom:8px;">${st.sb? `<b>${esc(st.sb.fileName)}</b> — ${st.sb.rows.length} rows${st.sb.parents&&Object.keys(st.sb.parents).length?` (${Object.keys(st.sb.parents).length} parent${Object.keys(st.sb.parents).length===1?'':'s'} with their children detected)`:''}, ${st.sb.days?st.sb.days+' days (from the file name)':'period not in the file name — enter the days'}. Automatic match: ASIN from the campaigns / portfolio name, then words from the name; otherwise choose manually. Price = Sales/Units, cost = everything except ads / Units. Manual entries take priority.` : 'Without an export, the default margin or your manual entries are used.'}</div>
       <div class="tablewrap"><table><thead><tr><th style="text-align:left;">Product</th><th>Sellerboard match</th><th>Selling price</th><th>Unit cost (everything except ads)</th><th>Units / month (all channels)</th><th>Margin before ads</th></tr></thead><tbody>${econ}</tbody></table></div>
     </details></div>
     <div class="insr" id="au-report" style="margin-top:14px;">${reportHtml}</div>
@@ -2621,6 +2671,16 @@ function renderAudit(){
     if(st.selAuto){ st.sel={}; st.selAuto=false; }
     st.sel=st.sel||{}; st.sel[name]=1; saveSel(); rer(); };
   document.querySelectorAll('[data-cdel]').forEach(b=>b.onclick=()=>{ const c=st.custom[+b.dataset.cdel]; if(!c) return; delete st.sel[c.name]; st.custom.splice(+b.dataset.cdel,1); saveCustom(); saveSel(); rer(); });
+  if($('#au-pmap')){
+    $('#au-pmap').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+      r.onload=ev=>{ try{ const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'}); let map=null;
+          for(const n of wb.SheetNames){ map=auditParentsFromRows(XLSX.utils.sheet_to_json(wb.Sheets[n],{defval:''})); if(map) break; }
+          if(!map){ alert('No parent / child ASIN columns found. The file needs a column with “parent” and “ASIN” in its name and one with “child” and “ASIN” (like Business Reports → Detail Page Sales and Traffic by Child Item).'); return; }
+          st.parentMap=map; saveParents(); st.sel=null; rer(); }catch(err){ alert('Cannot read the file: '+err.message); } };
+      r.readAsArrayBuffer(f); };
+    $('#au-ppastego').onclick=()=>{ const map=auditParentsFromText($('#au-ppaste').value); if(!map){ alert('Paste at least one line with a parent ASIN followed by its child ASINs.'); return; } st.parentMap=map; saveParents(); st.sel=null; rer(); };
+    if($('#au-pclear')) $('#au-pclear').onclick=()=>{ st.parentMap=null; saveParents(); st.sel=null; rer(); };
+  }
   $('#au-top6').onclick=()=>{ st.selAuto=false; st.sel={}; all.slice(0,6).forEach(r=>{ st.sel[r.key]=1; }); saveSel(); rer(); };
   $('#au-selshown').onclick=()=>{ list.forEach(r=>{ st.sel[r.key]=1; }); saveSel(); rer(); };
   $('#au-selnone').onclick=()=>{ st.sel={}; saveSel(); rer(); };
