@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-18 14:40</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-18 14:46</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1080,6 +1080,7 @@ function renderNegatives(product){
   if(st.minSpend===undefined)st.minSpend=0;
   if(st.orders===undefined)st.orders='all'; if(st.negated===undefined)st.negated='all';
   if(st.maxOrders===undefined)st.maxOrders='';
+  if(st.excludePorts===undefined) st.excludePorts=[];
   if(st.exExact===undefined)st.exExact=true; // negating a term that IS the exact keyword targeted makes no sense — excluded by default
   // Same reasoning as Targets/Duplicates: a paused campaign's search terms shouldn't drive a negative export.
   const enabledCamps=optimizableCampaignIds(product);
@@ -1154,6 +1155,7 @@ function renderNegatives(product){
     });
   if(st.term) cand=cand.filter(r=>r.searchTerm.toLowerCase().includes(st.term.toLowerCase()));
   if(st.camp) cand=cand.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
+  if(st.excludePorts.length) cand=cand.filter(r=>!portHidden(st,r.portfolioName));
   // Stable identity, not a positional index — search terms have no ID of their own, so campaign+ad group+
   // text+match type is the natural stable key (same reasoning as the Optimize tabs above).
   cand.forEach(r=>r._uid=r.campaignId+'|'+r.adGroupId+'|'+r.searchTerm+'|'+r.matchType);
@@ -1200,7 +1202,9 @@ function renderNegatives(product){
         <div class="field"><label>Exclude</label><label style="flex-direction:row;gap:6px;font-size:12px;" title="A term identical to the exact keyword already targeted can't be meaningfully negated — excluded by default."><input type="checkbox" id="ng-exex" ${st.exExact?'checked':''}> Exact Match campaigns</label></div>
         ${spTip?`<div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;"><input type="checkbox" id="ng-exasin" ${st.exAsin?'checked':''}> ASIN (b0…)</label></div>`:''}
         <div class="field"><label>Already Negated</label><select id="ng-negf"><option value="all" ${st.negated==='all'?'selected':''}>Show All</option><option value="hide" ${st.negated==='hide'?'selected':''}>Hide Negated</option><option value="only" ${st.negated==='only'?'selected':''}>Only Negated</option></select></div>
+        ${portScopeField('ng',st)}
       </div>
+      ${portScopeHint(st)}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('Total Candidates',fInt(cand.length))}${kpi('Wasted Spend',fMoney(wasted),'red')}${kpi('High ACoS / No Conv.',`${highA} / ${noConv}`)}${kpi('Selected for Export',fInt(cand.filter(r=>sel.has(r._uid)).length),'pink')}
@@ -1220,6 +1224,7 @@ function renderNegatives(product){
     </div>`;
   tbl.wire($('#ng-table'));
   const upd=()=>renderNegatives(product);
+  wirePortScope('ng',st,upd);
   $('#ng-acos').oninput=debounce(()=>{st.acos=+$('#ng-acos').value||0; upd();},350);
   $('#ng-clicks').oninput=debounce(()=>{st.clicks=+$('#ng-clicks').value||0; upd();},350);
   $('#ng-minspend').oninput=debounce(()=>{st.minSpend=+$('#ng-minspend').value||0; upd();},250);
@@ -1852,7 +1857,8 @@ function renderTargets(product){
     else if(t.clicks>=st.clicks && t.orders===0) reason='No Sales';
     return reason && t.spend>=st.minSpend ? Object.assign({reason},t,d):null; }).filter(Boolean);
   if(st.exSup) rows=rows.filter(r=>!singleKw.has(r.campaignId));
-  if(st.port) rows=rows.filter(r=>(r.portfolioName||'(No Portfolio)')===st.port);
+  if(st.excludePorts===undefined) st.excludePorts=[];
+  if(st.excludePorts.length) rows=rows.filter(r=>!portHidden(st,r.portfolioName));
   if(st.camp) rows=rows.filter(r=>(r.campaignName||'').toLowerCase().includes(st.camp.toLowerCase()));
   // Stable identity (real target ID), not a positional index — a stale "targets3" selection would otherwise
   // silently point at whatever different target ended up at that position after a threshold/filter change.
@@ -1885,7 +1891,6 @@ function renderTargets(product){
         <div class="field"><label>Min Clicks (has orders) ≥</label><input type="number" id="tg-clickshaso" min="0" value="${st.clicksHasOrders}" style="width:90px;"></div>
         <div class="field"><label>Max Orders</label><input type="number" id="tg-mo" value="${st.maxOrders}"></div>
         <div class="field"><label>Min Spend</label><input type="number" id="tg-ms" value="${st.minSpend}"></div>
-        <div class="field"><label>Portfolio</label><select id="tg-port">${portOptions(st.port)}</select></div>
         <div class="field grow"><label>Campaign</label><input type="text" id="tg-camp" placeholder="Filter campaigns…" value="${esc(st.camp||'')}"></div>
         <div class="field"><label>Show</label><select id="tg-reasonf">
           <option value="all" ${st.reasonFilter==='all'?'selected':''}>All (${allRows.length})</option>
@@ -1893,7 +1898,9 @@ function renderTargets(product){
           <option value="High ACoS" ${st.reasonFilter==='High ACoS'?'selected':''}>Has Sales / High ACoS (${allRows.filter(r=>r.reason==='High ACoS').length})</option>
         </select></div>
         <div class="field"><label>&nbsp;</label><label style="flex-direction:row;gap:6px;font-size:12px;display:flex;align-items:center;" title="Excludes single-keyword (SUP) campaigns — those get bid+placement suggestions together in Optimize instead."><input type="checkbox" id="tg-exsup" ${st.exSup?'checked':''}> Exclude SUP (single-keyword)</label></div>
+        ${portScopeField('tg',st)}
       </div>
+      ${portScopeHint(st)}
     </div>
     <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
       ${kpi('Underperforming Targets',fInt(rows.length))}${kpi('Wasted Spend',fMoney(rows.filter(r=>r.orders===0).reduce((s,r)=>s+r.spend,0)),'red')}${kpi('Total Spend',fMoney(totals.spend))}${kpi('Selected to Pause',fInt(rows.filter(r=>sel.has(r._uid)).length),'pink')}
@@ -1914,7 +1921,7 @@ function renderTargets(product){
   $('#tg-ms').oninput=debounce(()=>{st.minSpend=+$('#tg-ms').value; upd();},250);
   $('#tg-reasonf').onchange=e=>{st.reasonFilter=e.target.value; upd();};
   $('#tg-exsup').onchange=e=>{st.exSup=e.target.checked; upd();};
-  $('#tg-port').onchange=e=>{st.port=e.target.value; upd();};
+  wirePortScope('tg',st,upd);
   $('#tg-camp').oninput=debounce(()=>{st.camp=$('#tg-camp').value; upd();},220);
   $('#tg-dlall').onclick=()=>exportTargetsPause(product,rows);
   $('#tg-pause').onclick=()=>exportTargetsPause(product,rows.filter(r=>sel.has(r._uid)));
