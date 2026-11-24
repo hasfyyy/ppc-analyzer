@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-24 14:00</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-24 14:09</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1386,7 +1386,9 @@ function renderNgram(){
           <div class="field grow"><label>Keywords</label><textarea id="ng-own" rows="5" style="width:100%;font-family:inherit;" placeholder="un keyword pe rând">${esc(st.ownTxt)}</textarea></div>
           <div class="field"><label>Negative type</label><select id="ng-ownmatch">${['Negative Phrase','Negative Exact'].map(x=>`<option ${st.ownMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>
           <div class="field"><label>Produs</label><select id="ng-ownprod"><option value="both" ${st.ownProd==='both'?'selected':''}>SP + SB</option><option value="SP" ${st.ownProd==='SP'?'selected':''}>Doar SP</option><option value="SB" ${st.ownProd==='SB'?'selected':''}>Doar SB</option></select></div>
-          <div class="field"><label>Campanii de tip</label><div style="display:flex;flex-wrap:wrap;gap:4px 12px;max-width:260px;">${NEG_CAMP_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:5px;font-size:12.5px;"><input type="checkbox" class="ng-camptype" value="${t}" ${st.campTypes.includes(t)?'checked':''}> ${t}</label>`).join('')}</div></div>
+          <div class="field"><label>Campanii de tip</label><div style="display:flex;flex-wrap:wrap;gap:4px 12px;max-width:260px;">${NEG_CAMP_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:5px;font-size:12.5px;"><input type="checkbox" class="ng-camptype" value="${t}" ${st.campTypes.includes(t)?'checked':''}> ${t}</label>`).join('')}
+            <button type="button" class="btn ghost" id="ng-disc" style="padding:2px 10px;" title="Bifează tot ce descoperă search terms noi: Auto, Broad, Phrase, Category, PT (fără Exact).">Discovery</button></div>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;margin-top:4px;" title="Doar campaniile care apar efectiv cu search terms în raportul din bulk."><input type="checkbox" id="ng-genonly" ${st.genOnly?'checked':''}> doar cele cu search terms</label></div>
           <button class="btn grad-red" id="ng-own-export" style="align-self:end;">Export own negatives</button>
         </div>
         <div class="hint" id="ng-own-sum" style="margin-top:6px;"></div>
@@ -1452,6 +1454,8 @@ function renderNgram(){
   $('#ng-ownmatch').onchange=e=>{ st.ownMatch=e.target.value; ownSum(); };
   $('#ng-ownprod').onchange=e=>{ st.ownProd=e.target.value; ownSum(); };
   document.querySelectorAll('.ng-camptype').forEach(cb=>cb.onchange=()=>{ st.campTypes=[...document.querySelectorAll('.ng-camptype')].filter(x=>x.checked).map(x=>x.value); ownSum(); });
+  $('#ng-disc').onclick=()=>{ st.campTypes=NEG_CAMP_TYPES_DISCOVERY.slice(); document.querySelectorAll('.ng-camptype').forEach(x=>{ x.checked=st.campTypes.includes(x.value); }); ownSum(); };
+  $('#ng-genonly').onchange=e=>{ st.genOnly=e.target.checked; ownSum(); };
   $('#ng-own-export').onclick=()=>{ st.ownTxt=$('#ng-own').value; exportOwnNegatives(ownNegativeParse(st.ownTxt), st.ownMatch, new Set(st.campTypes), ownProds()); };
   ownSum();
   // Switching the Quick lens clears the selection — otherwise rows selected under a DIFFERENT filter (e.g.
@@ -4153,6 +4157,7 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   // detected from the keywords really inside each campaign (so SB campaigns not named "Broad"/"Phrase" are found too).
   const _types=new Set(stFor('ngram').campTypes||NEG_CAMP_TYPES_DEFAULT);
   const _ctypes=campaignMatchTypes(S.product);
+  const _withST=stFor('ngram').genOnly? campaignsWithSearchTerms(S.product) : null;
   const _kwLive=new Set(DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.kind==='keyword').map(t=>t.campaignId));
   const eligibleByPortfolio=new Map();
   function eligibleCampaignsFor(pf){
@@ -4167,6 +4172,7 @@ function exportNgramNegatives(entries, matchType, excludeExact){
       if(!isAuto && singleKw.has(c.campaignId)) return false;
       // SB campaigns that only target products/categories take no negative KEYWORDS (Amazon rejects the row).
       if(isSB && !_kwLive.has(c.campaignId)) return false;
+      if(_withST && !_withST.has(c.campaignId)) return false;
       const have=_ctypes.get(c.campaignId);
       return !!have && [...have].some(t=>_types.has(t));
     });
@@ -4289,14 +4295,22 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
    targeting), with the campaign NAME as a fallback only when the campaign has no target rows in the bulk. Used by
    "Export Negatives" and by the "Add your own negative keywords" box, so SB campaigns that don't say Broad/Phrase in
    their name are still found. */
-const NEG_CAMP_TYPES=['Auto','Broad','Phrase','Exact','PT'];
+const NEG_CAMP_TYPES=['Auto','Broad','Phrase','Category','PT','Exact'];
 const NEG_CAMP_TYPES_DEFAULT=['Auto','Broad','Phrase'];
+// "Discovery" = every campaign type that finds NEW search terms for you (everything except Exact): Auto (close /
+// loose / substitutes / complements), Broad, Phrase, Category and product targeting (PT).
+const NEG_CAMP_TYPES_DISCOVERY=['Auto','Broad','Phrase','Category','PT'];
+// campaigns that actually show up in the search-term report of this bulk (= really generate search terms)
+function campaignsWithSearchTerms(product){
+  const s=new Set(); DATA.searchTerms.forEach(r=>{ if(r.product===product && (r.impressions>0||r.clicks>0||r.spend>0)) s.add(r.campaignId); }); return s;
+}
 function campaignMatchTypes(product){
   const m=new Map(); const add=(cid,t)=>{ if(!m.has(cid)) m.set(cid,new Set()); m.get(cid).add(t); };
   DATA.targets.forEach(t=>{
     if(t.product!==product || t.state!=='enabled') return;
     if(t.kind==='keyword'){ const mt=String(t.matchType||'').toLowerCase(); if(mt==='broad') add(t.campaignId,'Broad'); else if(mt==='phrase') add(t.campaignId,'Phrase'); else if(mt==='exact') add(t.campaignId,'Exact'); }
-    else if(/asin\s*=|category\s*=|asin-expanded|asin-same/i.test(String(t.text||''))) add(t.campaignId,'PT');
+    else if(/category\s*=/i.test(String(t.text||''))) add(t.campaignId,'Category');
+    else if(/asin\s*=|asin-expanded|asin-same/i.test(String(t.text||''))) add(t.campaignId,'PT');
   });
   DATA.campaigns.forEach(c=>{
     if(c.product!==product || c.state!=='enabled') return;
@@ -4306,7 +4320,8 @@ function campaignMatchTypes(product){
       if(/(^|[^a-z])broad([^a-z]|$)/i.test(n)) add(c.campaignId,'Broad');
       if(/(^|[^a-z])phrase([^a-z]|$)/i.test(n)) add(c.campaignId,'Phrase');
       if(isExactCampaign(n)) add(c.campaignId,'Exact');
-      if(isPatCampaignName(n)) add(c.campaignId,'PT');
+      if(/(^|[^a-z])categor/i.test(n)) add(c.campaignId,'Category');
+      else if(isPatCampaignName(n)) add(c.campaignId,'PT');
     }
   });
   return m;
@@ -4314,6 +4329,7 @@ function campaignMatchTypes(product){
 // Plan (and, when run for real, the file) for the negatives typed into the "own keywords" box. Pure: nothing is
 // written here, so the same function feeds the live preview line and the export.
 function ownNegativePlan(terms, negMatch, types, prods){
+  const genOnly=!!stFor('ngram').genOnly;
   const exactMode=/exact/i.test(negMatch);
   const maxWords=exactMode?10:4;
   const res={sheets:new Map(), per:{}, skippedLong:[], noAdGroup:[], terms:[]};
@@ -4324,6 +4340,7 @@ function ownNegativePlan(terms, negMatch, types, prods){
     const per=res.per[product]={rows:0,camps:new Set(),eligible:0,typeSkip:0,prot:0,already:0,ptOnly:0};
     const prod=isSB?'Sponsored Brands':'Sponsored Products';
     const ctypes=campaignMatchTypes(product);
+    const withST=genOnly?campaignsWithSearchTerms(product):null;
     const agByCamp=new Map();
     if(isSB){
       campaignAdGroupsFor(product).forEach((set,cid)=>agByCamp.set(cid,new Set(set)));
@@ -4338,6 +4355,7 @@ function ownNegativePlan(terms, negMatch, types, prods){
       per.eligible++;
       const have=ctypes.get(c.campaignId);
       if(!have || ![...have].some(t=>types.has(t))){ per.typeSkip++; return; }
+      if(withST && !withST.has(c.campaignId)){ per.typeSkip++; return; }   // "only campaigns that generate search terms"
       // SB campaigns that only target products/categories take no negative KEYWORDS — one bad row makes Amazon reject the whole file.
       if(isSB && !kwTexts.has(c.campaignId)){ per.ptOnly++; return; }
       const sheet=isSB?(/multi/i.test(c.sheet||'')?c.sheet:'Sponsored Brands Campaigns'):'Sponsored Products Campaigns';
