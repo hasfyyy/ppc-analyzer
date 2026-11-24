@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-18 14:46</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-24 14:00</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1309,8 +1309,13 @@ function searchTermVariants(term){
 function renderNgram(){
   const st=stFor('ngram'); if(st.quick===undefined)st.quick='all'; if(st.minTerms===undefined)st.minTerms=2;
   if(st.brandNegTerms===undefined) st.brandNegTerms=''; if(st.brandNegExcludeExact===undefined) st.brandNegExcludeExact=true;
+  if(st.campTypes===undefined) st.campTypes=NEG_CAMP_TYPES_DEFAULT.slice();
+  if(st.ownTxt===undefined) st.ownTxt=''; if(st.ownMatch===undefined) st.ownMatch='Negative Phrase'; if(st.ownProd===undefined) st.ownProd='both';
+  if(st.mtf===undefined) st.mtf='all';
   // sidebar + product filter
   let src=stByToggle().filter(passesSidebar);
+  // Match type of the search term's own targeting (what Amazon reports in the search-term report)
+  if(st.mtf!=='all') src=src.filter(r=>{ const m=String(r.matchType||'').toLowerCase(); const cls=m==='broad'?'broad':m==='phrase'?'phrase':m==='exact'?'exact':'other'; return cls===st.mtf; });
   const map=new Map();
   // Grouped by portfolio + root, not just root — two unrelated products (different portfolios) that happen
   // to share a common word (e.g. "timer") are a different niche each, not one pattern. Merging their spend/
@@ -1375,7 +1380,20 @@ function renderNgram(){
         </div>
       </div>
       <div class="card pad">
+        <h3 class="sectitle">Add your own negative keywords</h3>
+        <div class="hint" style="margin:8px 0;">Scrie sau lipește keyword-urile tale (unul pe rând, sau separate prin virgulă). Se adaugă ca negative la nivel de campanie (la SB: un rând per ad group), în campaniile alese mai jos. Portofoliile și campaniile se aleg din bara din stânga; dacă nu bifezi nimic acolo, merge în toate campaniile active. <b>Tipurile de campanii bifate se aplică și la „Export Negatives" de mai jos.</b></div>
         <div class="ctrls">
+          <div class="field grow"><label>Keywords</label><textarea id="ng-own" rows="5" style="width:100%;font-family:inherit;" placeholder="un keyword pe rând">${esc(st.ownTxt)}</textarea></div>
+          <div class="field"><label>Negative type</label><select id="ng-ownmatch">${['Negative Phrase','Negative Exact'].map(x=>`<option ${st.ownMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>
+          <div class="field"><label>Produs</label><select id="ng-ownprod"><option value="both" ${st.ownProd==='both'?'selected':''}>SP + SB</option><option value="SP" ${st.ownProd==='SP'?'selected':''}>Doar SP</option><option value="SB" ${st.ownProd==='SB'?'selected':''}>Doar SB</option></select></div>
+          <div class="field"><label>Campanii de tip</label><div style="display:flex;flex-wrap:wrap;gap:4px 12px;max-width:260px;">${NEG_CAMP_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:5px;font-size:12.5px;"><input type="checkbox" class="ng-camptype" value="${t}" ${st.campTypes.includes(t)?'checked':''}> ${t}</label>`).join('')}</div></div>
+          <button class="btn grad-red" id="ng-own-export" style="align-self:end;">Export own negatives</button>
+        </div>
+        <div class="hint" id="ng-own-sum" style="margin-top:6px;"></div>
+      </div>
+      <div class="card pad">
+        <div class="ctrls">
+          <div class="field"><label>Match type (search term)</label><select id="ng-mtf">${[['all','All'],['broad','Broad'],['phrase','Phrase'],['exact','Exact'],['other','Auto / PT']].map(([v,l])=>`<option value="${v}" ${st.mtf===v?'selected':''}>${l}</option>`).join('')}</select></div>
           <div class="field"><label>Min Impressions</label><input type="number" id="ng-mi" value="${mi}"></div>
           <div class="field"><label>Min Clicks</label><input type="number" id="ng-mc" value="${mc}"></div>
           <div class="field"><label>Min Spend</label><input type="number" id="ng-ms" value="${ms}"></div>
@@ -1422,6 +1440,20 @@ function renderNgram(){
   });
   ['mi','mc','ms','ma','mt'].forEach(k=>$('#ng-'+k).oninput=debounce(()=>{st[k==='mt'?'minTerms':k]=$('#ng-'+k).value; renderNgram();},250));
   $('#ng-text').oninput=debounce(()=>{st.text=$('#ng-text').value; renderNgram();},220);
+  $('#ng-mtf').onchange=e=>{ st.mtf=e.target.value; selFor('ngram').clear(); renderNgram(); };
+  // "Add your own negative keywords" box — the live summary updates in place (no re-render, so typing keeps focus)
+  const ownProds=()=>st.ownProd==='both'?['SP','SB']:[st.ownProd];
+  const ownSum=()=>{
+    const terms=ownNegativeParse(st.ownTxt); const el=$('#ng-own-sum'); if(!el) return;
+    if(!terms.length){ el.innerHTML=''; return; }
+    el.innerHTML=`<b>${terms.length}</b> keyword(s) · ${esc(st.ownMatch)} → `+ownNegativeSummary(ownNegativePlan(terms,st.ownMatch,new Set(st.campTypes),ownProds()),ownProds());
+  };
+  $('#ng-own').oninput=debounce(()=>{ st.ownTxt=$('#ng-own').value; ownSum(); },300);
+  $('#ng-ownmatch').onchange=e=>{ st.ownMatch=e.target.value; ownSum(); };
+  $('#ng-ownprod').onchange=e=>{ st.ownProd=e.target.value; ownSum(); };
+  document.querySelectorAll('.ng-camptype').forEach(cb=>cb.onchange=()=>{ st.campTypes=[...document.querySelectorAll('.ng-camptype')].filter(x=>x.checked).map(x=>x.value); ownSum(); });
+  $('#ng-own-export').onclick=()=>{ st.ownTxt=$('#ng-own').value; exportOwnNegatives(ownNegativeParse(st.ownTxt), st.ownMatch, new Set(st.campTypes), ownProds()); };
+  ownSum();
   // Switching the Quick lens clears the selection — otherwise rows selected under a DIFFERENT filter (e.g.
   // "Wasted Spend") stay counted in the Export/Copy buttons after switching to "High ACOS", even though none
   // of them are visible anymore. That silent carry-over is what made the button counts look "cumulated".
@@ -4117,6 +4149,11 @@ function exportNgramNegatives(entries, matchType, excludeExact){
   const singleKw=singleKwCampaigns(S.product);
   const exactKwCamps=campaignsWithEnabledExactKw(S.product);
   const adGroupsByCamp = isSB ? campaignAdGroupsFor(S.product) : null;
+  // Campaign types the negatives go into (Auto / Broad / Phrase / Exact / PT) — chosen in the "own keywords" card,
+  // detected from the keywords really inside each campaign (so SB campaigns not named "Broad"/"Phrase" are found too).
+  const _types=new Set(stFor('ngram').campTypes||NEG_CAMP_TYPES_DEFAULT);
+  const _ctypes=campaignMatchTypes(S.product);
+  const _kwLive=new Set(DATA.targets.filter(t=>t.product===S.product && t.state==='enabled' && t.kind==='keyword').map(t=>t.campaignId));
   const eligibleByPortfolio=new Map();
   function eligibleCampaignsFor(pf){
     if(eligibleByPortfolio.has(pf)) return eligibleByPortfolio.get(pf);
@@ -4128,7 +4165,10 @@ function exportNgramNegatives(entries, matchType, excludeExact){
       // campaign with just one of its four targeting expressions still enabled isn't "single-keyword" in
       // that sense, it's still a normal Auto campaign and should stay eligible.
       if(!isAuto && singleKw.has(c.campaignId)) return false;
-      return isAuto || isBroadOrPhraseCampaignName(c.campaignName);
+      // SB campaigns that only target products/categories take no negative KEYWORDS (Amazon rejects the row).
+      if(isSB && !_kwLive.has(c.campaignId)) return false;
+      const have=_ctypes.get(c.campaignId);
+      return !!have && [...have].some(t=>_types.has(t));
     });
     eligibleByPortfolio.set(pf, list);
     return list;
@@ -4243,6 +4283,104 @@ function exportBrandNegatives(brandTermsArr, excludeExact){
   XLSX.writeFile(wb,'brand_negatives_phrase.xlsx');
   const line=(label,st)=>`${label}: ${st.rows} rânduri în ${st.camps.size} din ${st.eligible} campanii active` + `${st.exact?` · ${st.exact} Exact sărite`:''}${st.protectedN?` · ${st.protectedN} cu brandul în keyword protejate`:''}${st.already?` · ${st.already} deja negate`:''}${st.ptOnly?` · ${st.ptOnly} doar cu product targeting sărite (Amazon nu acceptă negative keyword acolo)`:''}`;
   alert(`Brand negat ca Negative Phrase (${brandTermsArr.length} termen/i), un singur fișier.\n\n${line('Sponsored Products (nivel campanie)',per.SP)}\n${line('Sponsored Brands (un rând per ad group, apare la nivel de campanie în Amazon)',per.SB)}`+(noAdGroup.length?`\n\n${noAdGroup.length} campanii SB nu au niciun ad group activ în bulk și au fost sărite.`:''));
+}
+/* ---- Negative Phrase tab: campaign "match type" classes (Auto / Broad / Phrase / Exact / PT) ----
+   Detected from what is really inside each enabled campaign (its enabled keywords / product targets / Auto
+   targeting), with the campaign NAME as a fallback only when the campaign has no target rows in the bulk. Used by
+   "Export Negatives" and by the "Add your own negative keywords" box, so SB campaigns that don't say Broad/Phrase in
+   their name are still found. */
+const NEG_CAMP_TYPES=['Auto','Broad','Phrase','Exact','PT'];
+const NEG_CAMP_TYPES_DEFAULT=['Auto','Broad','Phrase'];
+function campaignMatchTypes(product){
+  const m=new Map(); const add=(cid,t)=>{ if(!m.has(cid)) m.set(cid,new Set()); m.get(cid).add(t); };
+  DATA.targets.forEach(t=>{
+    if(t.product!==product || t.state!=='enabled') return;
+    if(t.kind==='keyword'){ const mt=String(t.matchType||'').toLowerCase(); if(mt==='broad') add(t.campaignId,'Broad'); else if(mt==='phrase') add(t.campaignId,'Phrase'); else if(mt==='exact') add(t.campaignId,'Exact'); }
+    else if(/asin\s*=|category\s*=|asin-expanded|asin-same/i.test(String(t.text||''))) add(t.campaignId,'PT');
+  });
+  DATA.campaigns.forEach(c=>{
+    if(c.product!==product || c.state!=='enabled') return;
+    if(String(c.targetingType||'').toLowerCase()==='auto') add(c.campaignId,'Auto');
+    if(!m.has(c.campaignId)){
+      const n=c.campaignName||'';
+      if(/(^|[^a-z])broad([^a-z]|$)/i.test(n)) add(c.campaignId,'Broad');
+      if(/(^|[^a-z])phrase([^a-z]|$)/i.test(n)) add(c.campaignId,'Phrase');
+      if(isExactCampaign(n)) add(c.campaignId,'Exact');
+      if(isPatCampaignName(n)) add(c.campaignId,'PT');
+    }
+  });
+  return m;
+}
+// Plan (and, when run for real, the file) for the negatives typed into the "own keywords" box. Pure: nothing is
+// written here, so the same function feeds the live preview line and the export.
+function ownNegativePlan(terms, negMatch, types, prods){
+  const exactMode=/exact/i.test(negMatch);
+  const maxWords=exactMode?10:4;
+  const res={sheets:new Map(), per:{}, skippedLong:[], noAdGroup:[], terms:[]};
+  terms.forEach(t=>{ if(t.split(' ').length>maxWords || t.length>80) res.skippedLong.push(t); else res.terms.push(t); });
+  const seen=new Set();
+  prods.forEach(product=>{
+    const isSB=product==='SB';
+    const per=res.per[product]={rows:0,camps:new Set(),eligible:0,typeSkip:0,prot:0,already:0,ptOnly:0};
+    const prod=isSB?'Sponsored Brands':'Sponsored Products';
+    const ctypes=campaignMatchTypes(product);
+    const agByCamp=new Map();
+    if(isSB){
+      campaignAdGroupsFor(product).forEach((set,cid)=>agByCamp.set(cid,new Set(set)));
+      DATA.adGroups.forEach(a=>{ if(a.product!==product||a.state!=='enabled'||!a.adGroupId) return; if(!agByCamp.has(a.campaignId)) agByCamp.set(a.campaignId,new Set()); agByCamp.get(a.campaignId).add(a.adGroupId); });
+    }
+    const kwTexts=new Map(); // campaign -> its enabled keyword texts (lower-case)
+    DATA.targets.forEach(t=>{ if(t.product!==product||t.state!=='enabled'||t.kind!=='keyword') return; if(!kwTexts.has(t.campaignId)) kwTexts.set(t.campaignId,[]); kwTexts.get(t.campaignId).push(String(t.text||'').toLowerCase().trim()); });
+    const done=new Set();
+    DATA.campaigns.forEach(c=>{
+      if(c.product!==product || c.state!=='enabled' || done.has(c.campaignId)) return; done.add(c.campaignId);
+      if(!passesSidebar({portfolioName:c.portfolioName,campaignName:c.campaignName})) return;
+      per.eligible++;
+      const have=ctypes.get(c.campaignId);
+      if(!have || ![...have].some(t=>types.has(t))){ per.typeSkip++; return; }
+      // SB campaigns that only target products/categories take no negative KEYWORDS — one bad row makes Amazon reject the whole file.
+      if(isSB && !kwTexts.has(c.campaignId)){ per.ptOnly++; return; }
+      const sheet=isSB?(/multi/i.test(c.sheet||'')?c.sheet:'Sponsored Brands Campaigns'):'Sponsored Products Campaigns';
+      res.terms.forEach(term=>{
+        // never negate a term the campaign itself targets (phrase: contained in one of its keywords; exact: identical to one)
+        const kws=kwTexts.get(c.campaignId)||[];
+        if(exactMode? kws.includes(term) : kws.some(k=>k.includes(term))){ per.prot++; return; }
+        const add=(row)=>{ if(!res.sheets.has(sheet)) res.sheets.set(sheet,[]); res.sheets.get(sheet).push(row); };
+        if(isSB){
+          const ags=[...(agByCamp.get(c.campaignId)||[])];
+          if(!ags.length){ if(!res.noAdGroup.includes(c.campaignName)) res.noAdGroup.push(c.campaignName); return; }
+          ags.forEach(agId=>{
+            if(isNegated(c.campaignId,term,agId)){ per.already++; return; }
+            const dk=c.campaignId+'|'+agId+'|'+term; if(seen.has(dk)) return; seen.add(dk); per.camps.add(c.campaignId); per.rows++;
+            add(bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':term,'Match Type':negMatch}));
+          });
+          return;
+        }
+        if(isNegatedCampaignWide(c.campaignId,term)){ per.already++; return; }
+        const dk=c.campaignId+'|'+term; if(seen.has(dk)) return; seen.add(dk); per.camps.add(c.campaignId); per.rows++;
+        add(bulkRow({'Product':prod,'Entity':'Campaign Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'State':'enabled','Keyword Text':term,'Match Type':negMatch}));
+      });
+    });
+  });
+  return res;
+}
+function ownNegativeParse(txt){
+  const seen=new Set(), out=[];
+  String(txt||'').split(/[\n\r,;]+/).forEach(s=>{ const t=s.trim().replace(/\s+/g,' ').toLowerCase(); if(t && !seen.has(t)){ seen.add(t); out.push(t); } });
+  return out;
+}
+function ownNegativeSummary(res,prods){
+  const bits=prods.map(p=>{ const x=res.per[p]; return `${p}: ${fInt(x.rows)} rânduri în ${fInt(x.camps.size)} din ${fInt(x.eligible)} campanii${x.typeSkip?` · ${x.typeSkip} sărite (alt tip)`:''}${x.prot?` · ${x.prot} protejate (le țintesc chiar ele)`:''}${x.already?` · ${x.already} deja negate`:''}${x.ptOnly?` · ${x.ptOnly} doar PT (SB, fără negative keyword)`:''}`; });
+  return bits.join(' &nbsp;|&nbsp; ')+(res.skippedLong.length?`<br><span style="color:#c2760a;">${res.skippedLong.length} keyword(s) prea lungi pentru Amazon (max 4 cuvinte la Phrase, 10 la Exact) — sărite: ${esc(res.skippedLong.slice(0,5).join(', '))}${res.skippedLong.length>5?'…':''}</span>`:'');
+}
+function exportOwnNegatives(terms, negMatch, types, prods){
+  const res=ownNegativePlan(terms,negMatch,types,prods);
+  const total=prods.reduce((s,p)=>s+res.per[p].rows,0);
+  if(!total){ alert(terms.length? 'Nothing to export — fie sunt deja negate, fie nicio campanie activă nu se potrivește cu tipurile / portofoliile alese.' : 'Scrie cel puțin un keyword.'); return; }
+  const wb=XLSX.utils.book_new();
+  res.sheets.forEach((rows,name)=>XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([BULK_HEADERS,...rows]), name));
+  XLSX.writeFile(wb,'own_negatives_'+(/exact/i.test(negMatch)?'exact':'phrase')+'.xlsx');
+  alert(`${negMatch}: ${res.terms.length} keyword(s), ${total} rânduri.\n\n`+prods.map(p=>{ const x=res.per[p]; return `${p}: ${x.rows} rânduri în ${x.camps.size} campanii`+(p==='SB'?' (un rând per ad group)':' (nivel campanie)'); }).join('\n')+(res.noAdGroup.length?`\n\n${res.noAdGroup.length} campanii SB fără ad group activ în bulk au fost sărite.`:''));
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 // Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
