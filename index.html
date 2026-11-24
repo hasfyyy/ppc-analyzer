@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-24 14:09</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-24 14:14</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1386,6 +1386,7 @@ function renderNgram(){
           <div class="field grow"><label>Keywords</label><textarea id="ng-own" rows="5" style="width:100%;font-family:inherit;" placeholder="un keyword pe rând">${esc(st.ownTxt)}</textarea></div>
           <div class="field"><label>Negative type</label><select id="ng-ownmatch">${['Negative Phrase','Negative Exact'].map(x=>`<option ${st.ownMatch===x?'selected':''}>${x}</option>`).join('')}</select></div>
           <div class="field"><label>Produs</label><select id="ng-ownprod"><option value="both" ${st.ownProd==='both'?'selected':''}>SP + SB</option><option value="SP" ${st.ownProd==='SP'?'selected':''}>Doar SP</option><option value="SB" ${st.ownProd==='SB'?'selected':''}>Doar SB</option></select></div>
+          <div class="field"><label>Nivel</label><select id="ng-ownlevel" title="Campanie = negativul se aplică în toată campania. Ad group = doar în ad group-urile care au tipul bifat (util când o campanie amestecă Broad + Exact)."><option value="campaign" ${st.ownLevel!=='adgroup'?'selected':''}>Toată campania</option><option value="adgroup" ${st.ownLevel==='adgroup'?'selected':''}>Doar ad group-urile de tipul ales</option></select></div>
           <div class="field"><label>Campanii de tip</label><div style="display:flex;flex-wrap:wrap;gap:4px 12px;max-width:260px;">${NEG_CAMP_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:5px;font-size:12.5px;"><input type="checkbox" class="ng-camptype" value="${t}" ${st.campTypes.includes(t)?'checked':''}> ${t}</label>`).join('')}
             <button type="button" class="btn ghost" id="ng-disc" style="padding:2px 10px;" title="Bifează tot ce descoperă search terms noi: Auto, Broad, Phrase, Category, PT (fără Exact).">Discovery</button></div>
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;margin-top:4px;" title="Doar campaniile care apar efectiv cu search terms în raportul din bulk."><input type="checkbox" id="ng-genonly" ${st.genOnly?'checked':''}> doar cele cu search terms</label></div>
@@ -1453,6 +1454,7 @@ function renderNgram(){
   $('#ng-own').oninput=debounce(()=>{ st.ownTxt=$('#ng-own').value; ownSum(); },300);
   $('#ng-ownmatch').onchange=e=>{ st.ownMatch=e.target.value; ownSum(); };
   $('#ng-ownprod').onchange=e=>{ st.ownProd=e.target.value; ownSum(); };
+  $('#ng-ownlevel').onchange=e=>{ st.ownLevel=e.target.value; ownSum(); };
   document.querySelectorAll('.ng-camptype').forEach(cb=>cb.onchange=()=>{ st.campTypes=[...document.querySelectorAll('.ng-camptype')].filter(x=>x.checked).map(x=>x.value); ownSum(); });
   $('#ng-disc').onclick=()=>{ st.campTypes=NEG_CAMP_TYPES_DISCOVERY.slice(); document.querySelectorAll('.ng-camptype').forEach(x=>{ x.checked=st.campTypes.includes(x.value); }); ownSum(); };
   $('#ng-genonly').onchange=e=>{ st.genOnly=e.target.checked; ownSum(); };
@@ -4341,17 +4343,44 @@ function ownNegativePlan(terms, negMatch, types, prods){
     const prod=isSB?'Sponsored Brands':'Sponsored Products';
     const ctypes=campaignMatchTypes(product);
     const withST=genOnly?campaignsWithSearchTerms(product):null;
+    const adLevel=stFor('ngram').ownLevel==='adgroup';   // mixed campaigns: write the negative only into the ad groups of the chosen type
+    const agTypes=adLevel?adGroupMatchTypes(product):null;
     const agByCamp=new Map();
-    if(isSB){
+    if(isSB || adLevel){
       campaignAdGroupsFor(product).forEach((set,cid)=>agByCamp.set(cid,new Set(set)));
       DATA.adGroups.forEach(a=>{ if(a.product!==product||a.state!=='enabled'||!a.adGroupId) return; if(!agByCamp.has(a.campaignId)) agByCamp.set(a.campaignId,new Set()); agByCamp.get(a.campaignId).add(a.adGroupId); });
     }
     const kwTexts=new Map(); // campaign -> its enabled keyword texts (lower-case)
     DATA.targets.forEach(t=>{ if(t.product!==product||t.state!=='enabled'||t.kind!=='keyword') return; if(!kwTexts.has(t.campaignId)) kwTexts.set(t.campaignId,[]); kwTexts.get(t.campaignId).push(String(t.text||'').toLowerCase().trim()); });
+    const kwByAg=new Map(); // campaign|ad group -> its enabled keyword texts
+    DATA.targets.forEach(t=>{ if(t.product!==product||t.state!=='enabled'||t.kind!=='keyword') return; const k=t.campaignId+'|'+t.adGroupId; if(!kwByAg.has(k)) kwByAg.set(k,[]); kwByAg.get(k).push(String(t.text||'').toLowerCase().trim()); });
     const done=new Set();
     DATA.campaigns.forEach(c=>{
       if(c.product!==product || c.state!=='enabled' || done.has(c.campaignId)) return; done.add(c.campaignId);
       if(!passesSidebar({portfolioName:c.portfolioName,campaignName:c.campaignName})) return;
+      // ---- ad-group level: each ad group is classified by ITS OWN keywords/targets (a campaign can mix Broad + Exact ad groups)
+      if(adLevel){
+        const sheet=isSB?(/multi/i.test(c.sheet||'')?c.sheet:'Sponsored Brands Campaigns'):'Sponsored Products Campaigns';
+        const ags=[...(agByCamp.get(c.campaignId)||[])];
+        if(!ags.length){ if(!res.noAdGroup.includes(c.campaignName)) res.noAdGroup.push(c.campaignName); return; }
+        ags.forEach(agId=>{
+          per.eligible++;
+          const key=c.campaignId+'|'+agId;
+          const have=(agTypes.get(key)&&agTypes.get(key).size)?agTypes.get(key):ctypes.get(c.campaignId);   // no own targets in the bulk -> inherit the campaign's type
+          if(!have || ![...have].some(t=>types.has(t))){ per.typeSkip++; return; }
+          if(withST && !withST.has(c.campaignId)){ per.typeSkip++; return; }
+          const kws=kwByAg.get(key)||[];
+          if(isSB && !kws.length){ per.ptOnly++; return; }
+          res.terms.forEach(term=>{
+            if(exactMode? kws.includes(term) : kws.some(k=>k.includes(term))){ per.prot++; return; }
+            if(isNegated(c.campaignId,term,agId)){ per.already++; return; }
+            const dk=c.campaignId+'|'+agId+'|'+term; if(seen.has(dk)) return; seen.add(dk); per.camps.add(c.campaignId); per.rows++;
+            if(!res.sheets.has(sheet)) res.sheets.set(sheet,[]);
+            res.sheets.get(sheet).push(bulkRow({'Product':prod,'Entity':'Negative Keyword','Operation':'Create','Campaign ID':c.campaignId,'Ad Group ID':agId,'State':'enabled','Keyword Text':term,'Match Type':negMatch}));
+          });
+        });
+        return;
+      }
       per.eligible++;
       const have=ctypes.get(c.campaignId);
       if(!have || ![...have].some(t=>types.has(t))){ per.typeSkip++; return; }
@@ -4382,13 +4411,30 @@ function ownNegativePlan(terms, negMatch, types, prods){
   });
   return res;
 }
+// Same classification as campaignMatchTypes, one level down: every enabled ad group gets the type(s) of the keywords /
+// product targets inside it (Auto ad groups = the auto-targeting groups of an Auto campaign).
+function adGroupMatchTypes(product){
+  const m=new Map(); const add=(k,t)=>{ if(!m.has(k)) m.set(k,new Set()); m.get(k).add(t); };
+  const autoCamps=new Set(DATA.campaigns.filter(c=>c.product===product && c.state==='enabled' && String(c.targetingType||'').toLowerCase()==='auto').map(c=>c.campaignId));
+  DATA.targets.forEach(t=>{
+    if(t.product!==product || t.state!=='enabled' || !t.adGroupId) return;
+    const k=t.campaignId+'|'+t.adGroupId;
+    if(t.kind==='keyword'){ const mt=String(t.matchType||'').toLowerCase(); if(mt==='broad') add(k,'Broad'); else if(mt==='phrase') add(k,'Phrase'); else if(mt==='exact') add(k,'Exact'); }
+    else if(/category\s*=/i.test(String(t.text||''))) add(k,'Category');
+    else if(/asin\s*=|asin-expanded|asin-same/i.test(String(t.text||''))) add(k,'PT');
+    if(autoCamps.has(t.campaignId)) add(k,'Auto');
+  });
+  DATA.adGroups.forEach(a=>{ if(a.product===product && a.state==='enabled' && autoCamps.has(a.campaignId)) add(a.campaignId+'|'+a.adGroupId,'Auto'); });
+  return m;
+}
 function ownNegativeParse(txt){
   const seen=new Set(), out=[];
   String(txt||'').split(/[\n\r,;]+/).forEach(s=>{ const t=s.trim().replace(/\s+/g,' ').toLowerCase(); if(t && !seen.has(t)){ seen.add(t); out.push(t); } });
   return out;
 }
 function ownNegativeSummary(res,prods){
-  const bits=prods.map(p=>{ const x=res.per[p]; return `${p}: ${fInt(x.rows)} rânduri în ${fInt(x.camps.size)} din ${fInt(x.eligible)} campanii${x.typeSkip?` · ${x.typeSkip} sărite (alt tip)`:''}${x.prot?` · ${x.prot} protejate (le țintesc chiar ele)`:''}${x.already?` · ${x.already} deja negate`:''}${x.ptOnly?` · ${x.ptOnly} doar PT (SB, fără negative keyword)`:''}`; });
+  const adLvl=stFor('ngram').ownLevel==='adgroup';
+  const bits=prods.map(p=>{ const x=res.per[p]; return `${p}: ${fInt(x.rows)} rânduri în ${fInt(x.camps.size)} campanii${adLvl?` (din ${fInt(x.eligible)} ad groups)`:` din ${fInt(x.eligible)} campanii`}${x.typeSkip?` · ${x.typeSkip} sărite (alt tip)`:''}${x.prot?` · ${x.prot} protejate (le țintesc chiar ele)`:''}${x.already?` · ${x.already} deja negate`:''}${x.ptOnly?` · ${x.ptOnly} doar PT (SB, fără negative keyword)`:''}`; });
   return bits.join(' &nbsp;|&nbsp; ')+(res.skippedLong.length?`<br><span style="color:#c2760a;">${res.skippedLong.length} keyword(s) prea lungi pentru Amazon (max 4 cuvinte la Phrase, 10 la Exact) — sărite: ${esc(res.skippedLong.slice(0,5).join(', '))}${res.skippedLong.length>5?'…':''}</span>`:'');
 }
 function exportOwnNegatives(terms, negMatch, types, prods){
@@ -4398,7 +4444,7 @@ function exportOwnNegatives(terms, negMatch, types, prods){
   const wb=XLSX.utils.book_new();
   res.sheets.forEach((rows,name)=>XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([BULK_HEADERS,...rows]), name));
   XLSX.writeFile(wb,'own_negatives_'+(/exact/i.test(negMatch)?'exact':'phrase')+'.xlsx');
-  alert(`${negMatch}: ${res.terms.length} keyword(s), ${total} rânduri.\n\n`+prods.map(p=>{ const x=res.per[p]; return `${p}: ${x.rows} rânduri în ${x.camps.size} campanii`+(p==='SB'?' (un rând per ad group)':' (nivel campanie)'); }).join('\n')+(res.noAdGroup.length?`\n\n${res.noAdGroup.length} campanii SB fără ad group activ în bulk au fost sărite.`:''));
+  alert(`${negMatch}: ${res.terms.length} keyword(s), ${total} rânduri.\n\n`+prods.map(p=>{ const x=res.per[p]; return `${p}: ${x.rows} rânduri în ${x.camps.size} campanii`+((p==='SB'||stFor('ngram').ownLevel==='adgroup')?' (un rând per ad group)':' (nivel campanie)'); }).join('\n')+(res.noAdGroup.length?`\n\n${res.noAdGroup.length} campanii SB fără ad group activ în bulk au fost sărite.`:''));
 }
 const ASIN_RE=/^b0[a-z0-9]{8}$/i;
 // Unanchored variant — finds an ASIN token embedded inside a longer string (a portfolio name like
