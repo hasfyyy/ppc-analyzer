@@ -190,7 +190,7 @@
 
   <main id="app"></main>
 
-  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-24 14:56</div>
+  <div style="text-align:center;color:#b9c0cc;font-size:11px;padding:18px 0 34px;">PPC Analyzer · build 2026-11-25 10:42</div>
 </div>
 <script>
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -5402,9 +5402,11 @@ function renderOptBids(){
   bind('ob-hi1','hi1',v=>+v||0); bind('ob-dec1','dec1',parseDecDollar);
   bind('ob-hi2','hi2',v=>+v||0); bind('ob-dec2','dec2',parseDecDollar);
   bind('ob-hi3','hi3',v=>+v||0); bind('ob-dec3','dec3',parseDecDollar);
-  bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incDollar1',v=>+v||0);
-  bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incDollar2',v=>+v||0);
-  bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incDollar3',v=>+v||0);
+  // The increase "+$" fields need the same cents rule as the decrease ones: typing 10 (the old % habit) used to add a
+  // flat $10 to every healthy bid (stc, 24-25 nov 2026: bid $0.20 -> $10.20, $0.43 -> $10.43 ...). Now 10 = $0.10.
+  bind('ob-inchi1','incHi1',v=>+v||0); bind('ob-inc1','incDollar1',parseDecDollar);
+  bind('ob-inchi2','incHi2',v=>+v||0); bind('ob-inc2','incDollar2',parseDecDollar);
+  bind('ob-inchi3','incHi3',v=>+v||0); bind('ob-inc3','incDollar3',parseDecDollar);
   bind('ob-mo','minOrdersInc',v=>+v||0);
   bind('ob-mc','minClicks',v=>+v||0); bind('ob-ms','minSpend',v=>+v||0);
   bind('ob-zerohi1','zeroHi1',v=>+v||0); bind('ob-zerodec1','zeroDec1',parseDecDollar);
@@ -5450,6 +5452,13 @@ function exportBidOptimization(product, rows){
   // and use the shared Targeting ID column, not Keyword ID / Product Targeting ID.
   // 'placements' rows (single-kw, bid unchanged) carry only their placement moves — no bid row for them.
   const bidRows=rows.filter(r=>r.newBid!==r.bid);
+  // Safety net: a single step that adds $2+ (or quadruples a bid and adds $0.50+) is almost certainly a typo in a
+  // tier field, not an optimisation — ask before writing it into a file that goes straight to a live account.
+  const jumps=bidRows.filter(r=>r.bid>0 && (r.newBid-r.bid>=2 || (r.newBid/r.bid>=4 && r.newBid-r.bid>=0.5)));
+  if(jumps.length){
+    const ex=jumps.slice(0,5).map(r=>`${fMoney(r.bid)} → ${fMoney(r.newBid)}`).join(', ');
+    if(!confirm(`⚠ ${jumps.length} din ${bidRows.length} bid-uri cresc nerealist într-un singur pas (ex.: ${ex}).\n\nDe obicei e o greșeală în câmpurile „+$" / „Wake" din setări.\n\nExporti oricum?`)) return;
+  }
   const out=bidRows.map(r=>{
     if(product==='SD') return bulkRow({'Product':prod,'Entity':r.srcEntity||'Contextual Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Targeting ID':r.id,'Bid':r.newBid});
     return bulkRow(Object.assign({'Product':prod,'Entity':r.kind==='keyword'?'Keyword':'Product Targeting','Operation':'Update','Campaign ID':r.campaignId,'Ad Group ID':r.adGroupId,'Bid':r.newBid}, r.kind==='keyword'?{'Keyword ID':r.id}:{'Product Targeting ID':r.id}));
